@@ -149,8 +149,19 @@ class MainWindow(QMainWindow):
 
     def check_reminders(self) -> int:
         due = self.app.publications.due(now_local())
+        auto = bool(self.app.settings.get("auto_upload", True))
+        manual = []
         for r in due:
-            self.app.publications.mark_manual(r["id"], "Heure de publication atteinte : à publier.")
+            acc = self.app.concepts.get_account(r["account_id"])
+            if auto and r["platform"] == "youtube" and acc.connection_status == "connected" and r["output_path"]:
+                from ..domain.models import PublicationStatus
+                self.app.publications.set_status(r["id"], PublicationStatus.UPLOADING)
+                self.app.jobs.submit("publish_upload", f"YouTube · {r['title'] or 'sans titre'}",
+                                     {"publication_id": r["id"]}, critical=True)
+            else:
+                self.app.publications.mark_manual(r["id"], "Heure de publication atteinte : à publier.")
+                manual.append(r)
+        due = manual
         n = self.calendar.pending_count()
         self.nav_group.button(3).setText("Calendrier" + (f"  ● {n}" if n else ""))
         if due:

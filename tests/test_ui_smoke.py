@@ -251,3 +251,32 @@ def test_calendar_publication_flow(window, monkeypatch):
     a._confirm()
     assert ctx.publications.get(pubs[yt.id].id)["status"] == "published"
     assert calmod.now_local()[:2] == "20"
+
+
+def test_reminder_uploads_connected_youtube(window, monkeypatch, tmp_path):
+    w, ctx = window
+    c = ctx.concepts.create_concept("Auto")
+    yt = ctx.concepts.create_account(Platform.YOUTUBE, "Connectée")
+    ig = ctx.concepts.create_account(Platform.INSTAGRAM, "Assistée")
+    for a in (yt, ig):
+        ctx.concepts.link(c.id, a.id)
+    with ctx.db.transaction() as con:
+        con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
+        con.execute("INSERT INTO project(concept_id, name) VALUES (?, 'P')", (c.id,))
+        pid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        con.execute("INSERT INTO clip(project_id, name, start_s, end_s) VALUES (?, 'Montage', 0, 1)", (pid,))
+        clip = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        con.execute("INSERT INTO video_variant(clip_id, label, aspect, output_path) VALUES (?,'v','9:16',?)",
+                    (clip, str(tmp_path / "v.mp4")))
+        vid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    m = ctx.publications.create_master(c.id, "Titre", variant_id=vid)
+    p_yt, p_ig = ctx.publications.set_destinations(m, [yt.id, ig.id])
+    for p in (p_yt, p_ig):
+        ctx.publications.schedule(p, "2026-01-01T10:00")
+    submitted = []
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, lbl, params, **k: submitted.append((kind, params)) or 1)
+    monkeypatch.setattr("studiovideo.ui.main_window.now_local", lambda: "2026-01-01T10:05")
+    assert w.check_reminders() == 1                                        # seul Instagram demande une action
+    assert submitted == [("publish_upload", {"publication_id": p_yt})]
+    assert ctx.publications.get(p_yt)["status"] == "uploading"
+    assert ctx.publications.get(p_ig)["status"] == "manual_action"

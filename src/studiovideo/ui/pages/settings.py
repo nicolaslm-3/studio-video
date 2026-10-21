@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFormLayout, QHBoxLayout, QHeaderView, QListWidget,
-                               QListWidgetItem, QMessageBox, QTableWidget, QTableWidgetItem, QTabWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QHeaderView,
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QTableWidget, QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from ... import __version__
@@ -76,9 +76,9 @@ class SettingsPage(QWidget):
 
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
-        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. La connexion officielle "
-                                  "(OAuth) aux plateformes arrive avec le module de publication (V3).",
-                                  "muted", wrap=True))
+        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Connecter un compte permet la "
+                                  "mise en ligne automatique (YouTube pour l'instant) ; sinon la publication est "
+                                  "assistée.", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)
         self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
         self.acc_table.verticalHeader().hide()
@@ -91,7 +91,39 @@ class SettingsPage(QWidget):
         rb.addWidget(button("Nouveau compte", on_click=self._new_account))
         rb.addWidget(button("Supprimer", "danger", on_click=self._delete_account))
         rb.addStretch(1)
+        self.connect_btn = button("Connecter", "primary", on_click=self._connect_account)
+        rb.addWidget(self.connect_btn)
+        rb.addWidget(button("Déconnecter", "ghost", on_click=self._disconnect_account))
         right.lay.addLayout(rb)
+        self.acc_status = label("", "muted", wrap=True)
+        right.lay.addWidget(self.acc_status)
+        right.lay.addWidget(label("YouTube — projet Google Cloud", "h2"))
+        right.lay.addWidget(label(
+            "Pour la mise en ligne automatique, Google exige votre propre identifiant d'application : "
+            "console.cloud.google.com → nouveau projet → activer « YouTube Data API v3 » → écran de consentement "
+            "(type Externe, ajoutez votre adresse comme utilisateur test) → Identifiants → « ID client OAuth », "
+            "type « Application de bureau ». Collez ci-dessous l'ID et le code secret. Guide détaillé : "
+            "docs/YOUTUBE.md sur la page GitHub du logiciel.", "faint", wrap=True))
+        yf = QFormLayout()
+        self.yt_id = QLineEdit(self.app.settings.get("youtube_client_id", "") or "")
+        self.yt_id.setPlaceholderText("xxxxxxxx.apps.googleusercontent.com")
+        self.yt_secret = QLineEdit()
+        self.yt_secret.setEchoMode(QLineEdit.Password)
+        self.yt_secret.setEnabled(secrets.available())
+        self.yt_secret.setPlaceholderText("Enregistré" if secrets.get_secret("youtube_client_secret") else "Code secret")
+        self.yt_privacy = QComboBox()
+        for k, n in (("public", "Publique"), ("unlisted", "Non répertoriée"), ("private", "Privée")):
+            self.yt_privacy.addItem(n, k)
+        self.yt_privacy.setCurrentIndex(max(0, self.yt_privacy.findData(self.app.settings.get("youtube_privacy",
+                                                                                               "public"))))
+        self.yt_auto = QCheckBox("Mettre en ligne automatiquement les publications programmées des comptes connectés")
+        self.yt_auto.setChecked(bool(self.app.settings.get("auto_upload", True)))
+        yf.addRow("ID client", self.yt_id)
+        yf.addRow("Code secret", self.yt_secret)
+        yf.addRow("Visibilité", self.yt_privacy)
+        right.lay.addLayout(yf)
+        right.lay.addWidget(self.yt_auto)
+        right.lay.addWidget(button("Enregistrer les réglages YouTube", on_click=self._save_youtube))
         h.addWidget(right, 2)
         self.refresh()
         return w
@@ -112,6 +144,57 @@ class SettingsPage(QWidget):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, a.id)
                 self.acc_table.setItem(i, j, item)
+
+    def _save_youtube(self) -> None:
+        self.app.settings.set("youtube_client_id", self.yt_id.text().strip())
+        self.app.settings.set("youtube_privacy", self.yt_privacy.currentData())
+        self.app.settings.set("auto_upload", self.yt_auto.isChecked())
+        if self.yt_secret.text().strip():
+            try:
+                secrets.set_secret("youtube_client_secret", self.yt_secret.text().strip())
+            except secrets.SecretStoreUnavailable as exc:
+                QMessageBox.warning(self, "YouTube", str(exc))
+                return
+            self.yt_secret.clear()
+            self.yt_secret.setPlaceholderText("Enregistré")
+        self.acc_status.setText("Réglages YouTube enregistrés.")
+
+    def _selected_account(self):
+        row = self.acc_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Comptes", "Sélectionnez un compte dans la liste.")
+            return None
+        return self.app.concepts.get_account(self.acc_table.item(row, 0).data(Qt.UserRole))
+
+    def _connect_account(self) -> None:
+        acc = self._selected_account()
+        if acc is None:
+            return
+        if acc.platform.value != "youtube":
+            QMessageBox.information(self, "Connexion", f"La connexion {acc.platform.label} n'est pas encore "
+                                    "disponible : ses publications restent assistées.")
+            return
+        if not (self.app.settings.get("youtube_client_id", "") and secrets.get_secret("youtube_client_secret")):
+            QMessageBox.information(self, "Connexion", "Renseignez d'abord l'ID client et le code secret de votre "
+                                    "projet Google, puis « Enregistrer les réglages YouTube ».")
+            return
+        self._connect_job = self.app.jobs.submit("connect_account", f"Connexion · {acc.display}",
+                                                 {"account_id": acc.id})
+        self.acc_status.setText("Autorisez l'accès dans la page Google ouverte dans votre navigateur…")
+
+    def _disconnect_account(self) -> None:
+        acc = self._selected_account()
+        if acc is None:
+            return
+        try:
+            secrets.delete_secret(f"youtube_refresh_{acc.id}")
+        except Exception:
+            pass
+        with self.app.db.transaction() as c:
+            c.execute("UPDATE social_account SET connection_status = 'disconnected', remote_id = '' WHERE id = ?",
+                      (acc.id,))
+        self.acc_status.setText(f"{acc.display} déconnecté.")
+        self.refresh()
 
     def _edit_selected_concept(self) -> None:
         it = self.concept_list.currentItem()
@@ -478,6 +561,12 @@ class SettingsPage(QWidget):
         self.tabs.setCurrentIndex(3)
 
     def on_job(self, job) -> None:
+        if job.kind == "connect_account" and job.status in ("succeeded", "failed", "cancelled"):
+            if job.status == "succeeded":
+                self.acc_status.setText(f"✓ Connecté à la chaîne « {job.result.get('channel')} ».")
+            else:
+                self.acc_status.setText(f"⚠ Connexion impossible : {(job.error or 'annulée')[:300]}")
+            self.refresh()
         if job.id in getattr(self, "_model_jobs", {}):
             if job.status in ("succeeded", "failed", "cancelled"):
                 self._model_jobs.pop(job.id, None)

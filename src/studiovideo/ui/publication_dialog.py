@@ -254,6 +254,14 @@ class PublicationDialog(QDialog):
                 tb.setPopupMode(QToolButton.InstantPopup)
                 menu = QMenu(tb)
                 done = pub.status in (PublicationStatus.PUBLISHED, PublicationStatus.CANCELLED)
+                if acc.platform.value == "youtube":
+                    up = menu.addAction("Mettre en ligne sur YouTube" + (" (à l'heure prévue)" if pub.scheduled_at
+                                                                         else " maintenant"),
+                                        lambda p=pub.id: self._upload(p))
+                    up.setEnabled(not done and acc.connection_status == "connected"
+                                  and pub.status != PublicationStatus.SCHEDULED_PLATFORM)
+                    if acc.connection_status != "connected":
+                        up.setText(up.text() + " — compte non connecté")
                 menu.addAction("Publier (assisté)…", lambda p=pub.id: self._assisted(p)).setEnabled(not done)
                 menu.addAction("Personnaliser le texte…", lambda p=pub: self._customize(p)).setEnabled(not done)
                 menu.addAction("Annuler cette destination", lambda p=pub.id: self._cancel(p)).setEnabled(not done)
@@ -335,6 +343,19 @@ class PublicationDialog(QDialog):
             if when != p.scheduled_at:
                 ps.schedule(p.id, when)
         self.accept()
+
+    def _upload(self, pid: int) -> None:
+        r = self.app.publications.get(pid)
+        if not r["output_path"] or not Path(r["output_path"]).exists():
+            QMessageBox.warning(self, "YouTube", "Choisissez d'abord une vidéo existante pour cette publication.")
+            return
+        problems = rules.check("youtube", r["title"] or "", r["description"] or "", r["hashtags"] or "")
+        if problems:
+            QMessageBox.warning(self, "YouTube", "\n".join(problems))
+            return
+        self.app.jobs.submit("publish_upload", f"YouTube · {r['title'] or 'sans titre'}", {"publication_id": pid},
+                             critical=True)
+        self.warn.setText("Mise en ligne lancée (suivi dans les tâches).")
 
     def _assisted(self, pid: int) -> None:
         AssistedPublishDialog(self.app, pid, self).exec()

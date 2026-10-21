@@ -313,6 +313,80 @@ def _register_handlers(app: AppContext) -> None:
         n = len(set(labels))
         return {"asset_id": aid, "speakers": n, "segments": len(labels), "translations": synced}
 
+    def connect_account(ctx: JobContext, params: dict) -> dict:
+        """Connexion d'un compte à sa plateforme (V3). YouTube uniquement pour l'instant."""
+        import webbrowser
+
+        from .publish import youtube
+        from .services import secrets
+        acc = app.concepts.get_account(params["account_id"])
+        if acc.platform.value != "youtube":
+            raise ValueError(f"La connexion automatique {acc.platform.label} n'est pas encore disponible.")
+        cid = app.settings.get("youtube_client_id", "") or ""
+        csec = secrets.get_secret("youtube_client_secret") or ""
+        ctx.progress(0.1, "Autorisation dans le navigateur…")
+        tok = youtube.connect(cid, csec, webbrowser.open, is_cancelled=lambda: ctx.cancelled)
+        ch = youtube.channel(tok["access_token"])
+        secrets.set_secret(f"youtube_refresh_{acc.id}", tok["refresh_token"])
+        with app.db.transaction() as c:
+            c.execute("UPDATE social_account SET connection_status = 'connected', remote_id = ?, scopes = ? "
+                      "WHERE id = ?", (ch["id"], tok.get("scope", youtube.SCOPES), acc.id))
+        app.db.audit("account.connect", f"account={acc.id} youtube={ch['id']}")
+        return {"account_id": acc.id, "channel": ch["title"], "channel_id": ch["id"]}
+
+    def publish_upload(ctx: JobContext, params: dict) -> dict:
+        """Mise en ligne automatique d'une publication (V3, YouTube)."""
+        from datetime import datetime
+
+        from .domain.models import PublicationStatus
+        from .publish import youtube
+        from .services import secrets
+        ps = app.publications
+        r = ps.get(params["publication_id"])
+        if r is None:
+            raise ValueError("Publication introuvable.")
+        if r["status"] in ("published", "cancelled", "scheduled_platform"):
+            raise ValueError("Cette publication est déjà traitée (pas de doublon).")
+        if r["platform"] != "youtube":
+            raise ValueError("Mise en ligne automatique disponible pour YouTube uniquement.")
+        acc = app.concepts.get_account(r["account_id"])
+        refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
+        if acc.connection_status != "connected" or not refresh:
+            raise ValueError("Compte YouTube non connecté (Paramètres → Comptes).")
+        if not r["output_path"] or not Path(r["output_path"]).exists():
+            raise ValueError("La vidéo de cette publication est introuvable.")
+        try:
+            ps.set_status(r["id"], PublicationStatus.UPLOADING)
+            token = youtube.access_token(app.settings.get("youtube_client_id", "") or "",
+                                         secrets.get_secret("youtube_client_secret") or "", refresh)
+            when = r["at"] if r["at"] and r["at"] > datetime.now().strftime("%Y-%m-%dT%H:%M") else None
+            privacy = (app.settings.get("youtube_privacy", "public") or "public")
+            meta = youtube.metadata(r["title"] or "", r["description"] or "", r["hashtags"] or "", privacy, when)
+            video = youtube.upload(Path(r["output_path"]), meta, token, ctx.progress, lambda: ctx.cancelled)
+        except youtube.YouTubeError as exc:
+            if "invalid_grant" in str(exc) or "révoquée" in str(exc):
+                with app.db.transaction() as c:
+                    c.execute("UPDATE social_account SET connection_status = 'expired' WHERE id = ?", (acc.id,))
+            ps.set_status(r["id"], PublicationStatus.FAILED, error=str(exc))
+            raise
+        vid = video["id"]
+        url = f"https://youtu.be/{vid}"
+        got = (video.get("status") or {}).get("privacyStatus", "")
+        if when:
+            ps.set_status(r["id"], PublicationStatus.SCHEDULED_PLATFORM, remote_id=vid, public_url=url)
+            state = "programmée sur YouTube"
+        elif got and got != privacy:
+            ps.set_status(r["id"], PublicationStatus.MANUAL_ACTION, remote_id=vid, public_url=url,
+                          error=f"Envoyée mais restée « {got} » sur YouTube : vérifiez-la dans YouTube Studio "
+                                "et rendez-la publique.")
+            state = f"envoyée ({got})"
+        else:
+            ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=vid, public_url=url)
+            state = "publiée"
+        return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state}
+
+    app.jobs.register("connect_account", connect_account)
+    app.jobs.register("publish_upload", publish_upload)
     app.jobs.register("diarize", diarize_job)
     app.jobs.register("separate", separate_job)
     app.jobs.register("dub", dub)

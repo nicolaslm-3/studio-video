@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.10.0 — V1 et V2 complètes (hors détection automatique du texte incrusté), début de la V3 : calendrier et publication assistée.** On peut importer, transcrire,
+**Version 0.11.0 — V1 et V2 complètes (hors détection automatique du texte incrusté) ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -56,7 +56,8 @@ l'interface : aucun bouton n'est simulé.
 | **V3** — Calendrier éditorial : tous concepts et comptes, mois par mois, filtre par concept | ✅ |
 | **V3** — Publication : vidéo + texte maître, destinations du concept (hors concept sur confirmation), horaire et texte propres à chaque destination, contrôle des limites de chaque plateforme | ✅ |
 | **V3** — Rappels à l'heure prévue et publication assistée (texte copié, vidéo prête, page d'envoi), confirmée par le lien public | ✅ |
-| **V3** — Connexion des comptes et mise en ligne automatique (API YouTube, TikTok, Meta, X) | ⏳ |
+| **V3** — Connexion d'une chaîne YouTube (OAuth, jeton dans le coffre Windows) et mise en ligne automatique : envoi reprenable, programmation par YouTube (`publishAt`), aucun doublon — voir [docs/YOUTUBE.md](docs/YOUTUBE.md) | ✅ |
+| **V3** — Mise en ligne automatique TikTok, Instagram, Facebook, X (exige une application validée par chaque plateforme) | ⏳ |
 | Analytiques | ⏳ V4 |
 
 ## Raccourcis
