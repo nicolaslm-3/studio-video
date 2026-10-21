@@ -1,0 +1,160 @@
+# Compilation et publication d'une version.
+# Déclenchement : pousser un tag vX.Y.Z (stable) ou vX.Y.Z-beta.N (canal bêta).
+#
+# Secrets requis :
+#   UPDATE_PRIVATE_KEY   clé privée ed25519 (tools/update_keys.py generate)
+# Secrets facultatifs (signature Authenticode, évite l'avertissement SmartScreen) :
+#   WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD
+#
+# Résultat :
+#   - GitHub Release avec l'installateur signé et une version portable (.zip) ;
+#   - appcast.xml (stable) ou appcast-beta.xml mis à jour sur la branche gh-pages (GitHub Pages).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_ZIP: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+  WINSPARKLE_VERSION: "0.9.4"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          choco install ffmpeg -y --no-progress
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Contexte de version
+        id: ctx
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if [[ "$VERSION" == *-* ]]; then CHANNEL=beta; FEED=appcast-beta.xml; else CHANNEL=stable; FEED=appcast.xml; fi
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "feed=$FEED" >> $GITHUB_OUTPUT
+          echo "base_url=https://${OWNER,,}.github.io/${REPO}" >> $GITHUB_OUTPUT
+
+      - name: Injection de la version et de la clé publique
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+        run: python tools/stamp_build.py --tag "${{ github.ref_name }}" --base-url "${{ steps.ctx.outputs.base_url }}"
+
+      - name: FFmpeg et WinSparkle à embarquer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force vendor/ffmpeg, vendor/winsparkle, tmp | Out-Null
+          Invoke-WebRequest $env:FFMPEG_ZIP -OutFile tmp/ffmpeg.zip
+          Expand-Archive tmp/ffmpeg.zip tmp/ffmpeg
+          Get-ChildItem tmp/ffmpeg -Recurse -Include ffmpeg.exe,ffprobe.exe | Copy-Item -Destination vendor/ffmpeg
+          Get-ChildItem tmp/ffmpeg -Recurse -Include LICENSE.txt | Select-Object -First 1 | Copy-Item -Destination vendor/ffmpeg/LICENSE.txt
+          gh release download "v$env:WINSPARKLE_VERSION" --repo vslavik/winsparkle --pattern "WinSparkle-*.zip" --dir tmp
+          Expand-Archive (Get-ChildItem tmp/WinSparkle-*.zip | Select-Object -First 1).FullName tmp/winsparkle
+          $dll = Get-ChildItem tmp/winsparkle -Recurse -Filter WinSparkle.dll | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $dll) { throw "WinSparkle.dll x64 introuvable" }
+          Copy-Item $dll.FullName vendor/winsparkle/WinSparkle.dll
+
+      - name: PyInstaller
+        run: pyinstaller packaging/studiovideo.spec --noconfirm --clean
+
+      - name: Signature Authenticode (facultative)
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CERT))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object { $_.FullName -match 'x64' } | Select-Object -Last 1
+          & $signtool.FullName sign /f cert.pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist/StudioVideo/StudioVideo.exe
+          echo "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+
+      - name: Installateur Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Échec de Inno Setup" }
+
+      - name: Signature Authenticode de l'installateur (facultative)
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          & $env:SIGNTOOL sign /f cert.pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/StudioVideo-${{ steps.ctx.outputs.version }}-Setup.exe"
+          Remove-Item cert.pfx
+
+      - name: Version portable
+        shell: pwsh
+        run: |
+          New-Item dist/StudioVideo/portable.txt -Value "Version portable : les données restent dans %LOCALAPPDATA%\StudioVideo. Pas de mise à jour automatique." | Out-Null
+          Compress-Archive dist/StudioVideo/* "dist/StudioVideo-${{ steps.ctx.outputs.version }}-portable.zip"
+
+      - name: Empreintes SHA-256
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist/SHA256SUMS.txt -Encoding ascii
+
+      - name: Publication GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ctx.outputs.version }}"
+          NOTES="docs/releases/${V}.md"
+          [ -f "$NOTES" ] || echo "Version ${V}" > "$NOTES"
+          PRE=""; [ "${{ steps.ctx.outputs.channel }}" = "beta" ] && PRE="--prerelease"
+          gh release create "${GITHUB_REF_NAME}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" \
+            "dist/StudioVideo-${V}-Setup.exe" "dist/StudioVideo-${V}-portable.zip" dist/SHA256SUMS.txt
+
+      - name: Mise à jour du flux appcast (gh-pages)
+        shell: bash
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+        run: |
+          V="${{ steps.ctx.outputs.version }}"
+          FEED="${{ steps.ctx.outputs.feed }}"
+          git fetch origin gh-pages || true
+          if git show-ref --quiet refs/remotes/origin/gh-pages; then
+            git worktree add site origin/gh-pages
+          else
+            git worktree add --detach site && (cd site && git checkout --orphan gh-pages && git rm -rf . -q || true)
+          fi
+          python tools/make_appcast.py --feed "site/${FEED}" --version "$V" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/StudioVideo-${V}-Setup.exe" \
+            --installer "dist/StudioVideo-${V}-Setup.exe" --notes "docs/releases/${V}.md"
+          cd site
+          touch .nojekyll
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Flux de mise à jour : ${V} (${FEED})"
+          git push origin HEAD:gh-pages
