@@ -16,11 +16,12 @@ from .dialogs import ConceptDialog, NewProjectDialog
 from .importing import pick_and_import
 from .jobs_panel import JobsPanel
 from .pages.dashboard import DashboardPage
+from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
-from .widgets import JobBridge, Unavailable, button, label
+from .widgets import JobBridge, button, label
 
 log = logging.getLogger(__name__)
 
@@ -85,9 +86,7 @@ class MainWindow(QMainWindow):
         self.library = LibraryPage(app)
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
         self.calendar = CalendarPage(app)
-        self.analytics = Unavailable("Analytiques", "V4",
-                                     "Comparaison des performances par vidéo, compte, concept et plateforme. "
-                                     "Les indicateurs non fournis par une plateforme seront signalés comme tels.")
+        self.analytics = AnalyticsPage(app)
         for p in (self.dashboard, self.studio, self.library, self.calendar, self.analytics, self.settings_page):
             self.pages.addWidget(p)
         self.vsplit.addWidget(self.pages)
@@ -211,6 +210,7 @@ class MainWindow(QMainWindow):
         if j:
             self.studio.on_job(j)
             self.settings_page.on_job(j)
+            self.analytics.on_job(j)
         if j and j.status == "succeeded" and j.kind.startswith("import"):
             if not hasattr(self, "_import_refresh"):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)

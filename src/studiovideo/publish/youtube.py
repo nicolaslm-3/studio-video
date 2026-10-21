@@ -252,3 +252,29 @@ def _resume_point(session: str, token: str, total: int) -> tuple[int, dict | Non
             rng = exc.headers.get("Range")
             return (int(rng.split("-")[1]) + 1 if rng else 0), None
         raise YouTubeError(f"Reprise de l'envoi impossible ({exc.code}).") from exc
+
+
+def video_stats(token: str, ids: list[str], ep: Endpoints | None = None) -> dict[str, dict]:
+    """Statistiques publiques (vues, j'aime, commentaires) par identifiant de vidéo, par lots de 50.
+
+    Une clé absente signifie « non fournie » (ex. : j'aime masqués par la chaîne)."""
+    ep = ep or Endpoints.from_env()
+    out: dict[str, dict] = {}
+    for i in range(0, len(ids), 50):
+        part = ",".join(ids[i:i + 50])
+        try:
+            with _api("GET", ep.api + f"/youtube/v3/videos?part=statistics&id={urllib.parse.quote(part)}",
+                      token) as r:
+                items = json.loads(r.read().decode()).get("items") or []
+        except urllib.error.HTTPError as exc:
+            raise YouTubeError(f"Lecture des statistiques impossible ({exc.code}).") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise YouTubeError(f"YouTube injoignable : {exc}") from exc
+        for it in items:
+            st = it.get("statistics") or {}
+            m = {}
+            for src, dst in (("viewCount", "views"), ("likeCount", "likes"), ("commentCount", "comments")):
+                if src in st:
+                    m[dst] = int(st[src])
+            out[it["id"]] = m
+    return out

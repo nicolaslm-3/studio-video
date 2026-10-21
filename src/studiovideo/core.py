@@ -18,6 +18,7 @@ from .services.projects import ProjectService
 from .services.publications import PublicationService
 from .services.settings import SettingsService
 from .services.transcripts import TranscriptService
+from .services.analytics import AnalyticsService
 from .services.dubs import DubService, StemService
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class AppContext:
     workspace_id: int
     dubs: DubService | None = None
     stems: StemService | None = None
+    analytics: AnalyticsService | None = None
 
     def importer(self) -> MediaImporter:
         return MediaImporter(self.db, self.paths, self.workspace_id)
@@ -59,7 +61,8 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
                      montage=MontageService(db, paths.root / "stems"), transcripts=TranscriptService(db),
                      candidates=CandidateService(db), workspace_id=ws,
-                     dubs=DubService(db, paths.dubs), stems=StemService(paths.root / "stems"))
+                     dubs=DubService(db, paths.dubs), stems=StemService(paths.root / "stems"),
+                     analytics=AnalyticsService(db))
     _register_handlers(ctx)
     return ctx
 
@@ -385,6 +388,38 @@ def _register_handlers(app: AppContext) -> None:
             state = "publiée"
         return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state}
 
+    def refresh_stats(ctx: JobContext, params: dict) -> dict:
+        """Relevé des statistiques publiques des vidéos YouTube (V4), via un compte YouTube connecté."""
+        from .publish import youtube
+        from .services import secrets
+        items = app.analytics.youtube_ids()
+        if not items:
+            return {"updated": 0, "errors": [], "note": "Aucune vidéo YouTube publiée à relever."}
+        token, errors = None, []
+        for acc in app.concepts.list_accounts():
+            refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
+            if acc.platform.value == "youtube" and acc.connection_status == "connected" and refresh:
+                try:
+                    token = youtube.access_token(app.settings.get("youtube_client_id", "") or "",
+                                                 secrets.get_secret("youtube_client_secret") or "", refresh)
+                    break
+                except youtube.YouTubeError as exc:
+                    errors.append(f"{acc.display} : {exc}")
+        if token is None:
+            raise ValueError("Aucun compte YouTube connecté : connectez-en un (Paramètres → Comptes) pour relever "
+                             "les statistiques." + (" " + "; ".join(errors) if errors else ""))
+        ctx.progress(0.3, "Lecture des statistiques YouTube")
+        stats = youtube.video_stats(token, list(dict.fromkeys(v for _, v in items)))
+        done = 0
+        for pid, vid in items:
+            if vid in stats:
+                app.analytics.record(pid, stats[vid], "api")
+                done += 1
+            else:
+                errors.append(f"Vidéo {vid} introuvable (supprimée ou privée).")
+        return {"updated": done, "errors": errors}
+
+    app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("connect_account", connect_account)
     app.jobs.register("publish_upload", publish_upload)
     app.jobs.register("diarize", diarize_job)

@@ -280,3 +280,32 @@ def test_reminder_uploads_connected_youtube(window, monkeypatch, tmp_path):
     assert submitted == [("publish_upload", {"publication_id": p_yt})]
     assert ctx.publications.get(p_yt)["status"] == "uploading"
     assert ctx.publications.get(p_ig)["status"] == "manual_action"
+
+
+def test_analytics_page(window):
+    from studiovideo.domain.models import PublicationStatus
+    w, ctx = window
+    c = ctx.concepts.create_concept("Stats")
+    yt, tk = ctx.concepts.create_account(Platform.YOUTUBE, "A"), ctx.concepts.create_account(Platform.TIKTOK, "B")
+    for a in (yt, tk):
+        ctx.concepts.link(c.id, a.id)
+    m = ctx.publications.create_master(c.id, "Vidéo 1")
+    p1, p2 = ctx.publications.set_destinations(m, [yt.id, tk.id])
+    ctx.publications.set_status(p1, PublicationStatus.PUBLISHED, remote_id="VIDabc123")
+    ctx.publications.confirm_published(p2, "https://www.tiktok.com/@b/video/9")
+    ctx.analytics.record(p1, {"views": 500, "likes": 20}, "api")
+    w.go(4)
+    pg = w.analytics
+    assert pg.pubs.rowCount() == 2
+    texts = {pg.pubs.item(i, 2).text(): (pg.pubs.item(i, 3).text(), pg.pubs.item(i, 7).text())
+             for i in range(2)}
+    assert texts["YouTube · A"] == ("500", "API") and texts["TikTok · B"] == ("—", "—")
+    plat = {pg.groups["platform"].item(i, 0).text(): pg.groups["platform"].item(i, 2).text() for i in range(2)}
+    assert plat == {"YouTube": "500", "TikTok": "—"}
+    # saisie manuelle pour TikTok
+    row = next(i for i in range(2) if pg.pubs.item(i, 2).text() == "TikTok · B")
+    pid = pg.pubs.item(row, 0).data(0x0100)
+    ctx.analytics.record(pid, {"views": 12000, "shares": 40}, "manuel")
+    pg.refresh()
+    plat = {pg.groups["platform"].item(i, 0).text(): pg.groups["platform"].item(i, 2).text() for i in range(2)}
+    assert plat["TikTok"] == "12 k"
