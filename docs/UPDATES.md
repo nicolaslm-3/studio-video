@@ -43,7 +43,9 @@ Relance ─► le journal confirme « mise à jour réussie X → Y » ou signal
 
 1. Mettre à jour `__version__` dans `src/studiovideo/__init__.py`.
 2. Écrire les notes dans `docs/releases/X.Y.Z.md`.
-3. Committer, puis `git tag vX.Y.Z && git push --tags`. Utiliser `vX.Y.Z-beta.N` pour le canal bêta.
+3. Committer et pousser sur `main`. Le changement de `__version__` lance la compilation, crée la
+   release `vX.Y.Z` et met à jour le flux. Une version `X.Y.Z-beta.N` part sur le canal bêta.
+   (Pousser un tag `vX.Y.Z` ou lancer « Run workflow » dans l'onglet Actions fonctionne aussi.)
 
 Le workflow refuse un tag qui ne correspond pas à `__version__`.
 

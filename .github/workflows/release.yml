@@ -1,5 +1,9 @@
 # Compilation et publication d'une version.
-# Déclenchement : pousser un tag vX.Y.Z (stable) ou vX.Y.Z-beta.N (canal bêta).
+# Déclenchement :
+#   - automatiquement quand __version__ change sur main (src/studiovideo/__init__.py) ;
+#   - ou en poussant un tag vX.Y.Z (stable) / vX.Y.Z-beta.N (canal bêta) ;
+#   - ou à la main depuis l'onglet Actions (« Run workflow »).
+# Si la release de cette version existe déjà avec son installateur, rien n'est refait.
 #
 # Secrets requis :
 #   UPDATE_PRIVATE_KEY   clé privée ed25519 (tools/update_keys.py generate)
@@ -14,6 +18,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: ["src/studiovideo/__init__.py"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -30,41 +41,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Contexte de version
+        id: ctx
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/studiovideo/__init__.py)"
+          fi
+          VERSION="${TAG#v}"
+          if [[ "$VERSION" == *-* ]]; then CHANNEL=beta; FEED=appcast-beta.xml; else CHANNEL=stable; FEED=appcast.xml; fi
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
+          SKIP=false
+          if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -q "Setup.exe"; then SKIP=true; fi
+          echo "Version $VERSION ($CHANNEL), déjà publiée : $SKIP"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "feed=$FEED" >> $GITHUB_OUTPUT
+          echo "skip=$SKIP" >> $GITHUB_OUTPUT
+          echo "base_url=https://${OWNER,,}.github.io/${REPO}" >> $GITHUB_OUTPUT
+
       - uses: actions/setup-python@v5
+        if: steps.ctx.outputs.skip != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Dépendances
+        if: steps.ctx.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           choco install ffmpeg -y --no-progress
 
       - name: Tests
+        if: steps.ctx.outputs.skip != 'true'
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
 
-      - name: Contexte de version
-        id: ctx
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          if [[ "$VERSION" == *-* ]]; then CHANNEL=beta; FEED=appcast-beta.xml; else CHANNEL=stable; FEED=appcast.xml; fi
-          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY##*/}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
-          echo "feed=$FEED" >> $GITHUB_OUTPUT
-          echo "base_url=https://${OWNER,,}.github.io/${REPO}" >> $GITHUB_OUTPUT
-
       - name: Injection de la version et de la clé publique
+        if: steps.ctx.outputs.skip != 'true'
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
-        run: python tools/stamp_build.py --tag "${{ github.ref_name }}" --base-url "${{ steps.ctx.outputs.base_url }}"
+        run: python tools/stamp_build.py --tag "${{ steps.ctx.outputs.tag }}" --base-url "${{ steps.ctx.outputs.base_url }}"
 
       - name: FFmpeg et WinSparkle à embarquer
+        if: steps.ctx.outputs.skip != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -82,10 +109,11 @@ jobs:
           Copy-Item $dll.FullName vendor/winsparkle/WinSparkle.dll
 
       - name: PyInstaller
+        if: steps.ctx.outputs.skip != 'true'
         run: pyinstaller packaging/studiovideo.spec --noconfirm --clean
 
       - name: Signature Authenticode (facultative)
-        if: env.HAS_CERT == 'true'
+        if: steps.ctx.outputs.skip != 'true' && env.HAS_CERT == 'true'
         env:
           CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
           CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
@@ -97,6 +125,7 @@ jobs:
           echo "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
 
       - name: Installateur Inno Setup
+        if: steps.ctx.outputs.skip != 'true'
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -105,7 +134,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Échec de Inno Setup" }
 
       - name: Signature Authenticode de l'installateur (facultative)
-        if: env.HAS_CERT == 'true'
+        if: steps.ctx.outputs.skip != 'true' && env.HAS_CERT == 'true'
         env:
           CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         shell: pwsh
@@ -114,17 +143,20 @@ jobs:
           Remove-Item cert.pfx
 
       - name: Version portable
+        if: steps.ctx.outputs.skip != 'true'
         shell: pwsh
         run: |
           New-Item dist/StudioVideo/portable.txt -Value "Version portable : les données restent dans %LOCALAPPDATA%\StudioVideo. Pas de mise à jour automatique." | Out-Null
           Compress-Archive dist/StudioVideo/* "dist/StudioVideo-${{ steps.ctx.outputs.version }}-portable.zip"
 
       - name: Empreintes SHA-256
+        if: steps.ctx.outputs.skip != 'true'
         shell: pwsh
         run: |
           Get-ChildItem dist -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist/SHA256SUMS.txt -Encoding ascii
 
       - name: Publication GitHub Release
+        if: steps.ctx.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -135,13 +167,15 @@ jobs:
           PRE=""; [ "${{ steps.ctx.outputs.channel }}" = "beta" ] && PRE="--prerelease"
           ASSETS=("dist/StudioVideo-${V}-Setup.exe" "dist/StudioVideo-${V}-portable.zip" dist/SHA256SUMS.txt)
           # La release peut déjà exister si elle a été créée depuis le site GitHub.
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
+          TAG="${{ steps.ctx.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}"
+            gh release create "$TAG" --target "${GITHUB_SHA}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}"
           fi
 
       - name: Mise à jour du flux appcast (gh-pages)
+        if: steps.ctx.outputs.skip != 'true'
         shell: bash
         env:
           UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
@@ -155,7 +189,7 @@ jobs:
             git worktree add --detach site && (cd site && git checkout --orphan gh-pages && git rm -rf . -q || true)
           fi
           python tools/make_appcast.py --feed "site/${FEED}" --version "$V" \
-            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/StudioVideo-${V}-Setup.exe" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.ctx.outputs.tag }}/StudioVideo-${V}-Setup.exe" \
             --installer "dist/StudioVideo-${V}-Setup.exe" --notes "docs/releases/${V}.md"
           cd site
           touch .nojekyll
