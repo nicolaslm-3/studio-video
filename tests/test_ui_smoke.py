@@ -309,3 +309,14 @@ def test_analytics_page(window):
     pg.refresh()
     plat = {pg.groups["platform"].item(i, 0).text(): pg.groups["platform"].item(i, 2).text() for i in range(2)}
     assert plat["TikTok"] == "12 k"
+
+
+def test_detected_zones_are_added_once(window):
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Détection")
+    w.open_project(pid)
+    zones = [{"kind": "logo", "mode": "blur", "x": 0.83, "y": 0.04, "w": 0.14, "h": 0.1, "confidence": 0.6},
+             {"kind": "subtitles", "mode": "blur", "x": 0.17, "y": 0.81, "w": 0.64, "h": 0.12, "confidence": 0.4}]
+    assert w.studio.panel.add_detected(zones) == 2
+    assert w.studio.panel.add_detected(zones) == 0
+    assert [m["mode"] for m in w.studio.tl.video.masks] == ["blur", "blur"]

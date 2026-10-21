@@ -167,6 +167,7 @@ class StudioPage(QWidget):
         self.panel.generate_subs_requested.connect(self._generate_subs)
         self.panel.optimize_requested.connect(self._optimize_audio)
         self.panel.separate_requested.connect(self._separate)
+        self.panel.detect_text_requested.connect(self._detect_text)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         hsplit.addWidget(self.panel)
         hsplit.setStretchFactor(0, 1)
@@ -636,6 +637,18 @@ class StudioPage(QWidget):
         self.panel.stems_note.setText(f"Séparation lancée pour {len(todo)} média(s). Durée : environ celle du "
                                       "média (calcul sur le processeur).")
 
+    def _detect_text(self) -> None:
+        if not self.tl.segments:
+            QMessageBox.information(self, "Détection", "Ajoutez d'abord un extrait vidéo au montage.")
+            return
+        seg = next((s for s in self.tl.segments if s.id == getattr(self.panel, "sel_segment", None)),
+                   self.tl.segments[0])
+        jid = self.app.jobs.submit("detect_text", "Détection du texte incrusté",
+                                   {"asset_id": seg.asset_id, "start": seg.src_in, "end": seg.src_out})
+        self._jobs[jid] = "detect_text"
+        self.panel.detect_btn.setEnabled(False)
+        self.panel.detect_btn.setText("Analyse en cours…")
+
     def _analyze(self) -> None:
         if not self.tl.segments:
             return
@@ -694,6 +707,20 @@ class StudioPage(QWidget):
                 QMessageBox.information(self, "Optimiser l'audio", msg)
             elif job.status == "failed":
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
+        elif kind == "detect_text":
+            self.panel.detect_btn.setEnabled(True)
+            self.panel.detect_btn.setText("Détecter le texte incrusté et les logos")
+            if job.status == "succeeded":
+                zones = job.result.get("zones") or []
+                n = self.panel.add_detected(zones)
+                names = {"logo": "logo / filigrane", "subtitles": "sous-titres incrustés"}
+                found = ", ".join(names.get(z["kind"], z["kind"]) for z in zones)
+                QMessageBox.information(self, "Détection", (
+                    f"Zone(s) proposée(s) : {found}. {n} ajoutée(s), floutée(s) par défaut.\n\nVérifiez-les avec "
+                    "« Aperçu fidèle » et ajustez-les si besoin." if zones else
+                    "Rien de détecté dans cet extrait. Vous pouvez placer une zone à la main."))
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Détection", job.error[:600])
         elif kind == "separate":
             if job.status == "failed":
                 QMessageBox.warning(self, "Séparer voix et musique", job.error[:800])

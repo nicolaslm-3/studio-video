@@ -182,6 +182,7 @@ class MontagePanel(QTabWidget):
     generate_subs_requested = Signal()
     optimize_requested = Signal()
     separate_requested = Signal()
+    detect_text_requested = Signal()
     cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
@@ -422,6 +423,10 @@ class MontagePanel(QTabWidget):
         mb.addWidget(button("Coin (logo)", on_click=lambda: self._add_mask(0.78, 0.04, 0.19, 0.12)))
         mb.addWidget(button("Supprimer", "ghost", on_click=self._del_mask))
         f.addRow(mb)
+        self.detect_btn = button("Détecter le texte incrusté et les logos", tooltip="Analyse l'extrait choisi (ou le "
+                                 "premier) et propose des zones, à vérifier dans l'aperçu fidèle",
+                                 on_click=self.detect_text_requested.emit)
+        f.addRow(self.detect_btn)
         self.mask_mode = QComboBox()
         for k, n in (("blur", "Flou"), ("delogo", "Effacement (reconstruit depuis les bords)"),
                      ("box", "Bande noire")):
@@ -442,8 +447,8 @@ class MontagePanel(QTabWidget):
             g.addWidget(self.mask_spins[key])
         f.addRow("Zone (gauche, haut, largeur, hauteur)", g)
         f.addRow(label("Zone en % de l'image d'origine. Contrôlez le résultat avec « Aperçu fidèle » : la "
-                       "lecture en direct n'affiche pas les masques. Pas de détection automatique du texte "
-                       "dans cette version.", "faint", wrap=True))
+                       "lecture en direct n'affiche pas les masques. La détection propose des zones : vérifiez-les "
+                       "toujours avant d'exporter.", "faint", wrap=True))
         f.addRow(label("Le miroir ou un filtre ne rendent pas un contenu « original » : vérifiez vos droits "
                        "sur les sources.", "faint", wrap=True))
         return w
@@ -475,6 +480,24 @@ class MontagePanel(QTabWidget):
                 self.mask_mode.setCurrentIndex(max(0, self.mask_mode.findData(self.tl.video.masks[row].get("mode"))))
         finally:
             self._loading = was
+
+    def add_detected(self, zones: list[dict]) -> int:
+        """Ajoute les zones détectées qui ne recouvrent pas déjà une zone existante."""
+        added = 0
+        for z in zones:
+            dup = any(abs(z["x"] - m["x"]) < 0.04 and abs(z["y"] - m["y"]) < 0.04 for m in self.tl.video.masks)
+            if not dup:
+                self.tl.video.masks.append({k: z[k] for k in ("x", "y", "w", "h", "mode")})
+                added += 1
+        if added:
+            self._loading = True
+            try:
+                self._load_masks()
+                self.mask_list.setCurrentRow(len(self.tl.video.masks) - 1)
+            finally:
+                self._loading = False
+            self.changed.emit("structure")
+        return added
 
     def _add_mask(self, x, y, w, h) -> None:
         self.tl.video.masks.append({"x": x, "y": y, "w": w, "h": h, "mode": "blur"})

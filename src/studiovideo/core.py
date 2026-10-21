@@ -419,6 +419,21 @@ def _register_handlers(app: AppContext) -> None:
                 errors.append(f"Vidéo {vid} introuvable (supprimée ou privée).")
         return {"updated": done, "errors": errors}
 
+    def detect_text(ctx: JobContext, params: dict) -> dict:
+        """Zones de texte incrusté / logo proposées pour un média (à vérifier par l'utilisateur)."""
+        from .edit import textdetect
+        a = app.library.get(params["asset_id"])
+        if a is None or not Path(a["path"]).exists():
+            raise ValueError("Média introuvable.")
+        if a["kind"] != "video":
+            raise ValueError("Disponible pour les vidéos uniquement.")
+        ctx.progress(0.2, "Analyse des images")
+        end = params.get("end") or a["duration_s"] or 10
+        zones = textdetect.detect_file(Path(a["path"]), float(params.get("start") or 0), float(end),
+                                       a["width"] or 16, a["height"] or 9)
+        return {"asset_id": a["id"], "zones": zones}
+
+    app.jobs.register("detect_text", detect_text)
     app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("connect_account", connect_account)
     app.jobs.register("publish_upload", publish_upload)

@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.12.0 — V1 et V2 complètes (hors détection automatique du texte incrusté) ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
+**Version 0.13.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -52,7 +52,7 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Séparation voix / musique sur le PC (MDX-Net, ONNX) : voix isolée, doublage sur la musique et l'ambiance d'origine | ✅ |
 | **V2** — Identification des intervenants sur le PC (empreintes vocales WeSpeaker), reportée sur les traductions | ✅ |
 | **V2** — Masquage manuel de zones (texte incrusté, logo) : flou, effacement, bande | ✅ |
-| **V2** — Détection automatique du texte incrusté (OCR) | ⏳ |
+| **V2** — Détection automatique des logos et sous-titres incrustés : zones proposées, à vérifier (sans lecture du texte) | ✅ |
 | **V3** — Calendrier éditorial : tous concepts et comptes, mois par mois, filtre par concept | ✅ |
 | **V3** — Publication : vidéo + texte maître, destinations du concept (hors concept sur confirmation), horaire et texte propres à chaque destination, contrôle des limites de chaque plateforme | ✅ |
 | **V3** — Rappels à l'heure prévue et publication assistée (texte copié, vidéo prête, page d'envoi), confirmée par le lien public | ✅ |

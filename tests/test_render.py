@@ -179,3 +179,25 @@ def test_masks_hide_burned_text(media, tmp_path):
     out = tmp_path / "masked.mp4"
     export(tl, srcs, None, out, run_cmd)
     assert verify(out, tl)["width"] == 640
+
+
+def test_detect_burned_text_and_logo(tmp_path):
+    """Logo fixe en haut à droite + sous-titres intermittents en bas, sur un fond qui bouge."""
+    from studiovideo.edit import textdetect
+    logo = ",".join(f"drawbox=x={540 + 6 * k}:y=20:w=2:h=24:color=white@1:t=fill" for k in range(12))
+    s1 = ",".join(f"drawbox=x={120 + 14 * k}:y=300:w=4:h=26:color=white@1:t=fill:enable='between(t,1,3)'"
+                  for k in range(28))
+    s2 = ",".join(f"drawbox=x={150 + 11 * k}:y=302:w=3:h=24:color=yellow@1:t=fill:enable='between(t,5,7)'"
+                  for k in range(30))
+    src = "gradients=s=640x360:r=25:d=8:speed=0.25:n=4"
+    burned = _make(tmp_path / "burn.mp4", ["-f", "lavfi", "-i", src, "-vf", ",".join([logo, s1, s2]),
+                                           "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    clean = _make(tmp_path / "clean.mp4", ["-f", "lavfi", "-i", src, "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    zones = {z["kind"]: z for z in textdetect.detect_file(burned, 0, 8, 640, 360)}
+    lg, st = zones["logo"], zones["subtitles"]
+
+    def covers(z, x0, y0, x1, y1):
+        return z["x"] <= x0 and z["y"] <= y0 and z["x"] + z["w"] >= x1 and z["y"] + z["h"] >= y1
+    assert covers(lg, 545 / 640, 22 / 360, 605 / 640, 42 / 360) and lg["w"] < 0.25
+    assert covers(st, 125 / 640, 302 / 360, 495 / 640, 326 / 360) and st["y"] > 0.7
+    assert textdetect.detect_file(clean, 0, 8, 640, 360) == []
