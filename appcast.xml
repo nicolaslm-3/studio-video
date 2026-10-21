@@ -4,6 +4,28 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.6.0</title>
+      <pubDate>Wed, 21 Oct 2026 21:58:53 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.6.0 — Traduction&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Traduire une transcription dans une ou plusieurs des 13 langues prioritaires&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(onglet Transcription → Plus → Traduire…)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Moteurs : votre modèle de langage (hors ligne avec Ollama), DeepL ou Google Cloud Translation&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(clés à saisir dans Paramètres → Matériel et moteurs)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Glossaire : noms et marques conservés tels quels (le nom du concept et les intervenants sont proposés)&lt;/li&gt;
+&lt;li&gt;Chaque traduction est consultable et corrigeable, l&amp;#x27;original reste intact&lt;/li&gt;
+&lt;li&gt;Sous-titres dans la langue de votre choix (onglet Sous-titres → Langue → Générer)&lt;/li&gt;
+&lt;li&gt;Production en série multilingue : un export par clip, par format et par langue&lt;/li&gt;
+&lt;li&gt;Un fichier source introuvable n&amp;#x27;ouvre plus de fenêtre bloquante&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.6.0/StudioVideo-0.6.0-Setup.exe" sparkle:version="0.6.0" sparkle:shortVersionString="0.6.0" sparkle:os="windows-x64" length="193540657" type="application/octet-stream" sparkle:edSignature="KPY5IE+F+5SA5ePzFTnYXgqP+SI0yzoYM7BAsWkJ2wBuZDxrBUjUwqYJbbcqj427p3+G5P9T1a2BNx3i14qRDg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.5.0</title>
       <pubDate>Wed, 21 Oct 2026 21:44:57 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.5.0 — Optimiser l&amp;#x27;audio et production en série&lt;/h2&gt;
