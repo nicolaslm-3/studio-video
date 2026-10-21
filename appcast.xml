@@ -4,6 +4,30 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.5.0</title>
+      <pubDate>Wed, 21 Oct 2026 21:44:57 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.5.0 — Optimiser l&amp;#x27;audio et production en série&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Bouton « Optimiser l&amp;#x27;audio » (onglet Audio) : analyse chaque extrait puis règle automatiquement&lt;/li&gt;
+&lt;li&gt;l&amp;#x27;équilibre entre extraits et entre intervenants (voix faible remontée, voix forte abaissée)&lt;/li&gt;
+&lt;li&gt;la réduction du bruit de fond (pas appliquée sur une musique ou une ambiance continue)&lt;/li&gt;
+&lt;li&gt;une compression légère et l&amp;#x27;intelligibilité de la voix&lt;/li&gt;
+&lt;li&gt;la musique abaissée et atténuée pendant la parole&lt;/li&gt;
+&lt;li&gt;le volume final et les crêtes (aucune saturation ajoutée)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Un rapport liste les traitements ; tout reste modifiable et Ctrl+Z annule l&amp;#x27;ensemble.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Nouveaux réglages : équilibrer les intervenants, compression, intelligibilité, sifflantes&lt;/li&gt;
+&lt;li&gt;Production en série : exportez plusieurs clips dans plusieurs formats d&amp;#x27;un coup, avec les réglages&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;du montage, les sous-titres automatiques et l&amp;#x27;accroche en titre&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Parcours « Production en série » activé&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.5.0/StudioVideo-0.5.0-Setup.exe" sparkle:version="0.5.0" sparkle:shortVersionString="0.5.0" sparkle:os="windows-x64" length="193473141" type="application/octet-stream" sparkle:edSignature="0r8bCA7/wVv3oqnRSxcMGy5cqSj6nUzWqevLvHbusjTAessp5u6SQrxkZcLSL0YtF8Zt+wzXQrmLhbwFkemrAw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.4.0</title>
       <pubDate>Wed, 21 Oct 2026 21:37:13 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.4.0 — Clipping intelligent&lt;/h2&gt;
