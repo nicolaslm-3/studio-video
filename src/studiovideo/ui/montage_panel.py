@@ -580,6 +580,10 @@ class MontagePanel(QTabWidget):
         w, f = _form()
         b = self.b
         f.addRow(b.check("subtitles.enabled", "Afficher des sous-titres"))
+        self.sub_lang = QComboBox()
+        self.sub_lang.setToolTip("Langue des sous-titres : texte d'origine ou une traduction (puis « Générer »)")
+        self.sub_lang.currentIndexChanged.connect(self._sub_lang)
+        f.addRow("Langue", self.sub_lang)
         self.gen_btn = button("Générer depuis la transcription", "primary",
                               tooltip="Crée les sous-titres à partir des transcriptions des extraits de la timeline",
                               on_click=self.generate_subs_requested.emit)
@@ -666,7 +670,32 @@ class MontagePanel(QTabWidget):
         except KeyError:
             return None
 
+    def _fill_sub_langs(self) -> None:
+        from .dialogs import LANGUAGES
+        names = dict(LANGUAGES)
+        langs = set()
+        for sg in self.tl.segments:
+            langs.update(self.app.transcripts.languages(sg.asset_id))
+        if self.tl.subtitles.language:
+            langs.add(self.tl.subtitles.language)
+        self.sub_lang.blockSignals(True)
+        self.sub_lang.clear()
+        self.sub_lang.addItem("Texte d'origine", "")
+        for c in sorted(langs):
+            self.sub_lang.addItem(names.get(c, c), c)
+        self.sub_lang.setCurrentIndex(max(0, self.sub_lang.findData(self.tl.subtitles.language)))
+        self.sub_lang.blockSignals(False)
+
+    def _sub_lang(self) -> None:
+        if self._loading:
+            return
+        self.tl.subtitles.language = self.sub_lang.currentData() or ""
+        self.changed.emit("subtitles")
+        if self.tl.subtitles.cues:
+            self.subs_info.setText("Langue changée : cliquez sur « Générer » pour refaire les sous-titres.")
+
     def _load_cues(self) -> None:
+        self._fill_sub_langs()
         st = self.tl.subtitles
         cur = self.cue_list.currentItem().data(Qt.UserRole) if self.cue_list.currentItem() else None
         self.cue_list.blockSignals(True)

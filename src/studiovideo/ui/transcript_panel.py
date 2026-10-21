@@ -33,6 +33,7 @@ class TranscriptPanel(QWidget):
         self.app = app
         self.asset_id: int | None = None
         self.tr: Transcript | None = None
+        self.lang: str = ""          # "" = transcription d'origine, sinon langue de la traduction affichée
         self.job_id: int | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 6, 0, 0)
@@ -56,6 +57,10 @@ class TranscriptPanel(QWidget):
         self.more.clicked.connect(self._menu)
         row2.addWidget(self.more)
         lay.addLayout(row2)
+        self.view_lang = QComboBox()
+        self.view_lang.setToolTip("Afficher la transcription d'origine ou une traduction")
+        self.view_lang.currentIndexChanged.connect(self._lang_changed)
+        lay.addWidget(self.view_lang)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Rechercher dans la transcription…")
         self.search.setClearButtonEnabled(True)
@@ -84,6 +89,8 @@ class TranscriptPanel(QWidget):
         lay.addWidget(label("Double-cliquez sur un texte pour le corriger, sur « Qui » pour nommer l'intervenant. "
                             "L'original reste conservé.", "faint", wrap=True))
         self._loading = False
+        self.translate_jobs: set[int] = set()
+        self.glossary_hint: list[str] = []
         self.refresh_models()
 
     # -- état -------------------------------------------------------------
@@ -102,8 +109,31 @@ class TranscriptPanel(QWidget):
         self._update_buttons()
 
     def set_asset(self, asset_id: int | None) -> None:
+        if asset_id != self.asset_id:
+            self.lang = ""
         self.asset_id = asset_id
-        self.tr = self.app.transcripts.get(asset_id) if asset_id else None
+        self._fill_langs()
+        self.tr = self.app.transcripts.for_language(asset_id, self.lang) if asset_id else None
+        self._fill()
+
+    def _fill_langs(self) -> None:
+        from .dialogs import LANGUAGES
+        names = dict(LANGUAGES)
+        self.view_lang.blockSignals(True)
+        self.view_lang.clear()
+        self.view_lang.addItem("Texte d'origine", "")
+        for code in (self.app.transcripts.languages(self.asset_id) if self.asset_id else []):
+            self.view_lang.addItem(f"Traduction : {names.get(code, code)}", code)
+        i = self.view_lang.findData(self.lang)
+        if i < 0:
+            self.lang, i = "", 0
+        self.view_lang.setCurrentIndex(i)
+        self.view_lang.setVisible(self.view_lang.count() > 1)
+        self.view_lang.blockSignals(False)
+
+    def _lang_changed(self) -> None:
+        self.lang = self.view_lang.currentData() or ""
+        self.tr = self.app.transcripts.for_language(self.asset_id, self.lang) if self.asset_id else None
         self._fill()
 
     def _update_buttons(self) -> None:
@@ -132,7 +162,7 @@ class TranscriptPanel(QWidget):
                 msg += " Téléchargez d'abord un modèle (bouton « Plus » → Modèles)."
             self.status.setText(msg)
         else:
-            edited = self.app.transcripts.is_edited(self.asset_id)
+            edited = (self.app.transcripts.is_edited(self.asset_id) if not self.lang else False)
             self.status.setText(f"{len(self.tr.segments)} phrases · langue {self.tr.language or '?'} · "
                                 f"{self.tr.engine}" + (" · corrigé" if edited else ""))
             for i, s in enumerate(self.tr.segments):
@@ -182,15 +212,21 @@ class TranscriptPanel(QWidget):
             if old and new and QMessageBox.question(
                     self, "Intervenant", f"Renommer « {old} » partout en « {new} » ?") == QMessageBox.Yes:
                 self.tr.rename_speaker(old, new)
-                self.app.transcripts.save_edit(self.asset_id, self.tr)
+                self._save()
                 self._fill()
                 self.changed.emit(self.asset_id)
                 return
             self.tr.segments[i].speaker = new
         else:
             return
-        self.app.transcripts.save_edit(self.asset_id, self.tr)
+        self._save()
         self.changed.emit(self.asset_id)
+
+    def _save(self) -> None:
+        if self.lang:
+            self.app.transcripts.save_translation_edit(self.asset_id, self.tr)
+        else:
+            self.app.transcripts.save_edit(self.asset_id, self.tr)
 
     def _selection(self, signal) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
@@ -214,6 +250,8 @@ class TranscriptPanel(QWidget):
                                     "Ouvrir la page des modèles ?") == QMessageBox.Yes:
                 self.open_models.emit()
             return
+        if self.lang:
+            self.view_lang.setCurrentIndex(0)
         if self.tr and QMessageBox.question(self, "Retranscrire", "Remplacer la transcription actuelle, "
                                             "y compris vos corrections ?") != QMessageBox.Yes:
             return
@@ -228,6 +266,17 @@ class TranscriptPanel(QWidget):
     def on_job(self, job) -> None:
         if job.kind == "download_model" and job.status == "succeeded":
             self.refresh_models()
+        if job.id in self.translate_jobs and job.status in ("succeeded", "failed", "cancelled"):
+            self.translate_jobs.discard(job.id)
+            if job.status == "failed":
+                QMessageBox.warning(self, "Traduction", job.error[:800])
+            else:
+                lang = job.result.get("language") if job.result else None
+                if lang and job.result.get("asset_id") == self.asset_id:
+                    self.lang = lang
+                self.set_asset(self.asset_id)
+                self.changed.emit(job.result.get("asset_id") if job.result else self.asset_id)
+            return
         if job.id != self.job_id:
             return
         if job.status == "running":
@@ -247,6 +296,10 @@ class TranscriptPanel(QWidget):
         exp = m.addMenu("Exporter la transcription")
         for f in EXPORT_FORMATS:
             exp.addAction(f.upper(), lambda f=f: self._export(f)).setEnabled(self.tr is not None)
+        trn = m.addAction("Traduire…", self._translate)
+        trn.setEnabled(bool(self.asset_id and self.app.transcripts.has(self.asset_id)))
+        if self.lang:
+            m.addAction("Supprimer cette traduction", self._delete_translation)
         te = m.addAction("Monter depuis le texte…", self._text_edit)
         te.setEnabled(self.tr is not None)
         m.addSeparator()
@@ -256,6 +309,23 @@ class TranscriptPanel(QWidget):
         m.addSeparator()
         m.addAction("Modèles de reconnaissance vocale…", self.open_models.emit)
         m.exec(self.more.mapToGlobal(self.more.rect().bottomLeft()))
+
+    def _translate(self) -> None:
+        from .translate_dialog import TranslateDialog
+        orig = self.app.transcripts.get(self.asset_id)
+        hint = list(orig.speakers()) if orig else []
+        hint += self.glossary_hint
+        dlg = TranslateDialog(self.app, self.asset_id, hint, self)
+        if dlg.exec():
+            self.translate_jobs.update(dlg.job_ids)
+            self.status.setText(f"{len(dlg.job_ids)} traduction(s) en cours…")
+
+    def _delete_translation(self) -> None:
+        if QMessageBox.question(self, "Traduction", "Supprimer cette traduction ?") == QMessageBox.Yes:
+            self.app.transcripts.delete_translation(self.asset_id, self.lang)
+            self.lang = ""
+            self.set_asset(self.asset_id)
+            self.changed.emit(self.asset_id)
 
     def _text_edit(self) -> None:
         from .text_edit_dialog import TextEditDialog

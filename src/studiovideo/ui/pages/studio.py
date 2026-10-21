@@ -235,6 +235,7 @@ class StudioPage(QWidget):
         p = self.app.projects.get(project_id)
         self.concept_id = p["concept_id"] if p else None
         self.concept_lbl.setText(f"Concept : {p['concept_name']}" if p else "")
+        self.transcript.glossary_hint = [p["concept_name"]] if p else []
         self.tl = self.app.montage.load(project_id)
         self._history = [json.dumps(self.tl.to_dict(), sort_keys=True)]
         self._future = []
@@ -287,7 +288,13 @@ class StudioPage(QWidget):
         if not a or a["kind"] not in ("video", "audio"):
             return
         if a["missing"] or not Path(a["path"]).exists():
-            QMessageBox.warning(self, "Média introuvable", f"Le fichier n'existe plus :\n{a['path']}")
+            # message non bloquant : la transcription et les propositions restent consultables
+            self.save_lbl.setText(f"⚠ Fichier introuvable : {a['file_name']}")
+            self.save_lbl.setToolTip(a["path"])
+            self.asset_id = aid
+            self.transcript.set_asset(aid)
+            self.highlights.set_context(self.project_id, aid)
+            self.player.unload()
             return
         self.asset_id = aid
         self.transcript.set_asset(aid)
@@ -468,8 +475,14 @@ class StudioPage(QWidget):
             QMessageBox.information(self, "Sous-titres", "La timeline est vide.")
             return
         ids = {s.asset_id for s in self.tl.segments}
-        trs = {i: self.app.transcripts.get(i) for i in ids}
+        lang = self.tl.subtitles.language
+        trs = {i: self.app.transcripts.for_language(i, lang) for i in ids}
         missing = [self.assets.get(i, {}).get("file_name", str(i)) for i, t in trs.items() if t is None]
+        if len(missing) == len(ids) and lang:
+            QMessageBox.information(self, "Sous-titres", f"Aucun extrait n'est traduit en « {lang} ».\n\n"
+                                    "Onglet « Transcription » → Plus → Traduire…")
+            self.left_tabs.setCurrentIndex(1)
+            return
         if len(missing) == len(ids):
             QMessageBox.information(self, "Sous-titres", "Aucun extrait de la timeline n'est transcrit.\n\n"
                                     "Sélectionnez le média, ouvrez l'onglet « Transcription » à gauche et "
@@ -619,7 +632,7 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
-        if job.kind in ("transcribe", "download_model"):
+        if job.kind in ("transcribe", "download_model", "translate"):
             self.transcript.on_job(job)
             if job.kind == "transcribe" and job.status == "succeeded":
                 self.highlights.refresh()

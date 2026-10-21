@@ -1,5 +1,10 @@
 """Test de fumée de l'interface (mode sans affichage)."""
+import sys
+from pathlib import Path
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
 
 pytest.importorskip("PySide6")
 
@@ -79,3 +84,53 @@ def test_studio_timeline_editing_persists(window, tmp_path):
     pid2 = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Suivant")
     assert ctx.montage.load(pid2).format.aspect == "1:1"
     assert st.tl.problems(ctx.montage.asset_row) == []
+
+
+def test_translation_flow_in_ui(window, tmp_path):
+    import threading
+    import time
+    from http.server import HTTPServer
+
+    from test_translate import Handler, tr
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    w, ctx = window
+    try:
+        ctx.settings.set("llm", {"kind": "ollama", "model": "m", "base_url": f"http://127.0.0.1:{srv.server_port}"})
+        pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Trad")
+        con = ctx.db.connect()
+        con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                    "audio_tracks, duration_s) VALUES (1,?,'video','x.mp4','x.mp4','fx',1,8)", (pid,))
+        aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        ctx.transcripts.store_original(aid, tr())
+        w.open_project(pid)
+        st = w.studio
+        st.asset_id = aid
+        st.transcript.set_asset(aid)
+        from studiovideo.ui.translate_dialog import TranslateDialog
+        dlg = TranslateDialog(ctx, aid, ["Poussey Pass"])
+        dlg.langs["en"].setChecked(True)
+        dlg.langs["es"].setChecked(True)
+        dlg._go()
+        st.transcript.translate_jobs.update(dlg.job_ids)
+        end = time.time() + 20
+        while time.time() < end and any(ctx.jobs.get(j).status in ("pending", "running") for j in dlg.job_ids):
+            time.sleep(0.05)
+        for j in dlg.job_ids:
+            st.transcript.on_job(ctx.jobs.get(j))
+        assert set(ctx.transcripts.languages(aid)) == {"en", "es"}
+        assert st.transcript.view_lang.count() == 3
+        # sous-titres en anglais sur le montage
+        st.tl.add_segment(aid, 0, 7)
+        st.tl.subtitles.language = "en"
+        st._generate_subs()
+        assert any("Hello Poussey Pass" in c.text for c in st.tl.subtitles.cues)
+        # série multilingue
+        from studiovideo.edit.batch import BatchOptions, plan_batch
+        trs = {(aid, l): ctx.transcripts.for_language(aid, l) for l in ("", "en", "es")}
+        out = plan_batch(st.tl, [{"asset_id": aid, "start": 0, "end": 7, "name": "c", "hook": "h"}],
+                         BatchOptions(aspects=["9:16"], languages=["", "en", "es"]), trs)
+        assert [a for _, a, _ in out] == ["9:16", "9:16 · en", "9:16 · es"]
+        assert out[1][2].subtitles.language == "en" and out[1][2].texts == []
+    finally:
+        srv.shutdown()

@@ -177,6 +177,23 @@ def _register_handlers(app: AppContext) -> None:
         return {"audio": p.audio, "music": p.music, "seg_volumes": p.seg_volumes, "report": p.report,
                 "warnings": p.warnings}
 
+    def translate(ctx: JobContext, params: dict) -> dict:
+        from .ai import translate as tr_mod
+        from .services import secrets
+        aid, dst = params["asset_id"], params["language"]
+        src_tr = app.transcripts.get(aid)
+        if src_tr is None:
+            raise ValueError("Transcrivez d'abord ce média.")
+        cfg = dict(params.get("engine") or {})
+        cfg["llm"] = app.settings.get("llm", None) or {}
+        translator = tr_mod.make_translator(cfg, secrets.get_secret)
+        out = tr_mod.translate_transcript(src_tr, translator, dst, params.get("glossary") or [], ctx.progress,
+                                          is_cancelled=lambda: ctx.cancelled)
+        ctx.check()
+        app.transcripts.store_translation(aid, out)
+        return {"asset_id": aid, "language": dst, "segments": len(out.segments)}
+
+    app.jobs.register("translate", translate)
     app.jobs.register("optimize_audio", optimize_audio)
     app.jobs.register("find_highlights", find_highlights)
     app.jobs.register("transcribe", transcribe)

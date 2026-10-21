@@ -75,6 +75,7 @@ class SubtitleTrack:
     burn: bool = True              # incruster dans la vidéo
     sidecar_srt: bool = False      # fichier .srt à côté de la vidéo
     animation: str = "highlight"
+    language: str = ""             # "" = langue d'origine ; sinon code de la traduction utilisée
     style: SubtitleStyle = field(default_factory=SubtitleStyle)
     rules: SubtitleRules = field(default_factory=SubtitleRules)
     cues: list[Cue] = field(default_factory=list)

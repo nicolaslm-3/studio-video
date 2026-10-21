@@ -66,3 +66,32 @@ class TranscriptService:
                 if len(out) >= limit:
                     return out
         return out
+
+    # -- traductions (§10) --------------------------------------------------------------
+    def languages(self, asset_id: int) -> list[str]:
+        return [r["language"] for r in self.db.query(
+            "SELECT language FROM translation WHERE source_asset_id = ? ORDER BY language", (asset_id,))]
+
+    def translation(self, asset_id: int, language: str) -> Transcript | None:
+        r = self.db.query_one("SELECT * FROM translation WHERE source_asset_id = ? AND language = ?",
+                              (asset_id, language))
+        return Transcript.from_json(r["edited_json"] or r["original_json"]) if r else None
+
+    def store_translation(self, asset_id: int, tr: Transcript) -> None:
+        with self.db.transaction() as c:
+            c.execute("INSERT INTO translation(source_asset_id, language, engine, original_json) VALUES (?,?,?,?) "
+                      "ON CONFLICT(source_asset_id, language) DO UPDATE SET engine = excluded.engine, "
+                      "original_json = excluded.original_json, edited_json = NULL",
+                      (asset_id, tr.language, tr.engine, tr.to_json()))
+
+    def save_translation_edit(self, asset_id: int, tr: Transcript) -> None:
+        self.db.connect().execute("UPDATE translation SET edited_json = ? WHERE source_asset_id = ? AND language = ?",
+                                  (tr.to_json(), asset_id, tr.language))
+
+    def delete_translation(self, asset_id: int, language: str) -> None:
+        self.db.connect().execute("DELETE FROM translation WHERE source_asset_id = ? AND language = ?",
+                                  (asset_id, language))
+
+    def for_language(self, asset_id: int, language: str | None) -> Transcript | None:
+        """Transcription d'origine (language vide) ou traduction."""
+        return self.get(asset_id) if not language else self.translation(asset_id, language)

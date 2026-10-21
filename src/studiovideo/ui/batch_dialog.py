@@ -59,6 +59,27 @@ class BatchDialog(QDialog):
             fr.addWidget(cb)
         fr.addStretch(1)
         lay.addLayout(fr)
+        langs = set()
+        for r in rows:
+            langs.update(app.transcripts.languages(r["source_asset_id"]))
+        self.langs: dict[str, QCheckBox] = {}
+        if langs:
+            from .dialogs import LANGUAGES
+            names = dict(LANGUAGES)
+            lay.addWidget(label("Langues des sous-titres", "h2"))
+            lr = QHBoxLayout()
+            orig = QCheckBox("Texte d'origine")
+            orig.setChecked(True)
+            self.langs[""] = orig
+            lr.addWidget(orig)
+            for c in sorted(langs):
+                cb = QCheckBox(names.get(c, c))
+                self.langs[c] = cb
+                lr.addWidget(cb)
+                cb.toggled.connect(lambda _v: self._update())
+            orig.toggled.connect(lambda _v: self._update())
+            lr.addStretch(1)
+            lay.addLayout(lr)
         self.o_subs = QCheckBox("Sous-titres automatiques (médias transcrits)")
         self.o_subs.setChecked(True)
         self.o_hook = QCheckBox("Accroche en titre pendant les 3 premières secondes (si disponible)")
@@ -96,8 +117,11 @@ class BatchDialog(QDialog):
     def _formats(self) -> list[str]:
         return [a for a, cb in self.aspects.items() if cb.isChecked()]
 
+    def _languages(self) -> list[str]:
+        return [c for c, cb in self.langs.items() if cb.isChecked()] if self.langs else [""]
+
     def _update(self) -> None:
-        n = len(self._clips()) * len(self._formats())
+        n = len(self._clips()) * len(self._formats()) * max(1, len(self._languages()))
         if self.list.count():
             self.summary.setText(f"{n} vidéo(s) à exporter")
         self.go.setEnabled(n > 0)
@@ -106,9 +130,13 @@ class BatchDialog(QDialog):
         opts = BatchOptions(aspects=self._formats(), short_side=min(self.template.format.width,
                                                                     self.template.format.height),
                             subtitles=self.o_subs.isChecked(), hook_title=self.o_hook.isChecked(),
-                            keep_music=self.o_music.isChecked())
+                            keep_music=self.o_music.isChecked(), languages=self._languages() or [""])
         clips = self._clips()
-        trs = {c["asset_id"]: self.app.transcripts.get(c["asset_id"]) for c in clips} if opts.subtitles else {}
+        trs = {}
+        if opts.subtitles:
+            for c in clips:
+                for lang in opts.languages:
+                    trs[(c["asset_id"], lang)] = self.app.transcripts.for_language(c["asset_id"], lang)
         style = self.app.montage.text_style_for(self.project_id)
         proj = self.app.projects.get(self.project_id)
         folder = self.export_dir / f"{proj['name']} - série {datetime.now():%Y-%m-%d %H%M}"
@@ -119,7 +147,7 @@ class BatchDialog(QDialog):
                 missing.append(f"{c['name']} ({asp}) : {problems[0]}")
                 continue
             tl.export.directory = str(folder)
-            tl.export.file_pattern = "{project}_{aspect}"
+            tl.export.file_pattern = "{project}_{aspect}" + (f"_{tl.subtitles.language}" if tl.subtitles.language else "")
             dest = output_path(tl, c["name"], folder)
             self.job_ids.append(self.app.jobs.submit(
                 "export_timeline", f"Série · {c['name']} · {asp}",

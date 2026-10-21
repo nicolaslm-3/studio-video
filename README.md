@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.5.0 — V1 complète + V2 en cours (clipping intelligent, audio, série).** On peut importer, transcrire,
+**Version 0.6.0 — V1 complète + V2 en cours (clipping intelligent, audio, série, traduction).** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -47,7 +47,9 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Montage par le texte (décocher des phrases, aperçu de la durée) | ✅ |
 | **V2** — « Optimiser l'audio » : équilibrage des extraits et des intervenants, débruitage, compression, présence, de-esser, musique sous la voix, rapport des traitements | ✅ |
 | **V2** — Production en série : clips × formats avec les réglages du montage, sous-titres et accroche automatiques | ✅ |
-| **V2** — Traduction, doublage, ElevenLabs, séparation voix/musique, suppression du texte incrusté | ⏳ |
+| **V2** — Traduction des transcriptions (13 langues) : modèle de langage (hors ligne avec Ollama), DeepL, Google ; glossaire ; corrections | ✅ |
+| **V2** — Sous-titres traduits (voix d'origine conservée) et export multilingue en série | ✅ |
+| **V2** — Voix remplacée / doublage (ElevenLabs, Piper), séparation voix/musique, texte incrusté | ⏳ |
 | Publication, calendrier | ⏳ V3 |
 | Analytiques | ⏳ V4 |
 
@@ -73,7 +75,7 @@ permet d'utiliser un autre dossier de données.
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-Les 89 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
+Les 96 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
 Ils couvrent aussi les tâches, l'import, l'interface, la signature des mises à jour, le flux appcast
 et de vrais exports FFmpeg (formats, modes de cadrage, musique, normalisation, vérification),
 les scénarios A et G complets du cahier des charges et une transcription Whisper réelle (intégration continue).

@@ -21,6 +21,7 @@ class BatchOptions:
     hook_duration: float = 3.0
     keep_music: bool = True
     keep_texts: bool = False        # recopier les textes du modèle (à éviter : ils sont propres au montage)
+    languages: list[str] = field(default_factory=lambda: [""])   # "" = langue d'origine
 
 
 def clip_timeline(template: Timeline, asset_id: int, start: float, end: float, aspect: str, opts: BatchOptions,
@@ -50,11 +51,21 @@ def clip_timeline(template: Timeline, asset_id: int, start: float, end: float, a
 
 def plan_batch(template: Timeline, clips: list[dict], opts: BatchOptions, transcripts: dict,
                title_style: dict | None = None) -> list[tuple[dict, str, Timeline]]:
-    """clips : dicts avec asset_id, start, end, name, hook. Retourne (clip, format, timeline)."""
+    """clips : dicts avec asset_id, start, end, name, hook.
+
+    transcripts : {asset_id: Transcript} (langue d'origine) ou {(asset_id, langue): Transcript}.
+    Retourne (clip, format, timeline) ; pour une langue traduite, le format vaut « 9:16 · en ».
+    """
     out = []
     for c in clips:
-        for asp in opts.aspects:
-            tl = clip_timeline(template, c["asset_id"], c["start"], c["end"], asp, opts,
-                               transcripts.get(c["asset_id"]), c.get("hook") or "", title_style)
-            out.append((c, asp, tl))
+        for lang in (opts.languages or [""]):
+            tr = transcripts.get((c["asset_id"], lang)) if lang else transcripts.get(
+                (c["asset_id"], ""), transcripts.get(c["asset_id"]))
+            if lang and tr is None:
+                continue                      # pas de traduction pour ce média
+            for asp in opts.aspects:
+                tl = clip_timeline(template, c["asset_id"], c["start"], c["end"], asp, opts, tr,
+                                   c.get("hook") or "" if not lang else "", title_style)
+                tl.subtitles.language = lang
+                out.append((c, f"{asp} · {lang}" if lang else asp, tl))
     return out

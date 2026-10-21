@@ -330,9 +330,36 @@ class SettingsPage(QWidget):
         card.lay.addLayout(row)
         self.llm_status = label("", "faint", wrap=True)
         card.lay.addWidget(self.llm_status)
+        card.lay.addWidget(label("Traduction (facultatif)", "h2"))
+        card.lay.addWidget(label("Clés personnelles pour DeepL ou Google Cloud Translation. Le modèle de langage "
+                                 "ci-dessus peut aussi traduire (hors ligne avec Ollama).", "muted", wrap=True))
+        tf = QFormLayout()
+        self.deepl_key = QLineEdit()
+        self.google_key = QLineEdit()
+        for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key")):
+            w.setEchoMode(QLineEdit.Password)
+            w.setEnabled(secrets.available())
+            w.setPlaceholderText("Enregistrée" if secrets.get_secret(name) else
+                                 ("Clé API" if secrets.available() else "Coffre d'identifiants indisponible"))
+        tf.addRow("DeepL", self.deepl_key)
+        tf.addRow("Google", self.google_key)
+        card.lay.addLayout(tf)
+        card.lay.addWidget(button("Enregistrer les clés de traduction", on_click=self._save_translation_keys))
         self.llm_kind.currentIndexChanged.connect(self._llm_kind_changed)
         self._llm_kind_changed()
         return card
+
+    def _save_translation_keys(self) -> None:
+        try:
+            for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key")):
+                if w.text().strip():
+                    secrets.set_secret(name, w.text().strip())
+                    w.clear()
+                    w.setPlaceholderText("Enregistrée")
+        except secrets.SecretStoreUnavailable as exc:
+            QMessageBox.warning(self, "Clés", str(exc))
+            return
+        self.llm_status.setText("Clés de traduction enregistrées dans le coffre Windows.")
 
     def _llm_kind_changed(self) -> None:
         k = self.llm_kind.currentData()

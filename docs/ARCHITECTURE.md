@@ -22,13 +22,16 @@ src/studiovideo/
 │   └── secrets.py      coffre d'identifiants Windows (keyring)
 ├── ai/
 │   ├── highlights.py   moments forts : analyse locale, moteur LLM (Ollama / OpenAI), protection du contexte
-│   └── lexicon.py      indices lexicaux FR / EN par catégorie
+│   ├── lexicon.py      indices lexicaux FR / EN par catégorie
+│   └── translate.py    traduction : modèle de langage, DeepL, Google ; glossaire
 ├── edit/
 │   ├── model.py        timeline : extraits, textes, musique, format, image, audio, export
 │   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification
 │   ├── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
 │   ├── subtitles.py    sous-titres : génération depuis la transcription, découpage, états d'animation
-│   └── subrender.py    dessin des sous-titres et incrustation en une passe (concat d'images)
+│   ├── subrender.py    dessin des sous-titres et incrustation en une passe (concat d'images)
+│   ├── audiofix.py     « Optimiser l'audio » : mesures par extrait, choix des traitements, rapport
+│   └── batch.py        production en série : clips × formats × langues
 ├── transcribe/
 │   ├── model.py        transcription horodatée, corrections, exports TXT/SRT/VTT/JSON/ASS, import
 │   └── engines.py      moteurs interchangeables (faster-whisper), modèles, extraction audio
