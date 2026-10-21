@@ -4,6 +4,30 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.9.0</title>
+      <pubDate>Wed, 21 Oct 2026 22:29:39 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.9.0 — Intervenants et masquage de zones&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Transcription → Plus ▾ → « Identifier les intervenants… » : qui parle, phrase par phrase, calculé sur votre PC&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(nombre automatique ou imposé). Les noms « Intervenant 1, 2… » se renomment d&amp;#x27;un double-clic et sont reportés&lt;/p&gt;
+&lt;p&gt;sur les traductions ; l&amp;#x27;original reste disponible&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Modèle d&amp;#x27;empreintes vocales à télécharger une fois (26 Mo) : Paramètres → Matériel et moteurs → Modèles&lt;/li&gt;
+&lt;li&gt;Limite connue : deux voix très proches peuvent être réunies en mode automatique ; imposez alors le nombre&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;d&amp;#x27;intervenants&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Cadrage → « Masquer une zone » : sous-titres incrustés ou logo d&amp;#x27;origine, par flou, effacement ou bande noire.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Zone réglable en %, plusieurs zones possibles ; visible dans l&amp;#x27;aperçu fidèle et l&amp;#x27;export&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Pas encore de détection automatique du texte incrusté (prévue)&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.9.0/StudioVideo-0.9.0-Setup.exe" sparkle:version="0.9.0" sparkle:shortVersionString="0.9.0" sparkle:os="windows-x64" length="193623799" type="application/octet-stream" sparkle:edSignature="F2FvfLQjoSC3ciN1lAPjj5ZslYop60QGWhaG53hcgzHKuJpidB7fwO/15m9HycAODx+jYqaLsreM0uaHuJoUCA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.8.0</title>
       <pubDate>Wed, 21 Oct 2026 22:23:06 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.8.0 — Séparation voix / musique&lt;/h2&gt;
