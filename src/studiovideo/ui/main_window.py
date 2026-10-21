@@ -169,18 +169,20 @@ class MainWindow(QMainWindow):
         if self.jobs_panel.isVisible():
             self.jobs_panel.schedule_refresh()
         j = self.app.jobs.get(job_id)
+        if j:
+            self.studio.on_job(j)
         if j and j.status == "succeeded" and j.kind.startswith("import"):
             if not hasattr(self, "_import_refresh"):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
                 self._import_refresh.timeout.connect(self._refresh_after_import)
             self._import_refresh.start()
-        elif j and j.status == "failed":
+        elif j and j.status == "failed" and j.kind != "preview_frame":
             self.statusBar().showMessage(f"Échec : {j.label} — {j.error.splitlines()[0] if j.error else ''}", 10000)
 
     def _refresh_after_import(self) -> None:
         page = self.pages.currentWidget()
         if page is self.studio:
-            self.studio._load_media()
+            self.studio.refresh()
         elif hasattr(page, "refresh"):
             page.refresh()
 
@@ -230,10 +232,11 @@ class MainWindow(QMainWindow):
                 if r != QMessageBox.Yes:
                     e.ignore()
                     return
-        self.studio._autosave()
+        self.studio.flush()
         s = QSettings(str(self.app.paths.root / "ui.ini"), QSettings.IniFormat)
         s.setValue("geometry", self.saveGeometry())
         s.setValue("vsplit", self.vsplit.saveState())
         self.studio.player.unload()
+        self.studio.mplayer.stop()
         self.updater.stop()
         super().closeEvent(e)

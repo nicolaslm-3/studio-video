@@ -75,7 +75,11 @@ class DashboardPage(QWidget):
         cols.addWidget(self._recent_projects(), 1)
         cols.addWidget(self._jobs_card(), 1)
         self.lay.addLayout(cols)
-        self.lay.addWidget(self._publications_card())
+        cols2 = QHBoxLayout()
+        cols2.setSpacing(16)
+        cols2.addWidget(self._exports_card(), 1)
+        cols2.addWidget(self._publications_card(), 1)
+        self.lay.addLayout(cols2)
         self.lay.addStretch(1)
 
     def _alerts(self):
@@ -149,7 +153,7 @@ class DashboardPage(QWidget):
         card = Card(clickable=True)
         card.clicked.connect(self.show_jobs.emit)
         card.lay.addWidget(label("Tâches", "h2"))
-        jobs = self.app.jobs.list(limit=5)
+        jobs = [j for j in self.app.jobs.list(limit=20) if j.kind != "preview_frame"][:5]
         if not jobs:
             card.lay.addWidget(label("Aucune tâche.", "faint"))
         for j in jobs:
@@ -159,6 +163,29 @@ class DashboardPage(QWidget):
             st = label(STATUS_LABELS[j.status], "error" if j.status == "failed" else "faint")
             h.addWidget(st)
             card.lay.addLayout(h)
+        card.lay.addStretch(1)
+        return card
+
+    def _exports_card(self) -> Card:
+        from pathlib import Path
+        card = Card()
+        card.lay.addWidget(label("Dernières vidéos produites", "h2"))
+        rows = self.app.montage.exports(limit=6)
+        if not rows:
+            card.lay.addWidget(label("Aucun export pour l'instant. Montez un projet puis « Exporter ».", "faint",
+                                     wrap=True))
+        for r in rows:
+            line = Card(clickable=True, padding=8, spacing=2)
+            line.setStyleSheet("QFrame[role='card']{border:none;}")
+            h = QHBoxLayout()
+            h.addWidget(label(Path(r["output_path"]).name))
+            h.addStretch(1)
+            h.addWidget(label(f"{r['aspect']} · {r['project_name']}", "faint"))
+            line.lay.addLayout(h)
+            line.setToolTip(r["output_path"])
+            line.clicked.connect(lambda p=r["output_path"]: __import__(
+                "studiovideo.ui.pages.library", fromlist=["reveal"]).reveal(p))
+            card.lay.addWidget(line)
         card.lay.addStretch(1)
         return card
 

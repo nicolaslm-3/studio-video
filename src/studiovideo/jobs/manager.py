@@ -75,16 +75,22 @@ class JobContext:
                                       stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
                                       errors="replace", creationflags=flags)
         tail: list[str] = []
-        assert self._proc.stderr is not None
-        for line in self._proc.stderr:
-            if self.cancelled:
-                self._proc.kill()
-                break
-            tail = (tail + [line.rstrip()])[-20:]
-            if on_line:
-                on_line(line)
-        rc = self._proc.wait()
-        self._proc = None
+        proc = self._proc
+        assert proc.stderr is not None
+        try:
+            for line in proc.stderr:
+                if self.cancelled:
+                    break
+                if not line.startswith(("out_time", "frame=", "fps=", "bitrate=", "total_size=", "speed=",
+                                        "progress=", "dup_frames", "drop_frames", "stream_")):
+                    tail = (tail + [line.rstrip()])[-20:]
+                if on_line:
+                    on_line(line)
+        finally:
+            if proc.poll() is None and (self.cancelled or sys.exc_info()[0] is not None):
+                proc.kill()
+            rc = proc.wait()
+            self._proc = None
         self.check()
         if rc != 0:
             raise RuntimeError(f"Le processus a échoué (code {rc}) :\n" + "\n".join(tail[-8:]))

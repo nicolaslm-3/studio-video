@@ -12,6 +12,7 @@ from .media.importer import MediaImporter
 from .paths import AppPaths, app_paths
 from .services.concepts import ConceptService
 from .services.library import LibraryService
+from .services.montage import MontageService
 from .services.projects import ProjectService
 from .services.publications import PublicationService
 from .services.settings import SettingsService
@@ -29,6 +30,7 @@ class AppContext:
     publications: PublicationService
     library: LibraryService
     settings: SettingsService
+    montage: MontageService
     workspace_id: int
 
     def importer(self) -> MediaImporter:
@@ -48,7 +50,7 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
     jobs = JobManager(db, max_workers=max_workers or int(settings.get("max_workers", 2)))
     ctx = AppContext(paths=paths, db=db, jobs=jobs, concepts=concepts, projects=ProjectService(db),
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
-                     workspace_id=ws)
+                     montage=MontageService(db), workspace_id=ws)
     _register_handlers(ctx)
     return ctx
 
@@ -70,5 +72,40 @@ def _register_handlers(app: AppContext) -> None:
                                          provenance=f"{meta.get('extractor')}:{meta.get('uploader') or ''}")
         return {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings, "meta": meta}
 
+    def export_timeline(ctx: JobContext, params: dict) -> dict:
+        from .edit import render
+        from .edit.model import Timeline
+        tl = Timeline.from_dict(params["timeline"])
+        sources, music = app.montage.sources_for(tl)
+        dest = Path(params["dest"])
+
+        def run(cmd, on_line):
+            return ctx.run_process(cmd, on_line)
+        report = render.export(tl, sources, music, dest, run, ctx.progress)
+        report["variant_id"] = app.montage.record_export(params["project_id"], tl, report, ctx.job_id)
+        return report
+
+    def preview(ctx: JobContext, params: dict) -> dict:
+        from .edit import render
+        from .edit.model import Timeline
+        tl = Timeline.from_dict(params["timeline"])
+        sources, _ = app.montage.sources_for(tl)
+        dest = app.paths.cache / "preview" / f"p{params['project_id']}_{ctx.job_id}.png"
+        render.preview_frame(tl, sources, float(params["t"]), dest)
+        return {"path": str(dest), "t": params["t"]}
+
+    def analyze(ctx: JobContext, params: dict) -> dict:
+        from .edit import render
+        from .edit.model import Timeline
+        tl = Timeline.from_dict(params["timeline"])
+        sources, music = app.montage.sources_for(tl)
+        ctx.progress(0.1, "Analyse du son")
+        rep = render.analyze_audio(tl, sources, music)
+        rep["silences"] = rep.get("silences", [])[:20]
+        return rep
+
     app.jobs.register("import_file", import_file)
     app.jobs.register("import_url", import_url)
+    app.jobs.register("export_timeline", export_timeline)
+    app.jobs.register("preview_frame", preview)
+    app.jobs.register("analyze_audio", analyze)

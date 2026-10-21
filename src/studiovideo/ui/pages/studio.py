@@ -1,22 +1,31 @@
-"""Studio (§2.1 B) — jalon 1 : médias du projet, lecteur, points d'entrée/sortie, clips.
-
-La timeline, les sous-titres, le recadrage et l'export arrivent au jalon suivant
-et sont signalés comme tels dans l'interface.
-"""
+"""Studio (§2.1 B) : médias du projet, lecteur source, montage, timeline, inspecteur, export."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
                                QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from ...core import AppContext
+from ...edit.model import Timeline, apply_concept_defaults
+from ...edit.render import output_path
 from ...media.ffmpeg import fmt_timecode
 from ..importing import DropZone, import_paths, import_url, pick_and_import
+from ..montage_panel import MontagePanel
+from ..montage_player import MontagePlayer
 from ..player import PlayerWidget
-from ..widgets import Card, EmptyState, Unavailable, button, color_dot, label
+from ..timeline_view import TimelineView
+from ..widgets import Card, EmptyState, button, label
+
+HISTORY_MAX = 100
+
+
+def default_export_dir() -> Path:
+    base = QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or str(Path.home() / "Videos")
+    return Path(base) / "Studio Vidéo"
 
 
 class StudioPage(QWidget):
@@ -26,13 +35,21 @@ class StudioPage(QWidget):
         super().__init__(parent)
         self.app = app
         self.project_id: int | None = None
+        self.concept_id: int | None = None
         self.asset_id: int | None = None
-        self._save_timer = QTimer(self, singleShot=True, interval=800)
+        self.tl = Timeline()
+        self.assets: dict[int, dict] = {}
+        self._history: list[str] = []
+        self._future: list[str] = []
+        self._jobs: dict[int, str] = {}
+        self._save_timer = QTimer(self, singleShot=True, interval=600)
         self._save_timer.timeout.connect(self._autosave)
+        self._snap_timer = QTimer(self, singleShot=True, interval=450)
+        self._snap_timer.timeout.connect(self._snapshot)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(10)
         top = QHBoxLayout()
         top.addWidget(label("Studio", "h1"))
         top.addSpacing(16)
@@ -43,6 +60,10 @@ class StudioPage(QWidget):
         self.concept_lbl = label("", "faint")
         top.addWidget(self.concept_lbl)
         top.addStretch(1)
+        self.undo_btn = button("↶", tooltip="Annuler (Ctrl+Z)", on_click=self.undo)
+        self.redo_btn = button("↷", tooltip="Rétablir (Ctrl+Y)", on_click=self.redo)
+        top.addWidget(self.undo_btn)
+        top.addWidget(self.redo_btn)
         self.save_lbl = label("", "faint")
         top.addWidget(self.save_lbl)
         top.addWidget(button("Nouveau projet", on_click=lambda: self.new_project.emit(None)))
@@ -55,62 +76,111 @@ class StudioPage(QWidget):
                                         "des médias et commencer le montage.", "Nouveau projet",
                                         lambda: self.new_project.emit(None)))
 
-        work = QSplitter(Qt.Horizontal)
-        # -- colonne médias
+        vsplit = QSplitter(Qt.Vertical)
+        hsplit = QSplitter(Qt.Horizontal)
+
+        # -- colonne médias et clips
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.addWidget(label("Médias du projet", "h2"))
         self.media_list = QListWidget()
+        self.media_list.setIconSize(QSize(64, 36))
         self.media_list.currentItemChanged.connect(self._on_media)
-        ll.addWidget(self.media_list, 1)
+        self.media_list.itemDoubleClicked.connect(lambda _it: self._add_media_to_timeline())
+        ll.addWidget(self.media_list, 2)
         dz = DropZone("Déposez des fichiers ici")
-        dz.setMinimumHeight(70)
+        dz.setMinimumHeight(64)
         dz.dropped.connect(lambda p: import_paths(self.app, self, p, self.project_id))
         ll.addWidget(dz)
         hb = QHBoxLayout()
         hb.addWidget(button("Importer…", on_click=lambda: pick_and_import(self.app, self, self.project_id)))
         hb.addWidget(button("URL…", on_click=lambda: import_url(self.app, self, self.project_id)))
-        hb.addWidget(button("Depuis la bibliothèque…", "ghost", on_click=self._attach_from_library))
+        hb.addWidget(button("+ Biblio.", "ghost", tooltip="Ajouter un média de la bibliothèque",
+                            on_click=self._attach_from_library))
         ll.addLayout(hb)
-        work.addWidget(left)
+        ll.addWidget(label("Clips", "h2"))
+        self.clips = QListWidget()
+        self.clips.itemDoubleClicked.connect(self._clip_to_timeline)
+        ll.addWidget(self.clips, 1)
+        ch = QHBoxLayout()
+        ch.addWidget(button("→ Timeline", tooltip="Ajouter le clip à la fin de la timeline",
+                            on_click=lambda: self._clip_to_timeline(self.clips.currentItem())))
+        ch.addWidget(button("Renommer", "ghost", on_click=self._rename_clip))
+        ch.addWidget(button("✕", "ghost", tooltip="Supprimer le clip", on_click=self._delete_clip))
+        ll.addLayout(ch)
+        hsplit.addWidget(left)
 
-        # -- lecteur + panneaux
-        center = QSplitter(Qt.Vertical)
-        pc = Card(padding=12)
+        # -- lecteurs
+        self.viewer_tabs = QTabWidget()
+        mc = Card(padding=10)
+        self.mplayer = MontagePlayer()
+        self.mplayer.time_changed.connect(self._on_time)
+        self.mplayer.render_requested.connect(self._request_preview)
+        mc.lay.addWidget(self.mplayer)
+        self.viewer_tabs.addTab(mc, "Montage")
+        sc = Card(padding=10)
         self.player = PlayerWidget()
         self.player.create_clip.connect(self._create_clip)
         self.player.in_out_changed.connect(lambda *_: self._save_timer.start())
-        pc.lay.addWidget(self.player)
-        center.addWidget(pc)
-        tabs = QTabWidget()
-        clips_w = QWidget()
-        cl = QVBoxLayout(clips_w)
-        cl.setContentsMargins(0, 8, 0, 0)
-        self.clips = QListWidget()
-        self.clips.itemDoubleClicked.connect(self._open_clip)
-        cl.addWidget(self.clips)
-        ch = QHBoxLayout()
-        ch.addStretch(1)
-        ch.addWidget(button("Renommer", on_click=self._rename_clip))
-        ch.addWidget(button("Supprimer", "danger", on_click=self._delete_clip))
-        cl.addLayout(ch)
-        tabs.addTab(clips_w, "Clips")
-        tabs.addTab(Unavailable("Timeline multipiste", "jalon 2 de la V1",
-                                "Découpe, déplacement des plans, pistes audio et texte."), "Timeline")
-        tabs.addTab(Unavailable("Transcription et sous-titres", "jalon 3 de la V1",
-                                "Transcription locale (faster-whisper), correction et sous-titres stylés."),
-                    "Sous-titres")
-        tabs.addTab(Unavailable("Export MP4", "jalon 2 de la V1",
-                                "Recadrage 9:16/1:1/16:9, miroir, titres, audio de base et export."), "Export")
-        center.addWidget(tabs)
-        center.setStretchFactor(0, 3)
-        center.setStretchFactor(1, 2)
-        work.addWidget(center)
-        work.setStretchFactor(0, 1)
-        work.setStretchFactor(1, 3)
-        work.setSizes([280, 900])
-        self.stack.addWidget(work)
+        sc.lay.addWidget(self.player)
+        srow = QHBoxLayout()
+        srow.addStretch(1)
+        srow.addWidget(button("Ajouter à la timeline", "primary",
+                              tooltip="Ajoute la sélection (ou tout le média) à la fin de la timeline (A)",
+                              on_click=self._add_media_to_timeline))
+        sc.lay.addLayout(srow)
+        self.viewer_tabs.addTab(sc, "Source")
+        self.viewer_tabs.currentChanged.connect(self._viewer_changed)
+        hsplit.addWidget(self.viewer_tabs)
+
+        # -- inspecteur
+        self.panel = MontagePanel(app)
+        self.panel.changed.connect(self._on_panel_change)
+        self.panel.split_requested.connect(self.split)
+        self.panel.analyze_requested.connect(self._analyze)
+        self.panel.export_requested.connect(self._export)
+        self.panel.save_concept_requested.connect(self._save_concept)
+        self.panel.apply_concept_requested.connect(self._apply_concept)
+        hsplit.addWidget(self.panel)
+        hsplit.setStretchFactor(0, 1)
+        hsplit.setStretchFactor(1, 3)
+        hsplit.setStretchFactor(2, 1)
+        hsplit.setSizes([230, 760, 410])
+        vsplit.addWidget(hsplit)
+
+        # -- timeline
+        tw = QWidget()
+        tl_lay = QVBoxLayout(tw)
+        tl_lay.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        bar.addWidget(label("Timeline", "h2"))
+        bar.addSpacing(12)
+        bar.addWidget(button("Couper (S)", tooltip="Couper l'extrait à la tête de lecture", on_click=self.split))
+        bar.addWidget(button("Supprimer l'extrait", "ghost", tooltip="Suppr", on_click=self._delete_selected))
+        bar.addWidget(button("Ajuster", "ghost", tooltip="Afficher toute la timeline", on_click=lambda: self.timeline.fit()))
+        bar.addStretch(1)
+        self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export)
+        bar.addWidget(self.export_quick)
+        tl_lay.addLayout(bar)
+        self.timeline = TimelineView()
+        c = self.timeline.canvas
+        c.seek.connect(lambda t: self.mplayer.seek(t))
+        c.segment_selected.connect(self._select_segment)
+        c.text_selected.connect(self._select_text)
+        c.music_selected.connect(lambda: self.panel.setCurrentIndex(3))
+        tl_lay.addWidget(self.timeline)
+        vsplit.addWidget(tw)
+        vsplit.setStretchFactor(0, 4)
+        vsplit.setStretchFactor(1, 1)
+        self.stack.addWidget(vsplit)
+
+        for key, fn in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Shift+Z", self.redo),
+                        ("S", self.split), ("Delete", self._delete_selected), ("A", self._add_media_to_timeline),
+                        ("Ctrl+E", self._export)):
+            sc_ = QShortcut(QKeySequence(key), self)
+            sc_.setContext(Qt.WidgetWithChildrenShortcut)
+            sc_.activated.connect(fn)
         self.refresh()
 
     # -- projet -------------------------------------------------------------
@@ -127,14 +197,21 @@ class StudioPage(QWidget):
         if self.project_id:
             self._load_media()
             self._load_clips()
+            self._push_views(panel=True)
 
     def open_project(self, project_id: int) -> None:
-        self._autosave()
+        self.flush()
         self.player.unload()
+        self.mplayer.stop()
         self.project_id = project_id
         self.asset_id = None
         p = self.app.projects.get(project_id)
+        self.concept_id = p["concept_id"] if p else None
         self.concept_lbl.setText(f"Concept : {p['concept_name']}" if p else "")
+        self.tl = self.app.montage.load(project_id)
+        self._history = [json.dumps(self.tl.to_dict(), sort_keys=True)]
+        self._future = []
+        self.panel.sel_segment = self.panel.sel_text = None
         self.refresh()
         data = self.app.projects.load_data(project_id)
         last = data.get("last_asset_id")
@@ -144,6 +221,8 @@ class StudioPage(QWidget):
                 row = i
         if self.media_list.count():
             self.media_list.setCurrentRow(row)
+        self.viewer_tabs.setCurrentIndex(0 if self.tl.segments else 1)
+        QTimer.singleShot(50, self.timeline.fit)
 
     def _on_project_combo(self) -> None:
         pid = self.project_combo.currentData()
@@ -154,7 +233,14 @@ class StudioPage(QWidget):
         cur = self.asset_id
         self.media_list.blockSignals(True)
         self.media_list.clear()
-        for a in self.app.db.query("SELECT * FROM source_asset WHERE project_id = ? ORDER BY id", (self.project_id,)):
+        self.assets = {}
+        ids = {s.asset_id for s in self.tl.segments} | ({self.tl.music.asset_id} if self.tl.music.asset_id else set())
+        rows = self.app.db.query("SELECT * FROM source_asset WHERE project_id = ? ORDER BY id", (self.project_id,))
+        extra = [self.app.montage.asset_row(i) for i in ids - {r["id"] for r in rows}]
+        for a in list(rows) + [e for e in extra if e]:
+            self.assets[a["id"]] = dict(a)
+            if a["project_id"] != self.project_id:
+                continue
             it = QListWidgetItem(f"{a['file_name']}\n{fmt_timecode(a['duration_s']) if a['duration_s'] else a['kind']}"
                                  + ("  · introuvable" if a["missing"] else ""))
             it.setData(Qt.UserRole, a["id"])
@@ -163,7 +249,6 @@ class StudioPage(QWidget):
             self.media_list.addItem(it)
             if a["id"] == cur:
                 self.media_list.setCurrentItem(it)
-        self.media_list.setIconSize(QSize(64, 36))
         self.media_list.blockSignals(False)
 
     def _on_media(self, item, _prev=None) -> None:
@@ -181,21 +266,162 @@ class StudioPage(QWidget):
         io = self.app.projects.load_data(self.project_id).get("in_out", {}).get(str(aid), [None, None])
         self.player.load(a["path"], a["fps"], *io)
 
+    def _viewer_changed(self, i: int) -> None:
+        if i == 0:
+            self.player.player.pause() if hasattr(self.player.player, "pause") else None
+        else:
+            self.mplayer.pause()
+
     def _attach_from_library(self) -> None:
-        rows = self.app.db.query("SELECT id, file_name FROM source_asset WHERE project_id IS NULL "
-                                 "AND kind IN ('video','audio') ORDER BY imported_at DESC LIMIT 300")
+        rows = self.app.db.query("SELECT id, file_name FROM source_asset WHERE (project_id IS NULL OR project_id != ?) "
+                                 "AND kind IN ('video','audio') AND missing = 0 ORDER BY imported_at DESC LIMIT 300",
+                                 (self.project_id,))
         if not rows:
-            QMessageBox.information(self, "Bibliothèque", "Aucun média libre dans la bibliothèque.")
+            QMessageBox.information(self, "Bibliothèque", "Aucun autre média dans la bibliothèque.")
             return
         names = [f"{r['file_name']}  [#{r['id']}]" for r in rows]
         choice, ok = QInputDialog.getItem(self, "Ajouter depuis la bibliothèque", "Média :", names, 0, False)
         if ok:
             aid = rows[names.index(choice)]["id"]
-            self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?",
-                                          (self.project_id, aid))
+            self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (self.project_id, aid))
             self._load_media()
 
-    # -- sauvegarde automatique ----------------------------------------------
+    # -- timeline : modifications ------------------------------------------------------
+    def _changed(self, panel: bool = False) -> None:
+        self._push_views(panel=panel)
+        self._save_timer.start()
+        if panel:
+            # modification de structure (ajout, coupe, suppression…) : une étape d'annulation chacune
+            self._snap_timer.stop()
+            self._snapshot()
+        else:
+            # réglages continus (curseurs, saisie) : regroupés en une étape
+            self._snap_timer.start()
+
+    def _push_views(self, panel: bool = False) -> None:
+        names = {k: v["file_name"] for k, v in self.assets.items()}
+        music = self.assets.get(self.tl.music.asset_id) if self.tl.music.asset_id else None
+        if self.tl.music.asset_id and not music:
+            row = self.app.montage.asset_row(self.tl.music.asset_id)
+            music = dict(row) if row else None
+            if music:
+                self.assets[music["id"]] = music
+        self.timeline.set_timeline(self.tl, names, music["file_name"] if music else "")
+        self.mplayer.set_timeline(self.tl, self.assets)
+        self.export_quick.setEnabled(bool(self.tl.segments))
+        self.undo_btn.setEnabled(len(self._history) > 1)
+        self.redo_btn.setEnabled(bool(self._future))
+        if panel:
+            durations = {k: v.get("duration_s") or 0 for k, v in self.assets.items()}
+            name = self.app.concepts.get_concept(self.concept_id).name if self.concept_id else ""
+            self.panel.set_timeline(self.tl, self.project_id, name, durations)
+
+    def _on_panel_change(self, what: str) -> None:
+        self.timeline.canvas.sel_text = self.panel.sel_text
+        self.timeline.canvas.sel_segment = self.panel.sel_segment
+        if what == "text-select":
+            self.timeline.canvas.update()
+            t = self.panel.current_text()
+            if t:
+                self.mplayer.seek(t.start)
+            return
+        self._changed(panel=what in ("format", "structure"))
+
+    def _on_time(self, t: float) -> None:
+        self.timeline.canvas.set_playhead(t)
+        self.panel.playhead = t
+
+    def _select_segment(self, seg_id) -> None:
+        self.panel.select_segment(seg_id)
+        self.timeline.canvas.sel_segment = seg_id
+        self.timeline.canvas.sel_text = None
+
+    def _select_text(self, text_id) -> None:
+        self.panel.select_text(text_id)
+
+    def _add_media_to_timeline(self) -> None:
+        if not self.project_id or not self.asset_id:
+            return
+        a = self.assets.get(self.asset_id) or dict(self.app.library.get(self.asset_id))
+        if a["kind"] != "video":
+            QMessageBox.information(self, "Timeline", "Seules les vidéos vont sur la piste vidéo. Pour un son, "
+                                    "choisissez-le comme musique dans l'onglet Audio.")
+            return
+        start = self.player.in_s if self.player.in_s is not None else 0.0
+        end = self.player.out_s if self.player.out_s is not None else (a["duration_s"] or 0)
+        try:
+            seg = self.tl.add_segment(a["id"], start, end)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Timeline", str(exc))
+            return
+        self.panel.sel_segment = seg.id
+        self.timeline.canvas.sel_segment = seg.id
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        self.mplayer.seek(self.tl.segment_start(len(self.tl.segments) - 1))
+        QTimer.singleShot(30, self.timeline.fit)
+
+    def _clip_to_timeline(self, item) -> None:
+        if not item or not item.data(Qt.UserRole):
+            return
+        r = self.app.db.query_one("SELECT * FROM clip WHERE id = ?", (item.data(Qt.UserRole),))
+        if not r or not r["source_asset_id"]:
+            return
+        try:
+            self.tl.add_segment(r["source_asset_id"], r["start_s"], r["end_s"])
+        except ValueError as exc:
+            QMessageBox.warning(self, "Timeline", str(exc))
+            return
+        self._load_media()
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        QTimer.singleShot(30, self.timeline.fit)
+
+    def split(self) -> None:
+        if self.tl.split_at(self.mplayer.t) is None:
+            self.save_lbl.setText("Impossible de couper si près d'une coupe")
+            return
+        self._changed(panel=True)
+
+    def _delete_selected(self) -> None:
+        if self.panel.sel_segment:
+            self.panel._seg_del()
+        elif self.panel.sel_text:
+            self.panel._del_text()
+
+    # -- annuler / rétablir ------------------------------------------------------------
+    def _snapshot(self) -> None:
+        s = json.dumps(self.tl.to_dict(), sort_keys=True)
+        if not self._history or self._history[-1] != s:
+            self._history.append(s)
+            self._history = self._history[-HISTORY_MAX:]
+            self._future.clear()
+        self.undo_btn.setEnabled(len(self._history) > 1)
+        self.redo_btn.setEnabled(bool(self._future))
+
+    def _restore(self, s: str) -> None:
+        self.tl = Timeline.from_dict(json.loads(s))
+        self._push_views(panel=True)
+        self._save_timer.start()
+
+    def undo(self) -> None:
+        self._snapshot()
+        if len(self._history) > 1:
+            self._future.append(self._history.pop())
+            self._restore(self._history[-1])
+
+    def redo(self) -> None:
+        if self._future:
+            s = self._future.pop()
+            self._history.append(s)
+            self._restore(s)
+
+    # -- sauvegarde automatique ----------------------------------------------------------
+    def flush(self) -> None:
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+        self._autosave()
+
     def _autosave(self) -> None:
         if not self.project_id:
             return
@@ -203,15 +429,103 @@ class StudioPage(QWidget):
         if self.asset_id:
             data.setdefault("in_out", {})[str(self.asset_id)] = [self.player.in_s, self.player.out_s]
             data["last_asset_id"] = self.asset_id
+        data["timeline"] = self.tl.to_dict()
         self.app.projects.save_data(self.project_id, data)
         self.save_lbl.setText("Enregistré")
 
-    # -- clips --------------------------------------------------------------
+    # -- réglages du concept ----------------------------------------------------------
+    def _save_concept(self) -> None:
+        if not self.concept_id:
+            return
+        self.app.montage.save_concept_defaults(self.concept_id, self.tl)
+        self.save_lbl.setText("Réglages du concept mémorisés")
+
+    def _apply_concept(self) -> None:
+        d = self.app.montage.concept_defaults(self.concept_id) if self.concept_id else None
+        if not d:
+            QMessageBox.information(self, "Réglages du concept", "Aucun réglage n'a encore été mémorisé pour ce "
+                                    "concept. Réglez un montage puis cliquez sur « Mémoriser ces réglages ».")
+            return
+        self.tl = apply_concept_defaults(self.tl, d)
+        self._changed(panel=True)
+
+    # -- tâches : aperçu, analyse, export ---------------------------------------------------
+    def _request_preview(self, t: float) -> None:
+        if not self.tl.segments:
+            return
+        for jid, kind in list(self._jobs.items()):
+            if kind == "preview":
+                self.app.jobs.cancel(jid)
+        jid = self.app.jobs.submit("preview_frame", "Aperçu", {"timeline": self.tl.to_dict(), "t": t,
+                                                              "project_id": self.project_id})
+        self._jobs[jid] = "preview"
+
+    def _analyze(self) -> None:
+        if not self.tl.segments:
+            return
+        self.panel.analysis.setText("Analyse en cours…")
+        jid = self.app.jobs.submit("analyze_audio", "Analyse du son", {"timeline": self.tl.to_dict()})
+        self._jobs[jid] = "analyze"
+
+    def _export(self) -> None:
+        if not self.project_id:
+            return
+        self.flush()
+        problems = self.tl.problems(self.app.montage.asset_row)
+        if problems:
+            QMessageBox.warning(self, "Export impossible", "\n".join(f"• {p}" for p in problems))
+            return
+        proj = self.app.projects.get(self.project_id)
+        dest = output_path(self.tl, proj["name"], default_export_dir())
+        jid = self.app.jobs.submit("export_timeline", f"Export · {dest.name}",
+                                   {"timeline": self.tl.to_dict(), "dest": str(dest), "project_id": self.project_id},
+                                   critical=True)
+        self._jobs[jid] = "export"
+        self.save_lbl.setText(f"Export lancé : {dest.name}")
+
+    def on_job(self, job) -> None:
+        """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        kind = self._jobs.get(job.id)
+        if not kind or job.status in ("pending", "running"):
+            return
+        self._jobs.pop(job.id, None)
+        if kind == "preview":
+            if job.status == "succeeded":
+                self.mplayer.show_render(job.result["path"])
+            elif job.status == "failed":
+                self.mplayer.render_failed(job.error)
+        elif kind == "analyze":
+            if job.status == "succeeded":
+                self.panel.show_analysis(job.result)
+            else:
+                self.panel.analysis.setText(f"Analyse impossible : {job.error[:300]}")
+        elif kind == "export":
+            self.panel._load_history()
+            if job.status == "succeeded":
+                r = job.result
+                msg = (f"Vidéo exportée :\n{r['path']}\n\n{r['width']}×{r['height']} · {r['duration']:.1f} s · "
+                       f"{r['size_bytes'] / 2**20:.1f} Mo")
+                if r.get("lufs") is not None:
+                    msg += f"\nVolume : {r['lufs']:.1f} LUFS · crête {r['true_peak']:.1f} dBTP"
+                if r.get("warnings"):
+                    msg += "\n\n" + "\n".join(f"⚠ {w}" for w in r["warnings"])
+                box = QMessageBox(QMessageBox.Information, "Export terminé", msg, parent=self)
+                show = box.addButton("Afficher le fichier", QMessageBox.ActionRole)
+                box.addButton("Fermer", QMessageBox.RejectRole)
+                box.exec()
+                if box.clickedButton() is show:
+                    from .library import reveal
+                    reveal(r["path"])
+            elif job.status == "failed":
+                QMessageBox.critical(self, "Échec de l'export", job.error[:1500])
+
+    # -- clips (jalon 1) ------------------------------------------------------------
     def _create_clip(self, start: float, end: float) -> None:
         if not self.asset_id:
             QMessageBox.information(self, "Créer un clip", "Sélectionnez d'abord un média vidéo ou audio.")
             return
-        n = self.app.db.query_one("SELECT COUNT(*) n FROM clip WHERE project_id=?", (self.project_id,))["n"]
+        n = self.app.db.query_one("SELECT COUNT(*) n FROM clip WHERE project_id=? AND name != 'Montage'",
+                                  (self.project_id,))["n"]
         with self.app.db.transaction() as c:
             c.execute("INSERT INTO clip(project_id, source_asset_id, name, start_s, end_s) VALUES (?,?,?,?,?)",
                       (self.project_id, self.asset_id, f"Clip {n + 1}", start, end))
@@ -220,14 +534,16 @@ class StudioPage(QWidget):
     def _load_clips(self) -> None:
         self.clips.clear()
         rows = self.app.db.query("SELECT c.*, a.file_name FROM clip c LEFT JOIN source_asset a ON a.id = "
-                                 "c.source_asset_id WHERE c.project_id = ? ORDER BY c.id", (self.project_id,))
+                                 "c.source_asset_id WHERE c.project_id = ? AND c.name != 'Montage' ORDER BY c.id",
+                                 (self.project_id,))
         if not rows:
-            it = QListWidgetItem("Aucun clip. Définissez un début (I) et une fin (O), puis « Créer un clip » (C).")
+            it = QListWidgetItem("Aucun clip. Dans l'onglet Source : début (I), fin (O), puis « Créer un clip » (C).")
             it.setFlags(Qt.NoItemFlags)
             self.clips.addItem(it)
         for r in rows:
-            it = QListWidgetItem(f"{r['name']}   {fmt_timecode(r['start_s'], True)} → {fmt_timecode(r['end_s'], True)}"
-                                 f"   ({fmt_timecode(r['end_s'] - r['start_s'], True)})   · {r['file_name'] or '—'}")
+            it = QListWidgetItem(f"{r['name']}   {fmt_timecode(r['start_s'])} → {fmt_timecode(r['end_s'])}"
+                                 f"   ({fmt_timecode((r['end_s'] or 0) - r['start_s'], True)})")
+            it.setToolTip(r["file_name"] or "")
             it.setData(Qt.UserRole, r["id"])
             self.clips.addItem(it)
 
@@ -235,25 +551,13 @@ class StudioPage(QWidget):
         it = self.clips.currentItem()
         return it.data(Qt.UserRole) if it else None
 
-    def _open_clip(self, item) -> None:
-        cid = item.data(Qt.UserRole)
-        r = self.app.db.query_one("SELECT * FROM clip WHERE id = ?", (cid,))
-        if not r:
-            return
-        for i in range(self.media_list.count()):
-            if self.media_list.item(i).data(Qt.UserRole) == r["source_asset_id"]:
-                self.media_list.setCurrentRow(i)
-        self.player.in_s, self.player.out_s = r["start_s"], r["end_s"]
-        self.player._refresh_io()
-        self.player.preview_range()
-
     def _rename_clip(self) -> None:
         cid = self._clip_id()
         if not cid:
             return
         cur = self.app.db.query_one("SELECT name FROM clip WHERE id=?", (cid,))["name"]
         name, ok = QInputDialog.getText(self, "Renommer le clip", "Nom :", text=cur)
-        if ok and name.strip():
+        if ok and name.strip() and name.strip() != "Montage":
             self.app.db.connect().execute("UPDATE clip SET name=? WHERE id=?", (name.strip(), cid))
             self._load_clips()
 

@@ -15,8 +15,13 @@ src/studiovideo/
 │   ├── publications.py publication maître, destinations, héritage, statuts
 │   ├── projects.py     projets et sauvegarde automatique de leur état
 │   ├── library.py      recherche dans la bibliothèque
+│   ├── montage.py      timeline du projet, réglages par concept, historique des exports
 │   ├── settings.py     paramètres
 │   └── secrets.py      coffre d'identifiants Windows (keyring)
+├── edit/
+│   ├── model.py        timeline : extraits, textes, musique, format, image, audio, export
+│   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification
+│   └── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
 ├── jobs/manager.py     file de tâches persistante, threads de travail, annulation, tâches critiques
 ├── media/
 │   ├── ffmpeg.py       localisation de FFmpeg, ffprobe, miniatures
@@ -29,7 +34,10 @@ src/studiovideo/
 └── ui/                 PySide6 — ne contient pas de logique métier
     ├── main_window.py  navigation latérale, 6 espaces, panneau des tâches, mises à jour
     ├── pages/          tableau de bord, studio, bibliothèque, paramètres
-    ├── player.py       lecteur + points d'entrée/sortie
+    ├── player.py       lecteur source + points d'entrée/sortie
+    ├── montage_player.py lecteur du montage, aperçu en direct du cadrage
+    ├── timeline_view.py  timeline (pistes vidéo, textes, musique)
+    ├── montage_panel.py  inspecteur : extrait, cadrage, textes, audio, export
     ├── dialogs.py      concept, compte, nouveau projet
     ├── importing.py    import partagé (fichiers, glisser-déposer, URL)
     ├── jobs_panel.py   gestionnaire de tâches visible

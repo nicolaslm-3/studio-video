@@ -53,7 +53,7 @@ class JobsPanel(QWidget):
 
     def refresh(self, *_):
         sel = self._selected()
-        jobs = self.app.jobs.list(self.filter.currentData(), limit=300)
+        jobs = [j for j in self.app.jobs.list(self.filter.currentData(), limit=300) if j.kind != "preview_frame"]
         self.table.setRowCount(len(jobs))
         for i, j in enumerate(jobs):
             it = QTableWidgetItem(j.label)

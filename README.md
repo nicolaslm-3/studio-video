@@ -2,8 +2,8 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.1.0 — V1, jalon 1 (socle).** Ce jalon pose les fondations sur lesquelles toutes les
-fonctions viendront se brancher. Ce qui n'est pas encore opérationnel est signalé comme tel dans
+**Version 0.2.0 — V1, jalon 2 (montage et export).** Le socle et le montage sont en place : on peut
+importer, monter, recadrer, titrer, régler le son et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
 
 ## Ce qui fonctionne
@@ -21,7 +21,17 @@ l'interface : aucun bouton n'est simulé.
 | Base SQLite à migrations versionnées, sauvegarde automatique, restauration | ✅ |
 | Thème sombre / clair, disposition mémorisée, raccourcis clavier | ✅ |
 | Mise à jour automatique (WinSparkle + Inno Setup + GitHub), retour à la version précédente | ✅ (voir [docs/UPDATES.md](docs/UPDATES.md)) |
-| Timeline, recadrage, sous-titres, transcription, export MP4 | ⏳ jalons 2–3 de la V1 |
+| Timeline : extraits, coupe, déplacement, suppression, duplication, zoom, annuler/rétablir | ✅ |
+| Recadrage 9:16 / 16:9 / 1:1 / 4:5, zoom, position, rotation, miroir, fond flou ou bandes noires | ✅ |
+| Corrections d'image : luminosité, contraste, saturation, température, netteté | ✅ |
+| Textes et accroches : police, taille, couleur, contour, fond, position, fondu | ✅ |
+| Audio : gain, passe-haut, réduction de bruit, normalisation EBU R128 en 2 passes, limiteur, fondus | ✅ |
+| Musique de fond avec atténuation automatique sous la voix (ducking) | ✅ |
+| Analyse du son (volume, crêtes, silences) | ✅ |
+| Aperçu en direct du cadrage et des textes, aperçu exact calculé par FFmpeg, zones TikTok/Reels | ✅ |
+| Export MP4 H.264/H.265 avec vérification réelle du fichier (dimensions, durée, volume final) | ✅ |
+| Réglages mémorisés par concept (format, image, audio, export, style de texte) | ✅ |
+| Transcription et sous-titres | ⏳ jalon 3 de la V1 |
 | IA, traduction, doublage | ⏳ V2 |
 | Publication, calendrier | ⏳ V3 |
 | Analytiques | ⏳ V4 |
@@ -48,8 +58,9 @@ permet d'utiliser un autre dossier de données.
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-Les 30 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
-Ils couvrent aussi les tâches, l'import, l'interface, la signature des mises à jour et le flux appcast.
+Les 53 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
+Ils couvrent aussi les tâches, l'import, l'interface, la signature des mises à jour, le flux appcast
+et de vrais exports FFmpeg (formats, modes de cadrage, musique, normalisation, vérification).
 
 ## Compiler l'exécutable Windows
 
