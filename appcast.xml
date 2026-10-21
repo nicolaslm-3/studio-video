@@ -4,6 +4,27 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.2.0</title>
+      <pubDate>Wed, 21 Oct 2026 19:45:23 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.2.0 — Montage et export&lt;/h2&gt;
+&lt;p&gt;Vous pouvez maintenant produire une vidéo complète.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Timeline : ajoutez des extraits, coupez (S), déplacez, dupliquez, supprimez ; annuler / rétablir&lt;/li&gt;
+&lt;li&gt;Formats 9:16, 16:9, 1:1, 4:5 ; zoom, position, rotation, effet miroir&lt;/li&gt;
+&lt;li&gt;Image entière avec fond flou ou bandes noires, ou image recadrée&lt;/li&gt;
+&lt;li&gt;Luminosité, contraste, saturation, température, netteté&lt;/li&gt;
+&lt;li&gt;Titres, accroches, call to action, noms : police, couleurs, contour, fond, fondu&lt;/li&gt;
+&lt;li&gt;Son : gain, coupe des graves, réduction de bruit, normalisation (-14 LUFS par défaut), limiteur&lt;/li&gt;
+&lt;li&gt;Musique de fond qui baisse automatiquement quand on parle&lt;/li&gt;
+&lt;li&gt;Analyse du son : volume, crêtes, silences&lt;/li&gt;
+&lt;li&gt;Aperçu en direct du cadrage et des textes, et aperçu exact de l&amp;#x27;export&lt;/li&gt;
+&lt;li&gt;Export MP4 vérifié (dimensions, durée, volume final)&lt;/li&gt;
+&lt;li&gt;Réglages mémorisés par concept&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.2.0/StudioVideo-0.2.0-Setup.exe" sparkle:version="0.2.0" sparkle:shortVersionString="0.2.0" sparkle:os="windows-x64" length="137959745" type="application/octet-stream" sparkle:edSignature="yjgPe9Joept+BVrV6750LP+1DiwSKJ2J1S9qIrBUrI6iPkBYty3GprNYA7LhaRlp9OsB7FAOtrvvGwicdbbMBw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.1.2</title>
       <pubDate>Wed, 21 Oct 2026 19:14:37 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.1.2&lt;/h2&gt;
