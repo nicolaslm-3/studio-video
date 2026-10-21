@@ -224,6 +224,7 @@ class MontagePanel(QTabWidget):
             self._load_cues()
             self._load_music_choices()
             self._load_voice_choices()
+            self._load_masks()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
             self.apply_concept_btn.setText(f"Appliquer les réglages de « {self.concept_name} »")
@@ -411,9 +412,105 @@ class MontagePanel(QTabWidget):
         f.addRow("Température", b.ispin("video.temperature", 2500, 10000, " K"))
         f.addRow("Netteté", b.slider("video.sharpen", 0.0, 1.0))
         f.addRow(button("Réinitialiser l'image", on_click=self._reset_look))
+        f.addRow(label("Masquer une zone (texte incrusté, logo)", "h2"))
+        self.mask_list = QListWidget()
+        self.mask_list.setMaximumHeight(90)
+        self.mask_list.currentRowChanged.connect(self._mask_selected)
+        f.addRow(self.mask_list)
+        mb = QHBoxLayout()
+        mb.addWidget(button("Bande du bas (sous-titres)", on_click=lambda: self._add_mask(0.05, 0.78, 0.9, 0.16)))
+        mb.addWidget(button("Coin (logo)", on_click=lambda: self._add_mask(0.78, 0.04, 0.19, 0.12)))
+        mb.addWidget(button("Supprimer", "ghost", on_click=self._del_mask))
+        f.addRow(mb)
+        self.mask_mode = QComboBox()
+        for k, n in (("blur", "Flou"), ("delogo", "Effacement (reconstruit depuis les bords)"),
+                     ("box", "Bande noire")):
+            self.mask_mode.addItem(n, k)
+        self.mask_mode.currentIndexChanged.connect(self._mask_edit)
+        f.addRow("Méthode", self.mask_mode)
+        self.mask_spins = {}
+        for key, name in (("x", "Gauche"), ("y", "Haut"), ("w", "Largeur"), ("h", "Hauteur")):
+            sp = QDoubleSpinBox()
+            sp.setRange(0, 100)
+            sp.setDecimals(1)
+            sp.setSuffix(" %")
+            sp.setKeyboardTracking(False)
+            sp.valueChanged.connect(self._mask_edit)
+            self.mask_spins[key] = sp
+        g = QHBoxLayout()
+        for key in ("x", "y", "w", "h"):
+            g.addWidget(self.mask_spins[key])
+        f.addRow("Zone (gauche, haut, largeur, hauteur)", g)
+        f.addRow(label("Zone en % de l'image d'origine. Contrôlez le résultat avec « Aperçu fidèle » : la "
+                       "lecture en direct n'affiche pas les masques. Pas de détection automatique du texte "
+                       "dans cette version.", "faint", wrap=True))
         f.addRow(label("Le miroir ou un filtre ne rendent pas un contenu « original » : vérifiez vos droits "
                        "sur les sources.", "faint", wrap=True))
         return w
+
+    # -- zones masquées ------------------------------------------------------------
+    def _load_masks(self) -> None:
+        names = {"blur": "Flou", "delogo": "Effacement", "box": "Bande noire"}
+        row = self.mask_list.currentRow()
+        self.mask_list.blockSignals(True)
+        self.mask_list.clear()
+        for m in self.tl.video.masks:
+            self.mask_list.addItem(f"{names.get(m.get('mode'), '?')} · {m['x'] * 100:.0f}, {m['y'] * 100:.0f} — "
+                                   f"{m['w'] * 100:.0f} × {m['h'] * 100:.0f} %")
+        self.mask_list.blockSignals(False)
+        if self.tl.video.masks:
+            self.mask_list.setCurrentRow(min(max(0, row), len(self.tl.video.masks) - 1))
+        self._mask_selected(self.mask_list.currentRow())
+
+    def _mask_selected(self, row: int) -> None:
+        on = 0 <= row < len(self.tl.video.masks)
+        was = self._loading
+        self._loading = True
+        try:
+            for k, sp in self.mask_spins.items():
+                sp.setEnabled(on)
+                sp.setValue(self.tl.video.masks[row][k] * 100 if on else 0)
+            self.mask_mode.setEnabled(on)
+            if on:
+                self.mask_mode.setCurrentIndex(max(0, self.mask_mode.findData(self.tl.video.masks[row].get("mode"))))
+        finally:
+            self._loading = was
+
+    def _add_mask(self, x, y, w, h) -> None:
+        self.tl.video.masks.append({"x": x, "y": y, "w": w, "h": h, "mode": "blur"})
+        self._loading = True
+        try:
+            self._load_masks()
+            self.mask_list.setCurrentRow(len(self.tl.video.masks) - 1)
+        finally:
+            self._loading = False
+        self.changed.emit("structure")
+
+    def _del_mask(self) -> None:
+        row = self.mask_list.currentRow()
+        if 0 <= row < len(self.tl.video.masks):
+            self.tl.video.masks.pop(row)
+            self._loading = True
+            try:
+                self._load_masks()
+            finally:
+                self._loading = False
+            self.changed.emit("structure")
+
+    def _mask_edit(self) -> None:
+        row = self.mask_list.currentRow()
+        if self._loading or not (0 <= row < len(self.tl.video.masks)):
+            return
+        m = self.tl.video.masks[row]
+        for k, sp in self.mask_spins.items():
+            m[k] = round(sp.value() / 100, 4)
+        m["mode"] = self.mask_mode.currentData()
+        self._loading = True
+        try:
+            self._load_masks()
+        finally:
+            self._loading = False
+        self.changed.emit("video.masks")
 
     def _aspect(self) -> None:
         if self._loading:

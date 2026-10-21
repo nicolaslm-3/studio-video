@@ -74,12 +74,46 @@ def _escape_path(p: str) -> str:
 
 
 # -- vidéo -----------------------------------------------------------------------
+MASK_MODES = ("blur", "delogo", "box")
+
+
+def mask_chain(masks: list, sw: int, sh: int, tag: str = "") -> str:
+    """Masque des zones de l'image source (avant rotation et recadrage). Chaîne vide si aucune zone."""
+    out = []
+    for j, m in enumerate(masks or []):
+        x = int(max(0.0, min(1.0, float(m.get("x", 0)))) * sw)
+        y = int(max(0.0, min(1.0, float(m.get("y", 0)))) * sh)
+        w = int(max(0.0, min(1.0, float(m.get("w", 0)))) * sw)
+        h = int(max(0.0, min(1.0, float(m.get("h", 0)))) * sh)
+        x, y = min(x, sw - 10), min(y, sh - 10)
+        w, h = max(8, min(w, sw - x)) // 2 * 2, max(8, min(h, sh - y)) // 2 * 2
+        x, y = x // 2 * 2, y // 2 * 2
+        mode = m.get("mode", "blur")
+        if mode == "box":
+            out.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color={m.get('color', 'black')}@1:t=fill")
+        elif mode == "delogo":
+            # delogo exige une zone strictement intérieure à l'image
+            dx, dy = max(1, x), max(1, y)
+            dw, dh = min(w, sw - dx - 1), min(h, sh - dy - 1)
+            out.append(f"delogo=x={dx}:y={dy}:w={dw}:h={dh}")
+        else:
+            r = max(1, min(20, min(w, h) // 4))
+            cr = max(1, min(r // 2, min(w, h) // 8))
+            t = f"{tag}m{j}"
+            out.append(f"split=2[{t}a][{t}b];[{t}b]crop={w}:{h}:{x}:{y},boxblur=luma_radius={r}:luma_power=3:"
+                       f"chroma_radius={cr}:chroma_power=3[{t}c];[{t}a][{t}c]overlay={x}:{y}")
+    return ",".join(out)
+
+
 def video_chain(tl: Timeline, src: Source, tag: str = "") -> str:
     """Filtres appliqués à un segment pour obtenir une image W×H au bon format."""
     f, v = tl.format, tl.video
     W, H = f.width, f.height
     parts: list[str] = []
     sw, sh = src.width or W, src.height or H
+    mk = mask_chain(getattr(v, "masks", None) or [], sw, sh, f"s{tag}")
+    if mk:
+        parts.append(mk)
     rot = v.rotation % 360
     if rot == 90:
         parts.append("transpose=1")

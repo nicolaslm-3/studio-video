@@ -80,8 +80,28 @@ jobs:
           cat sep.txt
           r=$(grep -o '{"sdr_before.*}' sep.txt | head -1)
           [ -n "$r" ] && echo "::notice title=Séparation réelle::$r"
+          if grep -q "SKIPPED" sep.txt; then echo "::error title=Séparation réelle::test réel ignoré"; rc=1; fi
           if [ $rc -ne 0 ]; then
             msg=$(grep -E "Error|error|assert|Exception|^E " sep.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
             echo "::error title=Séparation réelle::$msg"
+          fi
+          exit $rc
+      - name: Identification réelle des intervenants (modèle WeSpeaker)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STUDIOVIDEO_SPK_MODEL: spkmodel/wespeaker_en_voxceleb_resnet34.onnx
+        shell: bash
+        run: |
+          mkdir -p spkmodel
+          curl -sSfL -o spkmodel/wespeaker_en_voxceleb_resnet34.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx
+          echo "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94  spkmodel/wespeaker_en_voxceleb_resnet34.onnx" | sha256sum -c
+          set +e
+          python -m pytest -q tests/test_diarize.py -rA > spk.txt 2>&1
+          rc=$?
+          cat spk.txt
+          if grep -q "SKIPPED" spk.txt; then echo "::error title=Intervenants::test réel ignoré"; rc=1; fi
+          if [ $rc -ne 0 ]; then
+            msg=$(grep -E "Error|error|assert|Exception|^E " spk.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Intervenants::$msg"
           fi
           exit $rc

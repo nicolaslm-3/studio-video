@@ -268,7 +268,7 @@ class TranscriptPanel(QWidget):
             self.refresh_models()
         if job.id in self.translate_jobs and job.status in ("succeeded", "failed", "cancelled"):
             self.translate_jobs.discard(job.id)
-            title = "Doublage" if job.kind.startswith("dub") else "Traduction"
+            title = {"dub": "Doublage", "dub_line": "Doublage", "diarize": "Intervenants"}.get(job.kind, "Traduction")
             if job.status == "failed":
                 QMessageBox.warning(self, title, job.error[:800])
             elif job.kind == "dub":
@@ -279,6 +279,12 @@ class TranscriptPanel(QWidget):
                 if r.get("accelerated"):
                     msg += f" {len(r['accelerated'])} phrase(s) nettement accélérée(s) (⏩)."
                 self.status.setText(msg)
+                self.changed.emit(r.get("asset_id") or self.asset_id)
+            elif job.kind == "diarize":
+                r = job.result or {}
+                self.status.setText(f"{r.get('speakers', 0)} intervenant(s) détecté(s). Double-cliquez un nom pour "
+                                    "le renommer.")
+                self.set_asset(self.asset_id)
                 self.changed.emit(r.get("asset_id") or self.asset_id)
             elif job.kind == "dub_line":
                 self.status.setText("Nouvelle prise enregistrée.")
@@ -316,6 +322,8 @@ class TranscriptPanel(QWidget):
                 else "Doubler cette traduction (voix)…"
             m.addAction(label, self._dub)
             m.addAction("Supprimer cette traduction", self._delete_translation)
+        dz = m.addAction("Identifier les intervenants…", self._diarize)
+        dz.setEnabled(bool(self.asset_id and self.app.transcripts.has(self.asset_id)) and not self.lang)
         te = m.addAction("Monter depuis le texte…", self._text_edit)
         te.setEnabled(self.tr is not None)
         m.addSeparator()
@@ -335,6 +343,26 @@ class TranscriptPanel(QWidget):
         if dlg.exec():
             self.translate_jobs.update(dlg.job_ids)
             self.status.setText(f"{len(dlg.job_ids)} traduction(s) en cours…")
+
+    def _diarize(self) -> None:
+        from ..ai import diarize
+        if not diarize.installed(self.app.paths.models):
+            if QMessageBox.question(self, "Intervenants", "Le modèle d'empreintes vocales (26 Mo) n'est pas encore "
+                                    "installé. Ouvrir la page des modèles ?") == QMessageBox.Yes:
+                self.open_models.emit()
+            return
+        choices = ["Automatique"] + [str(n) for n in range(1, 9)]
+        choice, ok = QInputDialog.getItem(self, "Identifier les intervenants",
+                                          "Nombre d'intervenants (le calcul se fait sur ce PC ; les noms actuels "
+                                          "seront remplacés, l'original reste disponible) :", choices, 0, False)
+        if not ok:
+            return
+        n = None if choice == "Automatique" else int(choice)
+        a = self.app.library.get(self.asset_id)
+        jid = self.app.jobs.submit("diarize", f"Intervenants · {a['file_name']}",
+                                   {"asset_id": self.asset_id, "n_speakers": n})
+        self.translate_jobs.add(jid)
+        self.status.setText("Identification des intervenants…")
 
     def _dub(self) -> None:
         from .dub_dialog import DubDialog

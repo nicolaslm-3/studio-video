@@ -150,3 +150,32 @@ def test_concept_defaults_roundtrip():
     assert b.format.aspect == "1:1" and b.video.mirror and b.audio.target_lufs == -16
     assert b.segments == [] and b.texts == []
     assert d["text_style"]["color"] == "#FFCC00" and "text" not in d["text_style"]
+
+
+def test_masks_hide_burned_text(media, tmp_path):
+    """Des « traits » de texte incrustés (rayures fines, très contrastées) deviennent illisibles."""
+    import numpy as np
+    src_path = _make(tmp_path / "burn.mp4", ["-f", "lavfi", "-i", "color=c=0x336699:s=640x360:r=25:d=1",
+                                             "-vf", ",".join(f"drawbox=x={100 + 12 * k}:y=285:w=3:h=40:color=white@1:"
+                                                             "t=fill" for k in range(36)),
+                                             "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    srcs = {1: Source(str(src_path), 640, 360, 1.0, False)}
+
+    def band_mean(png):
+        p = subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-i", str(png), "-f", "rawvideo", "-pix_fmt", "gray",
+                            "-"], capture_output=True, check=True)
+        img = np.frombuffer(p.stdout, np.uint8).reshape(360, 640)
+        return float(img[288:322, 110:520].std()), float(img[50:150, 50:600].mean())
+    tl = Timeline()
+    tl.set_aspect("16:9", 360)
+    tl.add_segment(1, 0, 1)
+    plain = band_mean(preview_frame(tl, srcs, 0.5, tmp_path / "p0.png"))
+    assert plain[0] > 50                                      # traits nets et contrastés
+    for mode in ("blur", "delogo", "box"):
+        tl.video.masks = [{"x": 0.14, "y": 0.75, "w": 0.72, "h": 0.17, "mode": mode}]
+        band, rest = band_mean(preview_frame(tl, srcs, 0.5, tmp_path / f"p_{mode}.png"))
+        assert band < plain[0] / 4, (mode, band, plain[0])    # traits effacés ou noyés dans le flou
+        assert abs(rest - plain[1]) < 3                       # le reste de l'image est intact
+    out = tmp_path / "masked.mp4"
+    export(tl, srcs, None, out, run_cmd)
+    assert verify(out, tl)["width"] == 640

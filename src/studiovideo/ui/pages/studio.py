@@ -660,7 +660,7 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
-        if job.kind in ("transcribe", "download_model", "translate", "dub", "dub_line"):
+        if job.kind in ("transcribe", "download_model", "translate", "dub", "dub_line", "diarize"):
             self.transcript.on_job(job)
         if job.kind in ("dub", "dub_line", "separate") and job.status == "succeeded":
             self.panel.reload_voice()

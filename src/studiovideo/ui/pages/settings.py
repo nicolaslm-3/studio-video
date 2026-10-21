@@ -416,6 +416,11 @@ class SettingsPage(QWidget):
         rows = [(m.key, m.label + ("  ★ recommandé" if m.key == self._rec_model else ""), m.size_mb,
                  m.note + f" Mémoire conseillée : {m.min_ram_gb:g} Go.",
                  engines.is_installed(self.app.paths.models, m.key), engines.available()) for m in engines.MODELS]
+        from ...ai import diarize
+        spk_inst = diarize.installed(self.app.paths.models)
+        rows += [("spk:" + m.key, "Intervenants — " + m.label, m.size_mb,
+                  "Reconnaît qui parle, phrase par phrase, sur votre PC. WeSpeaker (Apache-2.0), entraîné sur VoxCeleb.",
+                  m.key in spk_inst, separate.available()) for m in diarize.MODELS]
         sep_inst = separate.installed(self.app.paths.models)
         rows += [("sep:" + m.key, "Séparation voix / musique — " + m.label, m.size_mb,
                   "Isole la voix du reste (musique, ambiance). Projet Ultimate Vocal Remover, licence MIT.",
@@ -459,7 +464,10 @@ class SettingsPage(QWidget):
         from ...transcribe import engines
         if QMessageBox.question(self, "Modèle", f"Supprimer le modèle « {key} » ? Il pourra être retéléchargé."
                                 ) == QMessageBox.Yes:
-            if key.startswith("sep:"):
+            if key.startswith("spk:"):
+                from ...ai import diarize
+                diarize.model_path(self.app.paths.models, diarize.BY_KEY[key[4:]]).unlink(missing_ok=True)
+            elif key.startswith("sep:"):
                 from ...edit import separate
                 separate.model_path(self.app.paths.models, separate.BY_KEY[key[4:]]).unlink(missing_ok=True)
             else:

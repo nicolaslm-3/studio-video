@@ -182,3 +182,19 @@ def test_dub_dialog_and_voice_choice(window, tmp_path, monkeypatch):
         assert dlg2.lines.count() == 3
     finally:
         srv.shutdown()
+
+
+def test_mask_controls(window):
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Masques")
+    w.open_project(pid)
+    mp = w.studio.panel
+    mp._add_mask(0.05, 0.78, 0.9, 0.16)
+    assert w.studio.tl.video.masks == [{"x": 0.05, "y": 0.78, "w": 0.9, "h": 0.16, "mode": "blur"}]
+    mp.mask_spins["h"].setValue(20)
+    mp.mask_mode.setCurrentIndex(mp.mask_mode.findData("box"))
+    assert w.studio.tl.video.masks[0]["h"] == 0.2 and w.studio.tl.video.masks[0]["mode"] == "box"
+    w.studio.flush()
+    assert ctx.montage.load(pid).video.masks[0]["mode"] == "box"
+    mp._del_mask()
+    assert w.studio.tl.video.masks == []

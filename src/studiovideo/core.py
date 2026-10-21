@@ -135,6 +135,15 @@ def _register_handlers(app: AppContext) -> None:
 
     def download_model(ctx: JobContext, params: dict) -> dict:
         from .transcribe import engines
+        if params["model"].startswith("spk:"):
+            from .ai import diarize
+            try:
+                p = diarize.download_model(app.paths.models, params["model"][4:], ctx.progress,
+                                           lambda: ctx.cancelled)
+            except diarize.DiarizationError:
+                ctx.check()
+                raise
+            return {"model": params["model"], "path": str(p)}
         if params["model"].startswith("sep:"):
             from .edit import separate
             try:
@@ -274,6 +283,37 @@ def _register_handlers(app: AppContext) -> None:
         app.stems.mark_done(aid, key)
         return {"asset_id": aid, "model": key, "duration": res["duration"]}
 
+    def diarize_job(ctx: JobContext, params: dict) -> dict:
+        """Qui parle ? Intervenants détectés à partir des voix (sur le PC)."""
+        import tempfile
+
+        from .ai import diarize
+        from .transcribe import engines
+        aid = params["asset_id"]
+        a = app.library.get(aid)
+        tr = app.transcripts.get(aid)
+        if a is None or tr is None or not tr.segments:
+            raise ValueError("Transcrivez d'abord ce média : les intervenants sont attribués phrase par phrase.")
+        ctx.progress(0.02, "Extraction du son")
+        with tempfile.TemporaryDirectory(dir=app.paths.temp) as td:
+            wav = engines.extract_audio(Path(a["path"]), Path(td) / "a.wav")
+            audio = engines.load_wav(wav)
+        labels = diarize.diarize(audio, [(s.start, s.end) for s in tr.segments], app.paths.models,
+                                 params.get("n_speakers") or None, float(params.get("threshold") or 0.5),
+                                 ctx.progress, lambda: ctx.cancelled)
+        ctx.check()
+        diarize.apply_labels(tr, labels)
+        app.transcripts.save_edit(aid, tr)
+        synced = []
+        for lang in app.transcripts.languages(aid):
+            t2 = app.transcripts.translation(aid, lang)
+            if t2 and diarize.copy_speakers(tr, t2):
+                app.transcripts.save_translation_edit(aid, t2)
+                synced.append(lang)
+        n = len(set(labels))
+        return {"asset_id": aid, "speakers": n, "segments": len(labels), "translations": synced}
+
+    app.jobs.register("diarize", diarize_job)
     app.jobs.register("separate", separate_job)
     app.jobs.register("dub", dub)
     app.jobs.register("dub_line", dub_line)
