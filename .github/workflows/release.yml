@@ -132,6 +132,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force selftest | Out-Null
           python -c "import sys; sys.path.insert(0,'src'); from pathlib import Path; from studiovideo.transcribe import engines; engines.download_model(Path('selftest/models'), 'tiny', lambda f,m: None, lambda: False)"
+          if ($LASTEXITCODE -ne 0) { echo "::error title=Auto-test::téléchargement du modèle tiny impossible"; throw "modèle" }
+          Get-ChildItem -Recurse selftest\models | Select-Object FullName, Length | Format-Table -AutoSize
           Add-Type -AssemblyName System.Speech
           $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
           $tts.Rate = -1
@@ -139,8 +141,18 @@ jobs:
           $tts.Speak("Welcome to the video studio. This video shows automatic subtitles for every speaker.")
           $tts.Dispose()
           $p = Start-Process -FilePath "dist\StudioVideo\StudioVideo.exe" -ArgumentList "--self-test", "$PWD\selftest\report.json", "--models", "$PWD\selftest\models", "--speech", "$PWD\selftest\speech.wav" -Wait -PassThru
+          if (-not (Test-Path selftest\report.json)) { echo "::error title=Auto-test::aucun rapport produit (code $($p.ExitCode))"; throw "pas de rapport" }
           Get-Content selftest\report.json
-          if ($p.ExitCode -ne 0) { throw "L'auto-test de l'exécutable a échoué (code $($p.ExitCode))." }
+          if ($p.ExitCode -ne 0) {
+            $rep = Get-Content selftest\report.json -Raw | ConvertFrom-Json
+            foreach ($c in $rep.checks.PSObject.Properties) {
+              if (-not $c.Value.ok) {
+                $t = (($c.Value.error + "`n" + $c.Value.trace) -replace '%','%25' -replace "`r",'' -replace "`n",'%0A')
+                echo "::error title=Auto-test $($c.Name)::$t"
+              }
+            }
+            throw "L'auto-test de l'exécutable a échoué (code $($p.ExitCode))."
+          }
           $r = Get-Content selftest\report.json | ConvertFrom-Json
           $txt = $r.checks.asr_transcription.detail.text.ToLower()
           if (-not ($txt -match "video|studio|subtitle")) { throw "Transcription inattendue : $txt" }

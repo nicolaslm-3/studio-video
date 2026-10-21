@@ -52,4 +52,15 @@ jobs:
           STUDIOVIDEO_TEST_WHISPER: "1"
           STUDIOVIDEO_TEST_SPEECH: speech.wav
           STUDIOVIDEO_TEST_MODELS: models
-        run: python -m pytest -q tests/test_transcribe_subtitles.py -k real_whisper -rA
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q tests/test_transcribe_subtitles.py -k real_whisper -rA > pytest.txt 2>&1
+          rc=$?
+          cat pytest.txt
+          if [ $rc -ne 0 ]; then
+            # dernières lignes du rapport en annotation (lisible sans ouvrir les journaux)
+            msg=$(grep -E "Error|error|assert|Exception|raise|^E " pytest.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Transcription réelle::$msg"
+          fi
+          exit $rc
