@@ -33,6 +33,7 @@ def default_export_dir() -> Path:
 class StudioPage(QWidget):
     new_project = Signal(object)
     open_models = Signal()
+    plan_publication = Signal(int)            # variant_id exporté
     open_ai_settings = Signal()
 
     def __init__(self, app: AppContext, parent=None):
@@ -714,9 +715,12 @@ class StudioPage(QWidget):
                     msg += "\n\n" + "\n".join(f"⚠ {w}" for w in r["warnings"])
                 box = QMessageBox(QMessageBox.Information, "Export terminé", msg, parent=self)
                 show = box.addButton("Afficher le fichier", QMessageBox.ActionRole)
+                plan = box.addButton("Programmer la publication…", QMessageBox.ActionRole)
                 box.addButton("Fermer", QMessageBox.RejectRole)
                 box.exec()
-                if box.clickedButton() is show:
+                if box.clickedButton() is plan and r.get("variant_id"):
+                    self.plan_publication.emit(int(r["variant_id"]))
+                elif box.clickedButton() is show:
                     from .library import reveal
                     reveal(r["path"])
             elif job.status == "failed":

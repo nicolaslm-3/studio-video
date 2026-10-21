@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.9.0 — V1 complète + V2 presque complète (clipping intelligent, audio, série, traduction, doublage, séparation voix/musique, intervenants, masquage de zones).** On peut importer, transcrire,
+**Version 0.10.0 — V1 et V2 complètes (hors détection automatique du texte incrusté), début de la V3 : calendrier et publication assistée.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -38,7 +38,6 @@ l'interface : aucun bouton n'est simulé.
 | Export TXT, SRT, VTT, JSON, ASS ; import de SRT / VTT existants | ✅ |
 | Sous-titres générés depuis la transcription, découpage réglable (mots, caractères, lignes, pauses) | ✅ |
 | Style complet, mot prononcé surligné, apparition mot par mot, effet pop, fondu ; incrustation ou .srt séparé | ✅ |
-| Identification automatique des intervenants (diarisation) | ⏳ V2 (saisie manuelle disponible) |
 | **V2** — Moments forts : analyse locale hors ligne (texte, énergie de la voix, intervenants) | ✅ |
 | **V2** — Filtres humour, débat, politique, émotion, pédagogie, potentiel ; mots-clés ; intervenants ; durées | ✅ |
 | **V2** — Score d'estimation, justification, accroche proposée, protection du contexte (§7.4) | ✅ |
@@ -54,7 +53,10 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Identification des intervenants sur le PC (empreintes vocales WeSpeaker), reportée sur les traductions | ✅ |
 | **V2** — Masquage manuel de zones (texte incrusté, logo) : flou, effacement, bande | ✅ |
 | **V2** — Détection automatique du texte incrusté (OCR) | ⏳ |
-| Publication, calendrier | ⏳ V3 |
+| **V3** — Calendrier éditorial : tous concepts et comptes, mois par mois, filtre par concept | ✅ |
+| **V3** — Publication : vidéo + texte maître, destinations du concept (hors concept sur confirmation), horaire et texte propres à chaque destination, contrôle des limites de chaque plateforme | ✅ |
+| **V3** — Rappels à l'heure prévue et publication assistée (texte copié, vidéo prête, page d'envoi), confirmée par le lien public | ✅ |
+| **V3** — Connexion des comptes et mise en ligne automatique (API YouTube, TikTok, Meta, X) | ⏳ |
 | Analytiques | ⏳ V4 |
 
 ## Raccourcis

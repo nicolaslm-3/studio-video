@@ -138,3 +138,76 @@ class PublicationService:
             "JOIN social_account a ON a.id = p.social_account_id "
             "WHERE p.status NOT IN ('published','cancelled') ORDER BY p.scheduled_at IS NULL, p.scheduled_at "
             "LIMIT ?", (limit,))
+
+
+    # -- V3 : calendrier et publication assistée ---------------------------------------
+    _CAL = ("SELECT p.id, p.master_id, p.status, p.schedule_mode, p.last_error, p.public_url,"
+            " COALESCE(p.scheduled_at, m.planned_at) at, a.platform, a.name account, a.id account_id,"
+            " c.id concept_id, c.name concept, c.color, COALESCE(p.title, m.title) title,"
+            " COALESCE(p.description, m.description) description, COALESCE(p.hashtags, m.hashtags) hashtags,"
+            " m.variant_id, v.output_path, v.aspect "
+            "FROM publication p JOIN master_publication m ON m.id = p.master_id "
+            "JOIN concept c ON c.id = m.concept_id JOIN social_account a ON a.id = p.social_account_id "
+            "LEFT JOIN video_variant v ON v.id = COALESCE(p.variant_id, m.variant_id) ")
+
+    def calendar(self, start: str, end: str, concept_id: int | None = None) -> list[sqlite3.Row]:
+        """Publications datées dans [start, end[ (heure locale « AAAA-MM-JJTHH:MM »)."""
+        sql = self._CAL + "WHERE COALESCE(p.scheduled_at, m.planned_at) >= ? AND COALESCE(p.scheduled_at, m.planned_at) < ?"
+        params: list = [start, end]
+        if concept_id:
+            sql += " AND c.id = ?"
+            params.append(concept_id)
+        return self.db.query(sql + " ORDER BY at, a.platform", tuple(params))
+
+    def undated(self, concept_id: int | None = None) -> list[sqlite3.Row]:
+        sql = self._CAL + ("WHERE COALESCE(p.scheduled_at, m.planned_at) IS NULL "
+                           "AND p.status NOT IN ('published','cancelled')")
+        params: tuple = ()
+        if concept_id:
+            sql += " AND c.id = ?"
+            params = (concept_id,)
+        return self.db.query(sql + " ORDER BY p.id DESC", params)
+
+    def get(self, publication_id: int) -> sqlite3.Row | None:
+        return self.db.query_one(self._CAL + "WHERE p.id = ?", (publication_id,))
+
+    def master(self, master_id: int) -> sqlite3.Row | None:
+        return self.db.query_one("SELECT * FROM master_publication WHERE id = ?", (master_id,))
+
+    def schedule(self, publication_id: int, when: str | None) -> None:
+        """Programme (heure locale) un rappel de publication ; None retire la date."""
+        with self.db.transaction() as c:
+            if when:
+                c.execute("UPDATE publication SET scheduled_at = ?, schedule_mode = 'local', status = 'scheduled_local'"
+                          " WHERE id = ? AND status NOT IN ('published','cancelled')", (when, publication_id))
+            else:
+                c.execute("UPDATE publication SET scheduled_at = NULL, schedule_mode = 'none', status = 'draft'"
+                          " WHERE id = ? AND status = 'scheduled_local'", (publication_id,))
+
+    def due(self, now: str) -> list[sqlite3.Row]:
+        """Rappels arrivés à échéance (programmés localement, heure passée)."""
+        return self.db.query(self._CAL + "WHERE p.status = 'scheduled_local' AND p.scheduled_at <= ? "
+                                         "ORDER BY p.scheduled_at", (now,))
+
+    def mark_manual(self, publication_id: int, reason: str) -> None:
+        self.set_status(publication_id, PublicationStatus.MANUAL_ACTION, error=reason)
+
+    def confirm_published(self, publication_id: int, public_url: str) -> None:
+        """Publication faite à la main : le lien public fourni sert de confirmation (vérifié par plateforme)."""
+        from ..publish.rules import url_matches
+        row = self.get(publication_id)
+        if row is None:
+            raise PublicationError("Publication introuvable.")
+        if not url_matches(row["platform"], public_url):
+            raise PublicationError("Ce lien n'appartient pas à la plateforme de cette publication.")
+        self.set_status(publication_id, PublicationStatus.PUBLISHED, remote_id=public_url.strip(),
+                        public_url=public_url.strip())
+
+    def cancel(self, publication_id: int) -> None:
+        self.set_status(publication_id, PublicationStatus.CANCELLED)
+
+    def delete_master(self, master_id: int) -> None:
+        if self.db.query_one("SELECT 1 FROM publication WHERE master_id = ? AND status = 'published'", (master_id,)):
+            raise PublicationError("Une destination est déjà publiée : annulez plutôt les autres.")
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM master_publication WHERE id = ?", (master_id,))

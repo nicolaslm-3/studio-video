@@ -16,6 +16,7 @@ from .dialogs import ConceptDialog, NewProjectDialog
 from .importing import pick_and_import
 from .jobs_panel import JobsPanel
 from .pages.dashboard import DashboardPage
+from .pages.calendar import CalendarPage, now_local
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
@@ -83,9 +84,7 @@ class MainWindow(QMainWindow):
         self.studio = StudioPage(app)
         self.library = LibraryPage(app)
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
-        self.calendar = Unavailable("Calendrier éditorial", "V3",
-                                    "Il regroupera les publications de tous les concepts et comptes, avec des "
-                                    "horaires indépendants par plateforme.")
+        self.calendar = CalendarPage(app)
         self.analytics = Unavailable("Analytiques", "V4",
                                      "Comparaison des performances par vidéo, compte, concept et plateforme. "
                                      "Les indicateurs non fournis par une plateforme seront signalés comme tels.")
@@ -110,6 +109,7 @@ class MainWindow(QMainWindow):
         self.dashboard.open_project.connect(self.open_project)
         self.dashboard.edit_concept.connect(self.edit_concept)
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
+        self.dashboard.open_calendar.connect(lambda: self.go(3))
         self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(lambda m: theme.apply(QApplication.instance(), m))
         self.settings_page.check_updates.connect(self.updater.check_now)
@@ -132,6 +132,12 @@ class MainWindow(QMainWindow):
         if startup_message:
             QTimer.singleShot(400, lambda: QMessageBox.information(self, "Studio Vidéo", startup_message))
         QTimer.singleShot(1500, self._start_updater)
+        self.studio.plan_publication.connect(lambda vid: (self.go(3), self.calendar.new_publication(variant_id=vid)))
+        # rappels de publication (§19) : vérifiés chaque minute tant que le logiciel est ouvert
+        self._reminders = QTimer(self)
+        self._reminders.timeout.connect(self.check_reminders)
+        self._reminders.start(60_000)
+        QTimer.singleShot(3000, self.check_reminders)
 
     # -- navigation ---------------------------------------------------------
     def go(self, index: int) -> None:
@@ -140,6 +146,22 @@ class MainWindow(QMainWindow):
         page = self.pages.currentWidget()
         if hasattr(page, "refresh"):
             page.refresh()
+
+    def check_reminders(self) -> int:
+        due = self.app.publications.due(now_local())
+        for r in due:
+            self.app.publications.mark_manual(r["id"], "Heure de publication atteinte : à publier.")
+        n = self.calendar.pending_count()
+        self.nav_group.button(3).setText("Calendrier" + (f"  ● {n}" if n else ""))
+        if due:
+            from ..publish.rules import RULES
+            names = ", ".join(f"{RULES[r['platform']].label} {r['account']} ({r['title'] or 'sans titre'})"
+                              for r in due[:3])
+            self.statusBar().showMessage(f"À publier maintenant : {names}" + (" …" if len(due) > 3 else ""), 60_000)
+            if self.pages.currentWidget() is self.calendar:
+                self.calendar.refresh()
+            QApplication.alert(self)
+        return len(due)
 
     def toggle_jobs(self, force: bool | None = None) -> None:
         show = (not self.jobs_panel.isVisible()) if force is None or not isinstance(force, bool) else force

@@ -198,3 +198,56 @@ def test_mask_controls(window):
     assert ctx.montage.load(pid).video.masks[0]["mode"] == "box"
     mp._del_mask()
     assert w.studio.tl.video.masks == []
+
+
+def test_calendar_publication_flow(window, monkeypatch):
+    from studiovideo.domain.models import Platform
+    from studiovideo.ui import publication_dialog as pd
+    from studiovideo.ui.pages import calendar as calmod
+    w, ctx = window
+    c = ctx.concepts.create_concept("Poussey Pass")
+    yt = ctx.concepts.create_account(Platform.YOUTUBE, "Chaîne")
+    tk = ctx.concepts.create_account(Platform.TIKTOK, "Compte")
+    other = ctx.concepts.create_account(Platform.X, "Autre")
+    ctx.concepts.link(c.id, yt.id)
+    ctx.concepts.link(c.id, tk.id)
+    w.go(3)
+    cal = w.calendar
+    dlg = pd.PublicationDialog(ctx, day="2026-11-05")
+    dlg.concept.setCurrentIndex(dlg.concept.findData(c.id))
+    assert {r["account"].id for r in dlg.rows} == {yt.id, tk.id}
+    assert other.id not in {r["account"].id for r in dlg.rows}          # hors concept : jamais proposé
+    dlg.title.setText("Mon sketch")
+    dlg.tags.setText("humour, sketch")
+    assert "Textes conformes" in dlg.warn.text()
+    dlg.title.setText("x" * 120)
+    assert "titre trop long" in dlg.warn.text()
+    dlg.title.setText("Mon sketch")
+    dlg._save()
+    m = dlg.master_id
+    pubs = {p.account.id: p for p in ctx.publications.list_for_master(m)}
+    assert set(pubs) == {yt.id, tk.id} and all(p.scheduled_at == "2026-11-05T18:00" for p in pubs.values())
+    assert ctx.publications.master(m)["hashtags"] == "#humour #sketch"
+    cal.year, cal.month = 2026, 11
+    cal.refresh()
+    from PySide6.QtWidgets import QPushButton
+    texts = [b.text() for cell in cal.cells for b in cell.findChildren(QPushButton)]
+    assert sum("Mon sketch" in t for t in texts) == 2
+    # rappel : l'heure est passée → action manuelle demandée, badge sur la navigation
+    monkeypatch.setattr("studiovideo.ui.main_window.now_local", lambda: "2026-11-05T18:01")
+    assert w.check_reminders() == 2
+    assert "● 2" in w.nav_group.button(3).text()
+    cal.refresh()
+    assert cal.todo.count() == 2
+    # publication assistée puis confirmation par le lien public
+    opened = []
+    a = pd.AssistedPublishDialog(ctx, pubs[yt.id].id, open_url=opened.append)
+    a._open()
+    assert opened == ["https://www.youtube.com/upload"]
+    a.url.setText("https://www.tiktok.com/@x/video/1")
+    a._confirm()
+    assert "plateforme" in a.msg.text()
+    a.url.setText("https://youtu.be/abc")
+    a._confirm()
+    assert ctx.publications.get(pubs[yt.id].id)["status"] == "published"
+    assert calmod.now_local()[:2] == "20"

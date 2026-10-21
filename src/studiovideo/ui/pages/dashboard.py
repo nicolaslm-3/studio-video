@@ -13,6 +13,7 @@ class DashboardPage(QWidget):
     open_project = Signal(int)
     edit_concept = Signal(object)     # concept_id | None
     show_jobs = Signal()
+    open_calendar = Signal()
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -192,8 +193,26 @@ class DashboardPage(QWidget):
     def _publications_card(self) -> Card:
         card = Card()
         card.lay.addWidget(label("Publications programmées", "h2"))
-        card.lay.addWidget(label("La publication multiplateforme arrive en V3. Les publications préparées "
-                                 "apparaîtront ici.", "faint", wrap=True))
+        from ...publish.rules import RULES
+        rows = self.app.publications.upcoming(8)
+        if not rows:
+            card.lay.addWidget(label("Aucune publication préparée. Après un export : « Programmer la "
+                                     "publication », ou Calendrier → Nouvelle publication.", "faint", wrap=True))
+        for r in rows:
+            line = Card(clickable=True, padding=8, spacing=2)
+            line.setStyleSheet("QFrame[role='card']{border:none;}")
+            h = QHBoxLayout()
+            when = (r["scheduled_at"] or "")
+            when = f"{when[8:10]}/{when[5:7]} {when[11:16]}" if when else "sans date"
+            mark = "● " if r["status"] in ("manual_action", "failed") else ""
+            h.addWidget(label(f"{mark}{when} · {RULES[r['platform']].label}"))
+            h.addWidget(label((r["title"] or "Sans titre")[:40], "muted"))
+            h.addStretch(1)
+            h.addWidget(label(r["concept"], "faint"))
+            line.lay.addLayout(h)
+            line.clicked.connect(self.open_calendar.emit)
+            card.lay.addWidget(line)
+        card.lay.addStretch(1)
         return card
 
 
