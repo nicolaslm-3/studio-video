@@ -12,8 +12,9 @@ PRESET_KIND = "montage"
 
 
 class MontageService:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, stems_root: Path | None = None):
         self.db = db
+        self.stems_root = stems_root or Path(getattr(db, "path", ".")).parent / "stems"
 
     # -- timeline ------------------------------------------------------------
     def load(self, project_id: int) -> Timeline:
@@ -84,6 +85,13 @@ class MontageService:
                 if not track.exists():
                     raise FileNotFoundError(f"Piste de doublage introuvable : {track}")
                 out[aid].dub_path = str(track)
+            need = (vs.mode == "dub" and vs.background == "ambience") or (vs.mode != "dub" and vs.isolate)
+            if need and a["audio_tracks"] > 0:
+                d = self.stems_root / f"a{aid}"
+                if not ((d / "stems.json").exists() and (d / "voice.wav").exists()):
+                    raise ValueError(f"Séparez d'abord voix et musique pour « {a['file_name']} » "
+                                     "(onglet Audio → Séparer voix et musique).")
+                out[aid].voice_stem, out[aid].music_stem = str(d / "voice.wav"), str(d / "music.wav")
         music = None
         if tl.music.asset_id:
             m = self.db.query_one("SELECT * FROM source_asset WHERE id = ?", (tl.music.asset_id,))

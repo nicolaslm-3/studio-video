@@ -181,6 +181,7 @@ class MontagePanel(QTabWidget):
     text_added = Signal(str)
     generate_subs_requested = Signal()
     optimize_requested = Signal()
+    separate_requested = Signal()
     cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
@@ -808,9 +809,21 @@ class MontagePanel(QTabWidget):
                                            [(-60.0, "Remplacée par le doublage"),
                                             (-18.0, "Gardée en fond, très bas"),
                                             (-10.0, "Gardée en fond, audible")]))
+        f.addRow("Fond du doublage", b.combo("voice.background",
+                                             [("original", "Son d'origine (niveau ci-dessus)"),
+                                              ("ambience", "Musique et ambiance d'origine, sans la voix")]))
         f.addRow("Gain du doublage", b.spin("voice.dub_gain_db", -20, 20, 0.5, 1, " dB"))
         self.voice_note = label("", "faint", wrap=True)
         f.addRow(self.voice_note)
+        f.addRow(b.check("voice.isolate", "Isoler la voix d'origine (retirer musique et ambiance)"))
+        sp = QHBoxLayout()
+        sp.addWidget(button("Séparer voix et musique", tooltip="Calcule, sur ce PC, une piste voix seule et une "
+                            "piste musique et ambiance pour chaque média du montage",
+                            on_click=self.separate_requested.emit))
+        sp.addStretch(1)
+        f.addRow(sp)
+        self.stems_note = label("", "faint", wrap=True)
+        f.addRow(self.stems_note)
         f.addRow(label("Voix et son des extraits", "h2"))
         f.addRow("Gain", b.spin("audio.gain_db", -20, 20, 0.5, 1, " dB"))
         f.addRow(b.check("audio.highpass", "Couper les graves parasites (< 80 Hz)"))
@@ -884,6 +897,22 @@ class MontagePanel(QTabWidget):
             self.voice_note.setText(("L'aperçu en direct joue encore la voix d'origine ; l'export utilise le "
                                      "doublage. " if cur else "") +
                                     "Astuce : affichez les sous-titres dans la même langue (onglet Sous-titres).")
+        stems = self.app.stems
+        sep = [a for a in ids if stems and stems.has(a)]
+        if not ids:
+            self.stems_note.setText("")
+        elif len(sep) == len(ids):
+            self.stems_note.setText("✓ Voix et musique séparées pour tous les médias du montage.")
+        else:
+            self.stems_note.setText(f"Séparation : {len(sep)}/{len(ids)} média(s). Nécessaire pour isoler la voix "
+                                    "ou garder l'ambiance sous un doublage.")
+
+    def reload_voice(self) -> None:
+        self._loading = True
+        try:
+            self._load_voice_choices()
+        finally:
+            self._loading = False
 
     def _voice_pick(self) -> None:
         if self._loading:

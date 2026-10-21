@@ -47,6 +47,8 @@ class Source:
     has_audio: bool
     file_name: str = ""
     dub_path: str = ""   # piste de voix doublée (48 kHz mono), alignée sur le média
+    voice_stem: str = ""  # voix seule (séparation), alignée sur le média
+    music_stem: str = ""  # musique et ambiance seules (séparation)
 
 
 @dataclass
@@ -172,7 +174,15 @@ class GraphBuilder:
                     self.graph.append(
                         f"[{d}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
                         f"{vol},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[ad{i}]")
-                    if src.has_audio and vs.original_level_db > -59 and not seg.muted:
+                    if vs.background == "ambience" and src.music_stem and not seg.muted:
+                        b = self._input(["-ss", _fmt(seg.src_in), "-t", _fmt(dur), "-i", src.music_stem])
+                        self.graph.append(
+                            f"[{b}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                            f"volume={_fmt(seg.volume_db + vs.ambience_db)}dB,asetpts=PTS-STARTPTS,apad,"
+                            f"atrim=0:{_fmt(dur)}[ao{i}]")
+                        self.graph.append(f"[ad{i}][ao{i}]amix=inputs=2:duration=first:normalize=0:"
+                                          f"dropout_transition=0[a{i}]")
+                    elif src.has_audio and vs.original_level_db > -59 and not seg.muted:
                         self.graph.append(
                             f"[{k}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
                             f"volume={_fmt(seg.volume_db + vs.original_level_db)}dB,asetpts=PTS-STARTPTS,apad,"
@@ -183,10 +193,13 @@ class GraphBuilder:
                         self.graph.append(f"[ad{i}]anull[a{i}]")
                     alabels.append(f"[a{i}]")
                     continue
+                ain = f"[{k}:a:0]"
+                if vs is not None and vs.mode != "dub" and vs.isolate and src.voice_stem:
+                    ain = f"[{self._input(['-ss', _fmt(seg.src_in), '-t', _fmt(dur), '-i', src.voice_stem])}:a:0]"
                 if src.has_audio:
                     vol = "volume=0" if seg.muted else f"volume={_fmt(seg.volume_db)}dB"
                     self.graph.append(
-                        f"[{k}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                        f"{ain}aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
                         f"{vol},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[a{i}]")
                 else:
                     z = self._input(["-f", "lavfi", "-t", _fmt(dur), "-i",

@@ -64,3 +64,24 @@ jobs:
             echo "::error title=Transcription réelle::$msg"
           fi
           exit $rc
+      - name: Séparation voix / musique réelle (modèle MDX-Net)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STUDIOVIDEO_SEP_MODEL: sepmodel/Kim_Vocal_2.onnx
+          STUDIOVIDEO_SEP_SPEECH: speech.wav
+        shell: bash
+        run: |
+          mkdir -p sepmodel
+          curl -sSfL -o sepmodel/Kim_Vocal_2.onnx https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx
+          echo "ce74ef3b6a6024ce44211a07be9cf8bc6d87728cc852a68ab34eb8e58cde9c8b  sepmodel/Kim_Vocal_2.onnx" | sha256sum -c
+          set +e
+          python -m pytest -q -s tests/test_separation.py -rA > sep.txt 2>&1
+          rc=$?
+          cat sep.txt
+          r=$(grep -o '{"sdr_before.*}' sep.txt | head -1)
+          [ -n "$r" ] && echo "::notice title=Séparation réelle::$r"
+          if [ $rc -ne 0 ]; then
+            msg=$(grep -E "Error|error|assert|Exception|^E " sep.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Séparation réelle::$msg"
+          fi
+          exit $rc

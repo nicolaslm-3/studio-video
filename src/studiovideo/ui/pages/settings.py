@@ -409,26 +409,38 @@ class SettingsPage(QWidget):
         self.llm_status.setText("Enregistré.")
         self.llm_changed.emit()
 
-    def _fill_models(self) -> None:
+    def _model_rows(self) -> list[tuple]:
+        """(clé, libellé, taille Mo, info-bulle, installé, moteur disponible) : transcription puis séparation."""
+        from ...edit import separate
         from ...transcribe import engines
+        rows = [(m.key, m.label + ("  ★ recommandé" if m.key == self._rec_model else ""), m.size_mb,
+                 m.note + f" Mémoire conseillée : {m.min_ram_gb:g} Go.",
+                 engines.is_installed(self.app.paths.models, m.key), engines.available()) for m in engines.MODELS]
+        sep_inst = separate.installed(self.app.paths.models)
+        rows += [("sep:" + m.key, "Séparation voix / musique — " + m.label, m.size_mb,
+                  "Isole la voix du reste (musique, ambiance). Projet Ultimate Vocal Remover, licence MIT.",
+                  m.key in sep_inst, separate.available()) for m in separate.MODELS]
+        return rows
+
+    def _fill_models(self) -> None:
         t = self.models_table
-        t.setRowCount(len(engines.MODELS))
+        rows = self._model_rows()
+        t.setRowCount(len(rows))
         running = set(self._model_jobs.values())
-        for i, m in enumerate(engines.MODELS):
-            name = QTableWidgetItem(m.label + ("  ★ recommandé" if m.key == self._rec_model else ""))
-            name.setToolTip(m.note + f" Mémoire conseillée : {m.min_ram_gb:g} Go.")
+        for i, (key, text, size, tip, inst, avail) in enumerate(rows):
+            name = QTableWidgetItem(text)
+            name.setToolTip(tip)
             t.setItem(i, 0, name)
-            t.setItem(i, 1, QTableWidgetItem(f"{m.size_mb} Mo"))
-            inst = engines.is_installed(self.app.paths.models, m.key)
-            state = "Téléchargement…" if m.key in running else ("Installé" if inst else "Non installé")
+            t.setItem(i, 1, QTableWidgetItem(f"{size} Mo"))
+            state = "Téléchargement…" if key in running else ("Installé" if inst else "Non installé")
             t.setItem(i, 2, QTableWidgetItem(state))
-            if m.key in running:
-                b = button("Annuler", "ghost", on_click=lambda _=False, k=m.key: self._cancel_model(k))
+            if key in running:
+                b = button("Annuler", "ghost", on_click=lambda _=False, k=key: self._cancel_model(k))
             elif inst:
-                b = button("Supprimer", "ghost", on_click=lambda _=False, k=m.key: self._delete_model(k))
+                b = button("Supprimer", "ghost", on_click=lambda _=False, k=key: self._delete_model(k))
             else:
-                b = button("Télécharger", on_click=lambda _=False, k=m.key: self._download_model(k))
-                b.setEnabled(engines.available())
+                b = button("Télécharger", on_click=lambda _=False, k=key: self._download_model(k))
+                b.setEnabled(avail)
             t.setCellWidget(i, 3, b)
         t.resizeColumnsToContents()
         t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -447,7 +459,11 @@ class SettingsPage(QWidget):
         from ...transcribe import engines
         if QMessageBox.question(self, "Modèle", f"Supprimer le modèle « {key} » ? Il pourra être retéléchargé."
                                 ) == QMessageBox.Yes:
-            engines.delete_model(self.app.paths.models, key)
+            if key.startswith("sep:"):
+                from ...edit import separate
+                separate.model_path(self.app.paths.models, separate.BY_KEY[key[4:]]).unlink(missing_ok=True)
+            else:
+                engines.delete_model(self.app.paths.models, key)
             self._fill_models()
 
     def show_models(self) -> None:
@@ -461,7 +477,7 @@ class SettingsPage(QWidget):
                     QMessageBox.warning(self, "Téléchargement du modèle", job.error[:600])
                 self._fill_models()
             elif job.status == "running" and job.progress:
-                row = next((i for i, m in enumerate(asr.MODELS) if m.key == self._model_jobs[job.id]), None)
+                row = next((i for i, r in enumerate(self._model_rows()) if r[0] == self._model_jobs[job.id]), None)
                 if row is not None:
                     self.models_table.setItem(row, 2, QTableWidgetItem(f"Téléchargement… {int(job.progress * 100)} %"))
 

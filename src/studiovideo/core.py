@@ -18,7 +18,7 @@ from .services.projects import ProjectService
 from .services.publications import PublicationService
 from .services.settings import SettingsService
 from .services.transcripts import TranscriptService
-from .services.dubs import DubService
+from .services.dubs import DubService, StemService
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class AppContext:
     candidates: CandidateService
     workspace_id: int
     dubs: DubService | None = None
+    stems: StemService | None = None
 
     def importer(self) -> MediaImporter:
         return MediaImporter(self.db, self.paths, self.workspace_id)
@@ -56,9 +57,9 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
     jobs = JobManager(db, max_workers=max_workers or int(settings.get("max_workers", 2)))
     ctx = AppContext(paths=paths, db=db, jobs=jobs, concepts=concepts, projects=ProjectService(db),
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
-                     montage=MontageService(db), transcripts=TranscriptService(db),
+                     montage=MontageService(db, paths.root / "stems"), transcripts=TranscriptService(db),
                      candidates=CandidateService(db), workspace_id=ws,
-                     dubs=DubService(db, paths.dubs))
+                     dubs=DubService(db, paths.dubs), stems=StemService(paths.root / "stems"))
     _register_handlers(ctx)
     return ctx
 
@@ -134,6 +135,15 @@ def _register_handlers(app: AppContext) -> None:
 
     def download_model(ctx: JobContext, params: dict) -> dict:
         from .transcribe import engines
+        if params["model"].startswith("sep:"):
+            from .edit import separate
+            try:
+                p = separate.download_model(app.paths.models, params["model"][4:], ctx.progress,
+                                            lambda: ctx.cancelled)
+            except separate.SeparationError:
+                ctx.check()
+                raise
+            return {"model": params["model"], "path": str(p)}
         try:
             p = engines.download_model(app.paths.models, params["model"], ctx.progress, lambda: ctx.cancelled)
         except engines.Cancelled:
@@ -241,6 +251,30 @@ def _register_handlers(app: AppContext) -> None:
         app.dubs.store(man, work)
         return {"asset_id": aid, "language": lang, "index": params["index"]}
 
+    def separate_job(ctx: JobContext, params: dict) -> dict:
+        """Séparation voix / musique d'un média, sur le PC (§9, §10.2 mode 3)."""
+        import shutil
+
+        from .edit import separate
+        aid = params["asset_id"]
+        a = app.library.get(aid)
+        if a is None:
+            raise ValueError("Média introuvable dans la bibliothèque.")
+        if not a["audio_tracks"]:
+            raise ValueError("Ce média ne contient pas de son.")
+        work = app.stems.directory(aid)
+        tmp = work.with_name(work.name + ".partial")
+        shutil.rmtree(tmp, ignore_errors=True)
+        key = params.get("model") or "kim_vocal_2"
+        res = separate.separate_file(Path(a["path"]), tmp, app.paths.models, key, ctx.progress,
+                                     lambda: ctx.cancelled)
+        ctx.check()
+        shutil.rmtree(work, ignore_errors=True)
+        tmp.rename(work)
+        app.stems.mark_done(aid, key)
+        return {"asset_id": aid, "model": key, "duration": res["duration"]}
+
+    app.jobs.register("separate", separate_job)
     app.jobs.register("dub", dub)
     app.jobs.register("dub_line", dub_line)
     app.jobs.register("translate", translate)

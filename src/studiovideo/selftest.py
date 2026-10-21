@@ -86,6 +86,36 @@ def run(argv: list[str]) -> int:
         return {"text": tr.text(), "words": len(tr.all_words()), "language": tr.language}
     check("asr_transcription", asr_real)
 
+    def separation():
+        from .edit import separate
+        if not (models and speech and separate.installed(Path(models))):
+            return "ignoré (pas de modèle de séparation ou de voix fournis)"
+        import numpy as np
+
+        from .media import ffmpeg
+        nowin = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        clean, mix = tmp / "sep_clean.wav", tmp / "sep_mix.wav"
+        subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-i", speech, "-af",
+                        "aresample=44100,pan=stereo|c0=c0|c1=c0,apad=whole_dur=8", "-t", "8", str(clean)],
+                       check=True, capture_output=True, creationflags=nowin)
+        subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-i", str(clean), "-f", "lavfi", "-i",
+                        "sine=frequency=220:duration=8", "-f", "lavfi", "-i", "sine=frequency=330:duration=8",
+                        "-filter_complex", "[1][2]amix=inputs=2,volume=1.5,aresample=44100,"
+                        "pan=stereo|c0=c0|c1=c0[m];[0][m]amix=inputs=2:normalize=0", "-t", "8", str(mix)],
+                       check=True, capture_output=True, creationflags=nowin)
+        t0 = time.time()
+        res = separate.separate_file(mix, tmp / "sep", Path(models))
+        c, m, v = (separate._read_mix(Path(x)) for x in (clean, mix, res["voice"]))
+        n = min(c.shape[1], m.shape[1], v.shape[1])
+
+        def sdr(ref, est):
+            return float(10 * np.log10((ref ** 2).sum() / (((ref - est) ** 2).sum() + 1e-9)))
+        before, after = sdr(c[:, :n], m[:, :n]), sdr(c[:, :n], v[:, :n])
+        if after < before + 6:
+            raise RuntimeError(f"séparation insuffisante : {before:.1f} → {after:.1f} dB")
+        return {"sdr_before": round(before, 1), "sdr_after": round(after, 1), "seconds": round(time.time() - t0, 1)}
+    check("separation", separation)
+
     def export_with_subs():
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance() or QApplication([])  # noqa: F841

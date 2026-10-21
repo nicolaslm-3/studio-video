@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.7.0 — V1 complète + V2 en cours (clipping intelligent, audio, série, traduction, doublage).** On peut importer, transcrire,
+**Version 0.8.0 — V1 complète + V2 en cours (clipping intelligent, audio, série, traduction, doublage, séparation voix/musique).** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -50,7 +50,8 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Traduction des transcriptions (13 langues) : modèle de langage (hors ligne avec Ollama), DeepL, Google ; glossaire ; corrections | ✅ |
 | **V2** — Sous-titres traduits (voix d'origine conservée) et export multilingue en série | ✅ |
 | **V2** — Doublage : voix de synthèse par intervenant (ElevenLabs ; Piper si installé), calage sur les phrases, voix d'origine remplacée ou gardée en fond, reprise phrase par phrase | ✅ |
-| **V2** — Séparation voix/musique, suppression du texte incrusté, identification automatique des intervenants | ⏳ |
+| **V2** — Séparation voix / musique sur le PC (MDX-Net, ONNX) : voix isolée, doublage sur la musique et l'ambiance d'origine | ✅ |
+| **V2** — Suppression du texte incrusté, identification automatique des intervenants | ⏳ |
 | Publication, calendrier | ⏳ V3 |
 | Analytiques | ⏳ V4 |
 

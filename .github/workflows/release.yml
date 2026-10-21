@@ -133,6 +133,9 @@ jobs:
           New-Item -ItemType Directory -Force selftest | Out-Null
           python -c "import sys; sys.path.insert(0,'src'); from pathlib import Path; from studiovideo.transcribe import engines; engines.download_model(Path('selftest/models'), 'tiny', lambda f,m: None, lambda: False)"
           if ($LASTEXITCODE -ne 0) { echo "::error title=Auto-test::téléchargement du modèle tiny impossible"; throw "modèle" }
+          New-Item -ItemType Directory -Force selftest\models\separation | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx" -OutFile selftest\models\separation\Kim_Vocal_2.onnx
+          if ((Get-FileHash selftest\models\separation\Kim_Vocal_2.onnx -Algorithm SHA256).Hash -ne "CE74EF3B6A6024CE44211A07BE9CF8BC6D87728CC852A68AB34EB8E58CDE9C8B") { echo "::error title=Auto-test::modèle de séparation corrompu"; throw "modèle" }
           Get-ChildItem -Recurse selftest\models | Select-Object FullName, Length | Format-Table -AutoSize
           Add-Type -AssemblyName System.Speech
           $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
@@ -157,6 +160,9 @@ jobs:
           $txt = $r.checks.asr_transcription.detail.text.ToLower()
           if (-not ($txt -match "video|studio|subtitle")) { throw "Transcription inattendue : $txt" }
           echo "::notice::Auto-test OK — transcription : $txt"
+          $sep = $r.checks.separation.detail
+          if (-not $sep.sdr_after) { throw "Séparation non testée : $sep" }
+          echo "::notice::Auto-test OK — séparation voix : $($sep.sdr_before) → $($sep.sdr_after) dB en $($sep.seconds) s"
 
       - name: Signature Authenticode (facultative)
         if: steps.ctx.outputs.skip != 'true' && env.HAS_CERT == 'true'

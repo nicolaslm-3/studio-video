@@ -34,3 +34,10 @@ Inno Setup (licence libre propre), cryptography (Apache 2.0 / BSD), pytest, pyte
 | Piper | V2 | MIT (voix : licences variables) | vérifier la licence de chaque voix |
 | ElevenLabs, DeepL, Google Translation | V2 | services payants | clé de l'utilisateur, consentement avant envoi |
 | MediaPipe | V1 j2 | Apache 2.0 | suivi de visage |
+
+## Séparation voix / musique (0.8.0)
+
+| Élément | Origine | Licence | Remarque |
+|---|---|---|---|
+| Modèle Kim_Vocal_2 (MDX-Net, ONNX, 64 Mo) | github.com/TRvlvr/model_repo (Ultimate Vocal Remover) | MIT | téléchargé à la demande, empreinte SHA-256 vérifiée |
+| onnxruntime | déjà embarqué (dépendance de faster-whisper) | MIT | inférence sur le processeur |

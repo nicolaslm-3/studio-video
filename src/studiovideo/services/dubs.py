@@ -49,3 +49,30 @@ class DubService:
         if got:
             shutil.rmtree(got[1], ignore_errors=True)
         self.db.audit("dub.delete", f"asset={asset_id} lang={language}")
+
+
+class StemService:
+    """Pistes séparées (voix seule, musique et ambiance) par média, sur disque."""
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def directory(self, asset_id: int) -> Path:
+        return self.root / f"a{asset_id}"
+
+    def mark_done(self, asset_id: int, model: str) -> None:
+        import json
+        (self.directory(asset_id) / "stems.json").write_text(json.dumps({"model": model}), encoding="utf-8")
+
+    def has(self, asset_id: int) -> bool:
+        d = self.directory(asset_id)
+        return all((d / f).exists() for f in ("stems.json", "voice.wav", "music.wav"))
+
+    def voice(self, asset_id: int) -> Path | None:
+        return self.directory(asset_id) / "voice.wav" if self.has(asset_id) else None
+
+    def music(self, asset_id: int) -> Path | None:
+        return self.directory(asset_id) / "music.wav" if self.has(asset_id) else None
+
+    def delete(self, asset_id: int) -> None:
+        shutil.rmtree(self.directory(asset_id), ignore_errors=True)

@@ -137,6 +137,9 @@ class VoiceSettings:
     language: str = ""              # langue du doublage
     original_level_db: float = -60.0  # -60 : voix d'origine remplacée ; -18 : gardée en fond
     dub_gain_db: float = 0.0
+    isolate: bool = False             # voix d'origine isolée (musique et ambiance retirées, séparation)
+    background: str = "original"      # fond du doublage : original (son atténué) | ambience (musique et ambiance séparées)
+    ambience_db: float = 0.0
 
 
 @dataclass

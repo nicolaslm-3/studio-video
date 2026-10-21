@@ -165,6 +165,7 @@ class StudioPage(QWidget):
         self.panel.apply_concept_requested.connect(self._apply_concept)
         self.panel.generate_subs_requested.connect(self._generate_subs)
         self.panel.optimize_requested.connect(self._optimize_audio)
+        self.panel.separate_requested.connect(self._separate)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         hsplit.addWidget(self.panel)
         hsplit.setStretchFactor(0, 1)
@@ -607,6 +608,33 @@ class StudioPage(QWidget):
         jid = self.app.jobs.submit("optimize_audio", "Optimisation de l'audio", {"timeline": self.tl.to_dict()})
         self._jobs[jid] = "optimize"
 
+    def _separate(self) -> None:
+        from ...edit import separate
+        ids = sorted({sg.asset_id for sg in self.tl.segments})
+        todo = [a for a in ids if not self.app.stems.has(a) and (self.app.library.get(a) or {})["audio_tracks"]]
+        if not ids:
+            return
+        if not todo:
+            QMessageBox.information(self, "Séparer voix et musique", "Tous les médias du montage sont déjà séparés.")
+            return
+        if not separate.available():
+            QMessageBox.warning(self, "Séparer voix et musique",
+                                "Le moteur de séparation n'est pas installé dans cette version.")
+            return
+        if not separate.installed(self.app.paths.models):
+            if QMessageBox.question(self, "Séparer voix et musique",
+                                    "Le modèle de séparation (64 Mo) n'est pas encore installé. "
+                                    "Ouvrir la page des modèles ?") == QMessageBox.Yes:
+                self.open_models.emit()
+            return
+        for aid in todo:
+            a = self.app.library.get(aid)
+            jid = self.app.jobs.submit("separate", f"Séparation voix / musique · {a['file_name']}",
+                                       {"asset_id": aid, "model": separate.installed(self.app.paths.models)[0]})
+            self._jobs[jid] = "separate"
+        self.panel.stems_note.setText(f"Séparation lancée pour {len(todo)} média(s). Durée : environ celle du "
+                                      "média (calcul sur le processeur).")
+
     def _analyze(self) -> None:
         if not self.tl.segments:
             return
@@ -632,8 +660,10 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
-        if job.kind in ("transcribe", "download_model", "translate"):
+        if job.kind in ("transcribe", "download_model", "translate", "dub", "dub_line"):
             self.transcript.on_job(job)
+        if job.kind in ("dub", "dub_line", "separate") and job.status == "succeeded":
+            self.panel.reload_voice()
             if job.kind == "transcribe" and job.status == "succeeded":
                 self.highlights.refresh()
         if job.kind == "find_highlights":
@@ -663,6 +693,10 @@ class StudioPage(QWidget):
                 QMessageBox.information(self, "Optimiser l'audio", msg)
             elif job.status == "failed":
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
+        elif kind == "separate":
+            if job.status == "failed":
+                QMessageBox.warning(self, "Séparer voix et musique", job.error[:800])
+            self.panel.reload_voice()
         elif kind == "analyze":
             if job.status == "succeeded":
                 self.panel.show_analysis(job.result)
