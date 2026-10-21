@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from make_appcast import S, build, markdown_to_html  # noqa: E402
-from update_keys import generate, public_from_private, sign_file, verify_file  # noqa: E402
+from update_keys import generate, load_private, public_from_private, sign_file, verify_file  # noqa: E402
 
 from studiovideo import __version__  # noqa: E402
 from studiovideo.core import build_context  # noqa: E402
@@ -84,3 +84,11 @@ def test_journal_reports_update_result(tmp_path, monkeypatch):
     assert j.read_state()["ok"] is True and j.on_startup() is None
     j.write_state(pending=True, from_version=__version__)
     assert "n'a pas été installée" in j.on_startup()
+
+
+def test_private_key_tolerates_copy_paste_noise():
+    priv, pub = generate()
+    for noisy in (f" {priv}\n", f"`{priv}`", f'"{priv}"', f"{priv}\r\n"):
+        assert public_from_private(noisy) == pub
+    with pytest.raises(ValueError, match="32 attendus"):
+        load_private(priv[:20])

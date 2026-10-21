@@ -38,7 +38,12 @@ def main() -> None:
 
     pub = a.public_key
     if not pub and os.environ.get("UPDATE_PRIVATE_KEY"):
-        pub = public_from_private(os.environ["UPDATE_PRIVATE_KEY"])
+        try:
+            pub = public_from_private(os.environ["UPDATE_PRIVATE_KEY"])
+        except ValueError as exc:
+            # Annotation lisible dans l'onglet Actions (la valeur du secret n'est jamais affichée).
+            print(f"::error::Secret UPDATE_PRIVATE_KEY : {exc}")
+            sys.exit(1)
     cfg = ROOT / "src" / "studiovideo" / "update" / "config.py"
     text = cfg.read_text(encoding="utf-8")
     text = re.sub(r'^PUBLIC_KEY = ".*"$', f'PUBLIC_KEY = "{pub}"', text, flags=re.M)
@@ -49,6 +54,8 @@ def main() -> None:
     (ROOT / "packaging" / "version.iss").write_text(
         f'#define AppVersion "{__version__}"\n#define AppVersionNumeric "{numeric}.0"\n', encoding="utf-8")
     print(f"Version {__version__} · mises à jour {'activées' if pub and a.base_url else 'DÉSACTIVÉES'}")
+    if pub:
+        print(f"::notice::Clé publique intégrée : {pub}")
 
 
 if __name__ == "__main__":

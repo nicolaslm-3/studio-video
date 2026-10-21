@@ -27,12 +27,22 @@ def _raw_pub(priv: Ed25519PrivateKey) -> bytes:
     return priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 
+def clean_key_text(text: str) -> str:
+    """Retire ce qu'un copier-coller ajoute souvent : espaces, retours à la ligne, guillemets, accents graves."""
+    return "".join(ch for ch in text if ch.isalnum() or ch in "+/=")
+
+
 def load_private(text: str) -> Ed25519PrivateKey:
-    raw = base64.b64decode(text.strip())
+    cleaned = clean_key_text(text)
+    try:
+        raw = base64.b64decode(cleaned, validate=True)
+    except ValueError as exc:
+        raise ValueError(f"Clé privée illisible ({len(cleaned)} caractères utiles, base64 invalide).") from exc
     if len(raw) == 64:          # format Sparkle « graine + publique »
         raw = raw[:32]
     if len(raw) != 32:
-        raise ValueError("Clé privée invalide (32 octets attendus).")
+        raise ValueError(f"Clé privée invalide : {len(raw)} octets décodés depuis {len(cleaned)} caractères, "
+                         "32 attendus (44 caractères se terminant par « = »).")
     return Ed25519PrivateKey.from_private_bytes(raw)
 
 
