@@ -201,3 +201,12 @@ def test_real_whisper_transcription(tmp_path):
     assert "video" in txt or "studio" in txt, txt
     words = tr.all_words()
     assert words and all(w.end >= w.start for w in words)
+
+
+@needs_ffmpeg
+def test_audio_extraction_and_wav_loading(video, tmp_path):
+    from studiovideo.transcribe.engines import extract_audio, load_wav
+    wav = extract_audio(video, tmp_path / "a.wav", start=1.0, duration=2.0)
+    samples = load_wav(wav)
+    assert samples.dtype.name == "float32" and abs(len(samples) - 32000) < 400
+    assert 0.01 < float(abs(samples).max()) <= 1.0

@@ -146,6 +146,24 @@ def extract_audio(src: Path, dest: Path, start: float | None = None, duration: f
     return dest
 
 
+def load_wav(path: Path):
+    """Lit un WAV PCM 16 bits mono 16 kHz (produit par extract_audio) en tableau float32.
+
+    faster-whisper reçoit directement les échantillons : on évite ainsi son décodeur
+    PyAV, dont l'interface change d'une version à l'autre.
+    """
+    import wave
+
+    import numpy as np
+    with wave.open(str(path), "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1:
+            raise ValueError("Format audio inattendu (PCM 16 bits mono requis).")
+        if w.getframerate() != 16000:
+            raise ValueError("Fréquence d'échantillonnage inattendue (16 kHz requis).")
+        data = w.readframes(w.getnframes())
+    return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+
+
 class FasterWhisperEngine:
     name = "faster-whisper"
 
@@ -163,7 +181,8 @@ class FasterWhisperEngine:
         progress(0.02, "Chargement du modèle")
         m = WhisperModel(str(model_dir(self.models_root, self.model)), device="cpu", compute_type="int8",
                          cpu_threads=self.threads, local_files_only=True)
-        segments, info = m.transcribe(str(audio), language=language or None, word_timestamps=True,
+        samples = load_wav(audio) if str(audio).lower().endswith(".wav") else str(audio)
+        segments, info = m.transcribe(samples, language=language or None, word_timestamps=True,
                                       vad_filter=True, vad_parameters={"min_silence_duration_ms": 500},
                                       beam_size=5, condition_on_previous_text=False)
         total = info.duration or 1.0
