@@ -65,6 +65,17 @@ jobs:
           echo "skip=$SKIP" >> $GITHUB_OUTPUT
           echo "base_url=https://${OWNER,,}.github.io/${REPO}" >> $GITHUB_OUTPUT
 
+      - name: Vérification de la clé de signature
+        if: steps.ctx.outputs.skip != 'true'
+        shell: bash
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$UPDATE_PRIVATE_KEY" ]; then
+            echo "::error::Le secret UPDATE_PRIVATE_KEY est absent : une version publiée sans lui ne pourrait jamais se mettre à jour. Ajoutez-le dans Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
         if: steps.ctx.outputs.skip != 'true'
         with:
