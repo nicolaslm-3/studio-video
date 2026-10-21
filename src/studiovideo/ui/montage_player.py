@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (QCheckBox, QGraphicsPixmapItem, QGraphicsRectItem
                                QHBoxLayout, QLabel, QSlider, QStackedLayout, QVBoxLayout, QWidget)
 
 from ..edit.model import Timeline
+from ..edit.subrender import render_state, strip_geometry
+from ..edit.subtitles import State, states
 from ..edit.textrender import render_text_image
 from ..media.ffmpeg import fmt_timecode
 from .widgets import button, label
@@ -75,6 +77,12 @@ class LivePreview(QGraphicsView):
         self.texts: dict[str, QGraphicsPixmapItem] = {}
         self._text_keys: dict[str, tuple] = {}
         self.zones: list[QGraphicsRectItem] = []
+        self.sub_item = QGraphicsPixmapItem(self.frame)
+        self.sub_item.setZValue(9)
+        self._sub_states: list = []
+        self._sub_cache: dict = {}
+        self._sub_key = None
+        self._sub_shown = None
         self.zone_name: str | None = None
         self.tl = Timeline()
 
@@ -99,6 +107,7 @@ class LivePreview(QGraphicsView):
             self.video_item.setTransform(t)
             self.video_item.setPos(0, 0)
         self._sync_texts()
+        self._sync_subs()
         self._draw_zones()
         self.fit()
 
@@ -121,7 +130,39 @@ class LivePreview(QGraphicsView):
                     self.texts[item.id] = gi
                 self._text_keys[item.id] = key
 
+    def _sync_subs(self) -> None:
+        st = self.tl.subtitles
+        key = (repr(st.to_dict()), self.tl.format.width, self.tl.format.height, round(self.tl.duration, 3))
+        if key != self._sub_key:
+            self._sub_key = key
+            self._sub_cache.clear()
+            self._sub_shown = None
+            self._sub_states = states(st, self.tl.duration, self.tl.format.fps) if st.enabled and st.cues else []
+        W, H = self.tl.format.width, self.tl.format.height
+        self.sub_item.setPos(0, strip_geometry(st.style, W, H)[0])
+
+    def _sub_state_at(self, t: float):
+        for a, b, s_ in self._sub_states:
+            if a <= t < b:
+                return s_
+        return None
+
     def set_time(self, t: float) -> None:
+        st = self._sub_state_at(t) if self._sub_states else None
+        if st is None or st.cue_index < 0 or not self.tl.subtitles.burn:
+            self.sub_item.setVisible(False)
+        else:
+            if st != self._sub_shown:
+                pm = self._sub_cache.get(st)
+                if pm is None:
+                    pm = QPixmap.fromImage(render_state(self.tl.subtitles, st, self.tl.format.width,
+                                                        self.tl.format.height))
+                    if len(self._sub_cache) > 400:
+                        self._sub_cache.clear()
+                    self._sub_cache[st] = pm
+                self.sub_item.setPixmap(pm)
+                self._sub_shown = st
+            self.sub_item.setVisible(True)
         for item in self.tl.texts:
             gi = self.texts.get(item.id)
             if gi:

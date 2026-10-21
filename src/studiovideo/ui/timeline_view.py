@@ -14,7 +14,7 @@ RULER_H = 22
 TRACK_H = 40
 TRACK_GAP = 6
 LABEL_W = 70
-TRACKS = ("Vidéo", "Textes", "Musique")
+TRACKS = ("Vidéo", "Textes", "Musique", "Sous-titres")
 
 
 class TimelineCanvas(QWidget):
@@ -22,6 +22,7 @@ class TimelineCanvas(QWidget):
     segment_selected = Signal(object)   # id | None
     text_selected = Signal(object)
     music_selected = Signal()
+    cue_selected = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,7 +35,7 @@ class TimelineCanvas(QWidget):
         self.sel_text: str | None = None
         self.in_out: tuple[float | None, float | None] = (None, None)
         self._drag_head = False
-        self.setMinimumHeight(RULER_H + 3 * (TRACK_H + TRACK_GAP) + 8)
+        self.setMinimumHeight(RULER_H + len(TRACKS) * (TRACK_H + TRACK_GAP) + 8)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
 
@@ -137,6 +138,24 @@ class TimelineCanvas(QWidget):
             p.drawText(rect.adjusted(5, 0, -3, 0), Qt.AlignVCenter,
                        f"♪ {self.music_name}  {self.tl.music.volume_db:+.0f} dB" + ("  · atténuée sous la voix"
                                                                                    if self.tl.music.duck else ""))
+        # sous-titres
+        r3 = self.track_rect(3)
+        st = self.tl.subtitles
+        for cue in st.cues:
+            rect = QRectF(self.x_of(cue.start) + 0.5, r3.top() + 6, max(2.0, (cue.end - cue.start) * self.pps - 1),
+                          r3.height() - 12)
+            col = QColor(c["muted"])
+            col.setAlphaF(0.35 if st.enabled else 0.12)
+            p.setBrush(col)
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(rect, 3, 3)
+            if rect.width() > 24:
+                p.setPen(QColor(c["text"] if st.enabled else c["faint"]))
+                p.drawText(rect.adjusted(3, 0, -2, 0), Qt.AlignVCenter,
+                           p.fontMetrics().elidedText(cue.text, Qt.ElideRight, int(rect.width() - 5)))
+        if not st.cues:
+            p.setPen(QColor(c["faint"]))
+            p.drawText(r3.adjusted(10, 0, 0, 0), Qt.AlignVCenter, "Onglet « Sous-titres » → Générer depuis la transcription")
         if not self.tl.segments:
             p.setPen(QColor(c["faint"]))
             p.drawText(r0.adjusted(10, 0, 0, 0), Qt.AlignVCenter,
@@ -169,6 +188,10 @@ class TimelineCanvas(QWidget):
             self.text_selected.emit(self.sel_text)
         elif self.track_rect(2).contains(pos) and self.tl.music.asset_id:
             self.music_selected.emit()
+        elif self.track_rect(3).contains(pos):
+            cue = self.tl.subtitles.cue_at(t)
+            if cue:
+                self.cue_selected.emit(cue.id)
         self._drag_head = True
         self.seek.emit(min(t, self.tl.duration))
         self.update()

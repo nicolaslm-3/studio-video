@@ -14,6 +14,8 @@ import uuid
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
+from .subtitles import SubtitleTrack
+
 SCHEMA = 1
 MIN_SEGMENT = 0.1  # secondes
 
@@ -143,6 +145,7 @@ class Timeline:
     video: VideoSettings = field(default_factory=VideoSettings)
     audio: AudioSettings = field(default_factory=AudioSettings)
     export: ExportSettings = field(default_factory=ExportSettings)
+    subtitles: SubtitleTrack = field(default_factory=lambda: SubtitleTrack(enabled=False))
     schema: int = SCHEMA
 
     # -- sérialisation -----------------------------------------------------
@@ -160,6 +163,8 @@ class Timeline:
             video=_from_dict(VideoSettings, d.get("video")),
             audio=_from_dict(AudioSettings, d.get("audio")),
             export=_from_dict(ExportSettings, d.get("export")),
+            subtitles=(SubtitleTrack.from_dict(d["subtitles"]) if "subtitles" in d
+                       else SubtitleTrack(enabled=False)),
         )
 
     def copy(self) -> "Timeline":
@@ -281,6 +286,8 @@ class Timeline:
                 out.append("La musique est introuvable.")
         if self.format.width % 2 or self.format.height % 2:
             out.append("La largeur et la hauteur doivent être paires.")
+        if self.subtitles.enabled and self.subtitles.burn and not self.subtitles.cues:
+            out.append("Les sous-titres sont activés mais vides : générez-les ou désactivez-les.")
         for t in self.texts:
             if not t.text.strip():
                 out.append("Un texte est vide.")
@@ -295,7 +302,7 @@ def _even(v: float) -> int:
 
 
 # -- réglages par concept (§16.2) ----------------------------------------------
-CONCEPT_KEYS = ("format", "video", "audio", "export", "music_defaults", "text_style")
+CONCEPT_KEYS = ("format", "video", "audio", "export", "music_defaults", "text_style", "subtitles")
 
 
 def concept_defaults_from(tl: Timeline) -> dict[str, Any]:
@@ -308,8 +315,10 @@ def concept_defaults_from(tl: Timeline) -> dict[str, Any]:
     video = asdict(tl.video)
     for k in ("offset_x", "offset_y"):
         video.pop(k, None)
+    subs = tl.subtitles.to_dict()
+    subs.pop("cues", None)
     return {"format": asdict(tl.format), "video": video, "audio": asdict(tl.audio),
-            "export": asdict(tl.export), "music_defaults": music, "text_style": style}
+            "export": asdict(tl.export), "music_defaults": music, "text_style": style, "subtitles": subs}
 
 
 def apply_concept_defaults(tl: Timeline, defaults: dict | None) -> Timeline:
@@ -321,6 +330,8 @@ def apply_concept_defaults(tl: Timeline, defaults: dict | None) -> Timeline:
             d[k] = {**d[k], **defaults[k]}
     if "music_defaults" in defaults:
         d["music"] = {**d["music"], **defaults["music_defaults"]}
+    if "subtitles" in defaults:
+        d["subtitles"] = {**defaults["subtitles"], "cues": d["subtitles"]["cues"]}
     out = Timeline.from_dict(d)
     out.segments, out.texts = tl.segments, tl.texts
     return out

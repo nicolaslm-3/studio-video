@@ -141,8 +141,9 @@ def video_chain(tl: Timeline, src: Source, tag: str = "") -> str:
 # -- construction du graphe -------------------------------------------------------
 class GraphBuilder:
     def __init__(self, tl: Timeline, sources: dict[int, Source], music: Source | None,
-                 text_images: list[tuple[TextItem, Path]]):
+                 text_images: list[tuple[TextItem, Path]], subs: tuple[list[str], int] | None = None):
         self.tl, self.sources, self.music, self.text_images = tl, sources, music, text_images
+        self.subs = subs  # (arguments d'entrée FFmpeg, position verticale de la bande)
         self.inputs: list[list[str]] = []
         self.graph: list[str] = []
 
@@ -181,6 +182,12 @@ class GraphBuilder:
                 cur = "[vcat]"
             else:
                 cur = vlabels[0]
+            if self.subs:
+                args_in, sy = self.subs
+                k = self._input(args_in)
+                self.graph.append(f"[{k}:v]format=rgba[subs]")
+                self.graph.append(f"{cur}[subs]overlay=0:{sy}:eof_action=pass:repeatlast=0[vsub]")
+                cur = "[vsub]"
             for j, (item, png) in enumerate(self.text_images):
                 p = self._input(["-loop", "1", "-framerate", _fmt(tl.format.fps), "-t", _fmt(total), "-i",
                                  str(png)])
@@ -400,7 +407,19 @@ def preview_frame(tl: Timeline, sources: dict[int, Source], t: float, dest: Path
     one.export.burn_texts = True
     with tempfile.TemporaryDirectory(prefix="sv-prev-") as d:
         tmp = Path(d)
-        gb = GraphBuilder(one, sources, None, _text_images(one, tmp))
+        subs = None
+        st = tl.subtitles
+        if st.enabled and st.burn and st.cues:
+            from .subrender import render_state, strip_geometry
+            from .subtitles import states
+            cur = next((s_ for a, b, s_ in states(st, tl.duration, tl.format.fps) if a <= t < b), None)
+            if cur is not None and cur.cue_index >= 0:
+                png = tmp / "sub.png"
+                render_state(st, cur, one.format.width, one.format.height).save(str(png), "PNG")
+                subs = (["-loop", "1", "-t", "1", "-i", str(png)], strip_geometry(st.style, one.format.width,
+                                                                            one.format.height)[0])
+        one.subtitles = type(st)(enabled=False)
+        gb = GraphBuilder(one, sources, None, _text_images(one, tmp), subs)
         args, vout, _ = gb.build(video=True, audio=False)
         scale_h = min(max_height, one.format.height)
         gb.graph.append(f"{vout}scale=-2:{scale_h}[pv]")
@@ -445,6 +464,13 @@ def export(tl: Timeline, sources: dict[int, Source], music: Source | None, dest:
     try:
         progress(0.01, "Préparation des textes")
         texts = _text_images(tl, tmp)
+        subs = None
+        if tl.subtitles.enabled and tl.subtitles.burn and tl.subtitles.cues:
+            from .subrender import write_overlay
+            progress(0.02, "Préparation des sous-titres")
+            ov = write_overlay(tl.subtitles, total, tl.format.width, tl.format.height, tl.format.fps, tmp / "subs")
+            if ov:
+                subs = (["-f", "concat", "-safe", "0", "-i", str(ov[0])], ov[1])
         measured = None
         if tl.audio.normalize:
             progress(0.03, "Mesure du volume (passe 1/2)")
@@ -464,7 +490,7 @@ def export(tl: Timeline, sources: dict[int, Source], music: Source | None, dest:
                 measured = False  # piste silencieuse : pas de normalisation
 
         progress(0.1, "Rendu vidéo (passe 2/2)")
-        gb = GraphBuilder(tl, sources, music, texts)
+        gb = GraphBuilder(tl, sources, music, texts, subs)
         args, vout, aout = gb.build(video=True, audio=True,
                                     normalize=(measured if measured is not None else False))
         e = tl.export
@@ -496,6 +522,11 @@ def export(tl: Timeline, sources: dict[int, Source], music: Source | None, dest:
         report = verify(partial, tl)
         partial.replace(dest)
         report["path"] = str(dest)
+        if tl.subtitles.enabled and tl.subtitles.sidecar_srt and tl.subtitles.cues:
+            from .subtitles import to_srt
+            srt = dest.with_suffix(".srt")
+            srt.write_text(to_srt(tl.subtitles.cues), encoding="utf-8")
+            report["srt"] = str(srt)
         progress(1.0, "Export terminé")
         return report
     finally:

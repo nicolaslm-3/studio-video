@@ -18,6 +18,7 @@ from ..montage_panel import MontagePanel
 from ..montage_player import MontagePlayer
 from ..player import PlayerWidget
 from ..timeline_view import TimelineView
+from ..transcript_panel import TranscriptPanel
 from ..widgets import Card, EmptyState, button, label
 
 HISTORY_MAX = 100
@@ -30,6 +31,7 @@ def default_export_dir() -> Path:
 
 class StudioPage(QWidget):
     new_project = Signal(object)
+    open_models = Signal()
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -109,7 +111,16 @@ class StudioPage(QWidget):
         ch.addWidget(button("Renommer", "ghost", on_click=self._rename_clip))
         ch.addWidget(button("✕", "ghost", tooltip="Supprimer le clip", on_click=self._delete_clip))
         ll.addLayout(ch)
-        hsplit.addWidget(left)
+        self.left_tabs = QTabWidget()
+        self.left_tabs.setDocumentMode(True)
+        self.left_tabs.addTab(left, "Médias")
+        self.transcript = TranscriptPanel(app)
+        self.transcript.seek.connect(self._seek_source)
+        self.transcript.make_clip.connect(self._create_clip)
+        self.transcript.add_to_timeline.connect(self._add_range_to_timeline)
+        self.transcript.open_models.connect(self.open_models.emit)
+        self.left_tabs.addTab(self.transcript, "Transcription")
+        hsplit.addWidget(self.left_tabs)
 
         # -- lecteurs
         self.viewer_tabs = QTabWidget()
@@ -123,6 +134,7 @@ class StudioPage(QWidget):
         self.player = PlayerWidget()
         self.player.create_clip.connect(self._create_clip)
         self.player.in_out_changed.connect(lambda *_: self._save_timer.start())
+        self.player.position_changed.connect(lambda t: self.transcript.highlight_time(t))
         sc.lay.addWidget(self.player)
         srow = QHBoxLayout()
         srow.addStretch(1)
@@ -142,6 +154,8 @@ class StudioPage(QWidget):
         self.panel.export_requested.connect(self._export)
         self.panel.save_concept_requested.connect(self._save_concept)
         self.panel.apply_concept_requested.connect(self._apply_concept)
+        self.panel.generate_subs_requested.connect(self._generate_subs)
+        self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         hsplit.addWidget(self.panel)
         hsplit.setStretchFactor(0, 1)
         hsplit.setStretchFactor(1, 3)
@@ -168,7 +182,8 @@ class StudioPage(QWidget):
         c.seek.connect(lambda t: self.mplayer.seek(t))
         c.segment_selected.connect(self._select_segment)
         c.text_selected.connect(self._select_text)
-        c.music_selected.connect(lambda: self.panel.setCurrentIndex(3))
+        c.music_selected.connect(lambda: self.panel.setCurrentIndex(4))
+        c.cue_selected.connect(self._select_cue)
         tl_lay.addWidget(self.timeline)
         vsplit.addWidget(tw)
         vsplit.setStretchFactor(0, 4)
@@ -263,6 +278,7 @@ class StudioPage(QWidget):
             QMessageBox.warning(self, "Média introuvable", f"Le fichier n'existe plus :\n{a['path']}")
             return
         self.asset_id = aid
+        self.transcript.set_asset(aid)
         io = self.app.projects.load_data(self.project_id).get("in_out", {}).get(str(aid), [None, None])
         self.player.load(a["path"], a["fps"], *io)
 
@@ -319,6 +335,8 @@ class StudioPage(QWidget):
     def _on_panel_change(self, what: str) -> None:
         self.timeline.canvas.sel_text = self.panel.sel_text
         self.timeline.canvas.sel_segment = self.panel.sel_segment
+        if what == "subtitles":
+            self.timeline.canvas.update()
         if what == "text-select":
             self.timeline.canvas.update()
             t = self.panel.current_text()
@@ -376,6 +394,59 @@ class StudioPage(QWidget):
         self._changed(panel=True)
         self.viewer_tabs.setCurrentIndex(0)
         QTimer.singleShot(30, self.timeline.fit)
+
+    def _seek_source(self, t: float) -> None:
+        self.viewer_tabs.setCurrentIndex(1)
+        self.player.seek(t)
+
+    def _add_range_to_timeline(self, a: float, b: float) -> None:
+        if not self.asset_id:
+            return
+        row = self.app.library.get(self.asset_id)
+        if row is None or row["kind"] != "video":
+            QMessageBox.information(self, "Timeline", "Seules les vidéos vont sur la piste vidéo.")
+            return
+        try:
+            seg = self.tl.add_segment(self.asset_id, a, min(b, row["duration_s"] or b))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Timeline", str(exc))
+            return
+        self.panel.sel_segment = seg.id
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        QTimer.singleShot(30, self.timeline.fit)
+
+    def _generate_subs(self) -> None:
+        from ...edit.subtitles import generate
+        if not self.tl.segments:
+            QMessageBox.information(self, "Sous-titres", "La timeline est vide.")
+            return
+        ids = {s.asset_id for s in self.tl.segments}
+        trs = {i: self.app.transcripts.get(i) for i in ids}
+        missing = [self.assets.get(i, {}).get("file_name", str(i)) for i, t in trs.items() if t is None]
+        if len(missing) == len(ids):
+            QMessageBox.information(self, "Sous-titres", "Aucun extrait de la timeline n'est transcrit.\n\n"
+                                    "Sélectionnez le média, ouvrez l'onglet « Transcription » à gauche et "
+                                    "cliquez sur « Transcrire ».")
+            self.left_tabs.setCurrentIndex(1)
+            return
+        if self.tl.subtitles.cues and QMessageBox.question(
+                self, "Sous-titres", "Remplacer les sous-titres actuels (et vos corrections) ?") != QMessageBox.Yes:
+            return
+        self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
+        self.tl.subtitles.enabled = True
+        self._changed(panel=True)
+        msg = f"{len(self.tl.subtitles.cues)} sous-titres générés."
+        if missing:
+            msg += "\n\nNon transcrits (pas de sous-titres sur ces extraits) : " + ", ".join(sorted(set(missing)))
+            QMessageBox.information(self, "Sous-titres", msg)
+        self.save_lbl.setText(msg.split("\n")[0])
+
+    def _select_cue(self, cue_id) -> None:
+        self.panel.setCurrentIndex(3)
+        for i in range(self.panel.cue_list.count()):
+            if self.panel.cue_list.item(i).data(Qt.UserRole) == cue_id:
+                self.panel.cue_list.setCurrentRow(i)
 
     def split(self) -> None:
         if self.tl.split_at(self.mplayer.t) is None:
@@ -485,6 +556,8 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        if job.kind in ("transcribe", "download_model"):
+            self.transcript.on_job(job)
         kind = self._jobs.get(job.id)
         if not kind or job.status in ("pending", "running"):
             return

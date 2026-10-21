@@ -6,6 +6,10 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv)
+    if "--self-test" in args:
+        from .selftest import run
+        return run(args)
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QMessageBox
 

@@ -2,8 +2,8 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.2.0 — V1, jalon 2 (montage et export).** Le socle et le montage sont en place : on peut
-importer, monter, recadrer, titrer, régler le son et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
+**Version 0.3.0 — V1 complète.** Socle, montage, transcription et sous-titres : on peut importer,
+transcrire, monter, recadrer, titrer, sous-titrer, régler le son et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
 
 ## Ce qui fonctionne
@@ -31,7 +31,13 @@ l'interface : aucun bouton n'est simulé.
 | Aperçu en direct du cadrage et des textes, aperçu exact calculé par FFmpeg, zones TikTok/Reels | ✅ |
 | Export MP4 H.264/H.265 avec vérification réelle du fichier (dimensions, durée, volume final) | ✅ |
 | Réglages mémorisés par concept (format, image, audio, export, style de texte) | ✅ |
-| Transcription et sous-titres | ⏳ jalon 3 de la V1 |
+| Transcription locale (faster-whisper, CPU) avec mots horodatés, modèles téléchargeables, choix de la langue | ✅ |
+| Correction du texte et des intervenants, original conservé, recherche, clic pour se positionner | ✅ |
+| Clip ou extrait de timeline créé depuis une sélection de phrases | ✅ |
+| Export TXT, SRT, VTT, JSON, ASS ; import de SRT / VTT existants | ✅ |
+| Sous-titres générés depuis la transcription, découpage réglable (mots, caractères, lignes, pauses) | ✅ |
+| Style complet, mot prononcé surligné, apparition mot par mot, effet pop, fondu ; incrustation ou .srt séparé | ✅ |
+| Identification automatique des intervenants (diarisation) | ⏳ V2 (saisie manuelle disponible) |
 | IA, traduction, doublage | ⏳ V2 |
 | Publication, calendrier | ⏳ V3 |
 | Analytiques | ⏳ V4 |
@@ -58,7 +64,7 @@ permet d'utiliser un autre dossier de données.
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-Les 53 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
+Les 73 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
 Ils couvrent aussi les tâches, l'import, l'interface, la signature des mises à jour, le flux appcast
 et de vrais exports FFmpeg (formats, modes de cadrage, musique, normalisation, vérification).
 

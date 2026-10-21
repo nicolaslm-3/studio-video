@@ -16,6 +16,7 @@ from .services.montage import MontageService
 from .services.projects import ProjectService
 from .services.publications import PublicationService
 from .services.settings import SettingsService
+from .services.transcripts import TranscriptService
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class AppContext:
     library: LibraryService
     settings: SettingsService
     montage: MontageService
+    transcripts: TranscriptService
     workspace_id: int
 
     def importer(self) -> MediaImporter:
@@ -50,7 +52,7 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
     jobs = JobManager(db, max_workers=max_workers or int(settings.get("max_workers", 2)))
     ctx = AppContext(paths=paths, db=db, jobs=jobs, concepts=concepts, projects=ProjectService(db),
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
-                     montage=MontageService(db), workspace_id=ws)
+                     montage=MontageService(db), transcripts=TranscriptService(db), workspace_id=ws)
     _register_handlers(ctx)
     return ctx
 
@@ -104,6 +106,37 @@ def _register_handlers(app: AppContext) -> None:
         rep["silences"] = rep.get("silences", [])[:20]
         return rep
 
+    def transcribe(ctx: JobContext, params: dict) -> dict:
+        from .transcribe import engines
+        a = app.library.get(params["asset_id"])
+        if a is None:
+            raise ValueError("Média introuvable dans la bibliothèque.")
+        if a["audio_tracks"] < 1:
+            raise ValueError("Ce média ne contient pas de son : rien à transcrire.")
+        eng = engines.FasterWhisperEngine(app.paths.models, params.get("model") or "small")
+        try:
+            tr = engines.transcribe_file(eng, Path(a["path"]), params.get("language") or None, ctx.progress,
+                                         lambda: ctx.cancelled, app.paths.temp)
+        except engines.Cancelled:
+            ctx.check()
+            raise
+        if not tr.segments:
+            raise RuntimeError("Aucune parole détectée dans ce média.")
+        app.transcripts.store_original(a["id"], tr)
+        return {"asset_id": a["id"], "segments": len(tr.segments), "language": tr.language,
+                "words": len(tr.all_words())}
+
+    def download_model(ctx: JobContext, params: dict) -> dict:
+        from .transcribe import engines
+        try:
+            p = engines.download_model(app.paths.models, params["model"], ctx.progress, lambda: ctx.cancelled)
+        except engines.Cancelled:
+            ctx.check()
+            raise
+        return {"model": params["model"], "path": str(p)}
+
+    app.jobs.register("transcribe", transcribe)
+    app.jobs.register("download_model", download_model)
     app.jobs.register("import_file", import_file)
     app.jobs.register("import_url", import_url)
     app.jobs.register("export_timeline", export_timeline)

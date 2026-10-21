@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
         # signaux
         for page in (self.dashboard, self.studio):
             page.new_project.connect(self.new_project)
+        self.studio.open_models.connect(lambda: (self.go(5), self.settings_page.show_models()))
         self.dashboard.open_project.connect(self.open_project)
         self.dashboard.edit_concept.connect(self.edit_concept)
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         j = self.app.jobs.get(job_id)
         if j:
             self.studio.on_job(j)
+            self.settings_page.on_job(j)
         if j and j.status == "succeeded" and j.kind.startswith("import"):
             if not hasattr(self, "_import_refresh"):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)

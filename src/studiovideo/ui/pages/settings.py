@@ -17,6 +17,7 @@ from ...core import AppContext
 from ...media import downloader, ffmpeg
 from ...services import secrets
 from ...services.concepts import ConceptError
+from ...transcribe import engines as asr
 from ...update import rollback
 from ..dialogs import AccountDialog
 from ..widgets import Card, PageHeader, button, label
@@ -42,7 +43,12 @@ class SettingsPage(QWidget):
         self.tabs.addTab(self._concepts_tab(), "Concepts et comptes")
         self.tabs.addTab(self._general_tab(), "Général")
         self.tabs.addTab(self._storage_tab(), "Stockage et sauvegardes")
-        self.tabs.addTab(self._hardware_tab(), "Matériel et moteurs")
+        from PySide6.QtWidgets import QScrollArea
+        hw = QScrollArea()
+        hw.setWidgetResizable(True)
+        hw.setFrameShape(QScrollArea.NoFrame)
+        hw.setWidget(self._hardware_tab())
+        self.tabs.addTab(hw, "Matériel et moteurs")
         self.tabs.addTab(self._about_tab(), "À propos")
         lay.addWidget(self.tabs, 1)
 
@@ -252,16 +258,94 @@ class SettingsPage(QWidget):
                 ("Téléchargement (yt-dlp)", downloader.yt_dlp_version() or "non installé"),
                 ("Coffre d'identifiants", "Gestionnaire d'identifiants Windows" if secrets.available()
                  else "indisponible : clés API non enregistrables"),
-                ("Transcription locale", "prévue au jalon 3 (faster-whisper)"),
-                ("Accélération GPU", "détection prévue avec les modèles IA")]
+                ("Transcription locale", ("faster-whisper " + _fw_version()) if _fw_version() else "non incluse"),
+                ("Calcul de la transcription", "Processeur (CPU, int8). L'accélération par carte graphique "
+                                               "n'est pas encore prise en charge.")]
         for k, v in rows:
             lb = label(v, wrap=True)
             lb.setTextInteractionFlags(Qt.TextSelectableByMouse)
             form.addRow(label(k, "muted"), lb)
         card.lay.addLayout(form)
         lay.addWidget(card)
+        lay.addWidget(self._models_card(ram))
         lay.addStretch(1)
         return w
+
+    def _models_card(self, ram) -> Card:
+        from ...transcribe import engines
+        card = Card()
+        card.lay.addWidget(label("Modèles de transcription (reconnaissance vocale)", "h2"))
+        rec = engines.recommended_model(ram, os.cpu_count())
+        card.lay.addWidget(label(f"Les modèles sont téléchargés une fois depuis Hugging Face puis fonctionnent "
+                                 f"hors ligne. Recommandé pour ce PC : « {rec} ».", "muted", wrap=True))
+        self.models_table = QTableWidget(0, 4)
+        self.models_table.setHorizontalHeaderLabels(["Modèle", "Taille", "État", ""])
+        self.models_table.verticalHeader().hide()
+        self.models_table.setShowGrid(False)
+        self.models_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.models_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.models_table.setMinimumHeight(230)
+        card.lay.addWidget(self.models_table)
+        self._model_jobs: dict[int, str] = {}
+        self._rec_model = rec
+        self._fill_models()
+        return card
+
+    def _fill_models(self) -> None:
+        from ...transcribe import engines
+        t = self.models_table
+        t.setRowCount(len(engines.MODELS))
+        running = set(self._model_jobs.values())
+        for i, m in enumerate(engines.MODELS):
+            name = QTableWidgetItem(m.label + ("  ★ recommandé" if m.key == self._rec_model else ""))
+            name.setToolTip(m.note + f" Mémoire conseillée : {m.min_ram_gb:g} Go.")
+            t.setItem(i, 0, name)
+            t.setItem(i, 1, QTableWidgetItem(f"{m.size_mb} Mo"))
+            inst = engines.is_installed(self.app.paths.models, m.key)
+            state = "Téléchargement…" if m.key in running else ("Installé" if inst else "Non installé")
+            t.setItem(i, 2, QTableWidgetItem(state))
+            if m.key in running:
+                b = button("Annuler", "ghost", on_click=lambda _=False, k=m.key: self._cancel_model(k))
+            elif inst:
+                b = button("Supprimer", "ghost", on_click=lambda _=False, k=m.key: self._delete_model(k))
+            else:
+                b = button("Télécharger", on_click=lambda _=False, k=m.key: self._download_model(k))
+                b.setEnabled(engines.available())
+            t.setCellWidget(i, 3, b)
+        t.resizeColumnsToContents()
+        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+
+    def _download_model(self, key: str) -> None:
+        jid = self.app.jobs.submit("download_model", f"Téléchargement du modèle {key}", {"model": key})
+        self._model_jobs[jid] = key
+        self._fill_models()
+
+    def _cancel_model(self, key: str) -> None:
+        for jid, k in list(self._model_jobs.items()):
+            if k == key:
+                self.app.jobs.cancel(jid)
+
+    def _delete_model(self, key: str) -> None:
+        from ...transcribe import engines
+        if QMessageBox.question(self, "Modèle", f"Supprimer le modèle « {key} » ? Il pourra être retéléchargé."
+                                ) == QMessageBox.Yes:
+            engines.delete_model(self.app.paths.models, key)
+            self._fill_models()
+
+    def show_models(self) -> None:
+        self.tabs.setCurrentIndex(3)
+
+    def on_job(self, job) -> None:
+        if job.id in getattr(self, "_model_jobs", {}):
+            if job.status in ("succeeded", "failed", "cancelled"):
+                self._model_jobs.pop(job.id, None)
+                if job.status == "failed":
+                    QMessageBox.warning(self, "Téléchargement du modèle", job.error[:600])
+                self._fill_models()
+            elif job.status == "running" and job.progress:
+                row = next((i for i, m in enumerate(asr.MODELS) if m.key == self._model_jobs[job.id]), None)
+                if row is not None:
+                    self.models_table.setItem(row, 2, QTableWidgetItem(f"Téléchargement… {int(job.progress * 100)} %"))
 
     # -- à propos -----------------------------------------------------------
     def _about_tab(self) -> QWidget:
@@ -319,6 +403,14 @@ class SettingsPage(QWidget):
             QMessageBox.warning(self, "Restauration", str(exc))
             return
         self.window().close()
+
+
+def _fw_version() -> str | None:
+    try:
+        import faster_whisper
+        return faster_whisper.__version__
+    except Exception:
+        return None
 
 
 def _open_folder(p: Path) -> None:

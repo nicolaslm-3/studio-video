@@ -17,11 +17,17 @@ src/studiovideo/
 │   ├── library.py      recherche dans la bibliothèque
 │   ├── montage.py      timeline du projet, réglages par concept, historique des exports
 │   ├── settings.py     paramètres
+│   ├── transcripts.py  transcriptions (original conservé + corrections)
 │   └── secrets.py      coffre d'identifiants Windows (keyring)
 ├── edit/
 │   ├── model.py        timeline : extraits, textes, musique, format, image, audio, export
 │   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification
-│   └── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
+│   ├── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
+│   ├── subtitles.py    sous-titres : génération depuis la transcription, découpage, états d'animation
+│   └── subrender.py    dessin des sous-titres et incrustation en une passe (concat d'images)
+├── transcribe/
+│   ├── model.py        transcription horodatée, corrections, exports TXT/SRT/VTT/JSON/ASS, import
+│   └── engines.py      moteurs interchangeables (faster-whisper), modèles, extraction audio
 ├── jobs/manager.py     file de tâches persistante, threads de travail, annulation, tâches critiques
 ├── media/
 │   ├── ffmpeg.py       localisation de FFmpeg, ffprobe, miniatures

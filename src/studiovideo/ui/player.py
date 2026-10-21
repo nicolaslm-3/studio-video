@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 
 class PlayerWidget(QWidget):
     in_out_changed = Signal(object, object)      # in_s, out_s
+    position_changed = Signal(float)
     create_clip = Signal(float, float)
 
     def __init__(self, parent=None):
@@ -126,6 +127,17 @@ class PlayerWidget(QWidget):
             self.player.stop()
             self.player.setSource(QUrl())
 
+    def seek(self, t: float, play: bool = False) -> None:
+        self.player.setPosition(int(max(0.0, t) * 1000))
+        self._on_pos(int(max(0.0, t) * 1000)) if not self.enabled else None
+        if play:
+            self._range_end = None
+            self.player.play()
+
+    def set_range(self, a: float, b: float) -> None:
+        self.in_s, self.out_s = a, b
+        self._refresh_io()
+
     def position_s(self) -> float:
         return self.player.position() / 1000
 
@@ -177,6 +189,7 @@ class PlayerWidget(QWidget):
         self.in_out_changed.emit(self.in_s, self.out_s)
 
     def _on_pos(self, ms: int) -> None:
+        self.position_changed.emit(ms / 1000)
         if not self.slider.isSliderDown():
             self.slider.setValue(ms)
         self.tc.setText(f"{fmt_timecode(ms / 1000, True)} / {fmt_timecode(self._duration)}")

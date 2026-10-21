@@ -21,13 +21,33 @@ ws = ROOT / "vendor" / "winsparkle" / "WinSparkle.dll"
 if ws.exists():
     binaries.append((str(ws), "."))
 
+# Transcription : moteur CTranslate2 (DLL natives), faster-whisper (modèle VAD Silero), onnxruntime, PyAV.
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers"):
+    try:
+        datas += collect_data_files(pkg)
+        binaries += collect_dynamic_libs(pkg)
+    except Exception as exc:  # paquet absent : l'application le signalera comme indisponible
+        print(f"[spec] {pkg} : {exc}")
+asr_hidden = []
+for pkg in ("faster_whisper", "ctranslate2", "huggingface_hub"):
+    try:
+        asr_hidden += collect_submodules(pkg)
+    except Exception:
+        pass
+
 a = Analysis(
     [str(SRC / "studiovideo" / "__main__.py")],
     pathex=[str(SRC)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["keyring.backends.Windows", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"],
-    excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
+    hiddenimports=["keyring.backends.Windows", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"] + asr_hidden,
+    # Paquets inutiles à l'exécution (tirés par l'environnement de compilation) : allège l'installateur.
+    excludes=["tkinter", "torch", "matplotlib", "IPython", "pytest", "scipy", "pandas", "PIL", "lxml", "sympy",
+              "cryptography", "yaml", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtQuickWidgets",
+              "PySide6.QtQuick3D", "PySide6.QtDesigner", "PySide6.QtHelp", "PySide6.QtSql", "PySide6.QtTest",
+              "PySide6.QtBluetooth", "PySide6.QtPositioning", "PySide6.QtLocation", "PySide6.QtSensors",
+              "PySide6.QtSerialPort", "PySide6.QtWebSockets", "PySide6.QtWebChannel", "PySide6.QtScxml", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
               "PySide6.QtQuick3D", "PySide6.QtCharts", "PySide6.QtDataVisualization", "PySide6.QtPdf"],
     noarchive=False,
 )

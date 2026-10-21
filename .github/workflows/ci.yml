@@ -30,3 +30,26 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
+
+  whisper:
+    # Transcription réelle : modèle « tiny » téléchargé, voix de synthèse, contrôle des mots reconnus.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Outils
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng libegl1 libxkbcommon0 libgl1
+      - name: Dépendances
+        run: python -m pip install -e ".[dev]"
+      - name: Voix de test
+        run: espeak-ng -v en -s 140 -w speech.wav "Welcome to the video studio. This video shows automatic subtitles for every speaker."
+      - name: Transcription réelle
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STUDIOVIDEO_TEST_WHISPER: "1"
+          STUDIOVIDEO_TEST_SPEECH: speech.wav
+          STUDIOVIDEO_TEST_MODELS: models
+        run: python -m pytest -q tests/test_transcribe_subtitles.py -k real_whisper -rA

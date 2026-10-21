@@ -125,6 +125,27 @@ jobs:
         if: steps.ctx.outputs.skip != 'true'
         run: pyinstaller packaging/studiovideo.spec --noconfirm --clean
 
+      - name: Auto-test de l'exécutable (transcription réelle et export sous-titré)
+        if: steps.ctx.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force selftest | Out-Null
+          python -c "import sys; sys.path.insert(0,'src'); from pathlib import Path; from studiovideo.transcribe import engines; engines.download_model(Path('selftest/models'), 'tiny', lambda f,m: None, lambda: False)"
+          Add-Type -AssemblyName System.Speech
+          $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $tts.Rate = -1
+          $tts.SetOutputToWaveFile("$PWD\selftest\speech.wav")
+          $tts.Speak("Welcome to the video studio. This video shows automatic subtitles for every speaker.")
+          $tts.Dispose()
+          $p = Start-Process -FilePath "dist\StudioVideo\StudioVideo.exe" -ArgumentList "--self-test", "$PWD\selftest\report.json", "--models", "$PWD\selftest\models", "--speech", "$PWD\selftest\speech.wav" -Wait -PassThru
+          Get-Content selftest\report.json
+          if ($p.ExitCode -ne 0) { throw "L'auto-test de l'exécutable a échoué (code $($p.ExitCode))." }
+          $r = Get-Content selftest\report.json | ConvertFrom-Json
+          $txt = $r.checks.asr_transcription.detail.text.ToLower()
+          if (-not ($txt -match "video|studio|subtitle")) { throw "Transcription inattendue : $txt" }
+          echo "::notice::Auto-test OK — transcription : $txt"
+
       - name: Signature Authenticode (facultative)
         if: steps.ctx.outputs.skip != 'true' && env.HAS_CERT == 'true'
         env:

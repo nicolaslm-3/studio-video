@@ -179,6 +179,8 @@ class MontagePanel(QTabWidget):
     save_concept_requested = Signal()
     apply_concept_requested = Signal()
     text_added = Signal(str)
+    generate_subs_requested = Signal()
+    cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -199,6 +201,7 @@ class MontagePanel(QTabWidget):
         self.addTab(_scroll(self._segment_tab()), "Extrait")
         self.addTab(_scroll(self._frame_tab()), "Cadrage")
         self.addTab(_scroll(self._texts_tab()), "Textes")
+        self.addTab(_scroll(self._subs_tab()), "Sous-titres")
         self.addTab(_scroll(self._audio_tab()), "Audio")
         self.addTab(_scroll(self._export_tab()), "Export")
 
@@ -216,6 +219,7 @@ class MontagePanel(QTabWidget):
             self.res.setCurrentIndex(max(0, self.res.findData(short)) if self.res.findData(short) >= 0 else 1)
             self._load_segment()
             self._load_texts()
+            self._load_cues()
             self._load_music_choices()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
@@ -569,6 +573,191 @@ class MontagePanel(QTabWidget):
             self.sel_text = None
             self.refresh()
             self.changed.emit("texts")
+
+    # -- Sous-titres ----------------------------------------------------------
+    def _subs_tab(self) -> QWidget:
+        w, f = _form()
+        b = self.b
+        f.addRow(b.check("subtitles.enabled", "Afficher des sous-titres"))
+        self.gen_btn = button("Générer depuis la transcription", "primary",
+                              tooltip="Crée les sous-titres à partir des transcriptions des extraits de la timeline",
+                              on_click=self.generate_subs_requested.emit)
+        f.addRow(self.gen_btn)
+        self.subs_info = label("", "faint", wrap=True)
+        f.addRow(self.subs_info)
+        f.addRow(label("Découpage", "h2"))
+        f.addRow("Mots max.", b.ispin("subtitles.rules.max_words", 1, 20))
+        f.addRow("Caractères / ligne", b.ispin("subtitles.rules.max_chars", 8, 60))
+        f.addRow("Lignes max.", b.ispin("subtitles.rules.max_lines", 1, 3))
+        f.addRow("Couper après une pause de", b.spin("subtitles.rules.pause_split", 0.2, 3.0, 0.05, 2, " s"))
+        f.addRow("Durée minimale", b.spin("subtitles.rules.min_duration", 0.2, 3.0, 0.1, 1, " s"))
+        f.addRow(label("Après un changement de découpage, cliquez sur « Générer » (vos corrections seront "
+                       "remplacées).", "faint", wrap=True))
+        f.addRow(label("Style", "h2"))
+        f.addRow("Animation", b.combo("subtitles.animation", [
+            ("highlight", "Mot prononcé surligné"), ("word", "Apparition mot par mot"),
+            ("pop", "Effet pop + surlignage"), ("fade", "Apparition progressive"), ("none", "Aucune")]))
+        f.addRow("Position", b.combo("subtitles.style.position", POSITIONS))
+        f.addRow("Hauteur (libre)", b.slider("subtitles.style.y", 0.1, 0.9))
+        f.addRow("Police", b.font("subtitles.style.font"))
+        f.addRow("Taille", b.ispin("subtitles.style.size", 20, 200, " px"))
+        st = QHBoxLayout()
+        st.addWidget(b.check("subtitles.style.bold", "Gras"))
+        st.addWidget(b.check("subtitles.style.italic", "Italique"))
+        st.addWidget(b.check("subtitles.style.uppercase", "MAJUSCULES"))
+        f.addRow("Style", st)
+        cl = QHBoxLayout()
+        cl.addWidget(label("Texte", "faint"))
+        cl.addWidget(b.color("subtitles.style.color"))
+        cl.addWidget(label("Mot actif", "faint"))
+        cl.addWidget(b.color("subtitles.style.highlight_color"))
+        cl.addStretch(1)
+        f.addRow("Couleurs", cl)
+        ol = QHBoxLayout()
+        ol.addWidget(b.color("subtitles.style.outline_color"))
+        ol.addWidget(b.ispin("subtitles.style.outline", 0, 30, " px"))
+        ol.addWidget(b.check("subtitles.style.shadow", "Ombre"))
+        f.addRow("Contour", ol)
+        bx = QHBoxLayout()
+        bx.addWidget(b.check("subtitles.style.box", "Rectangle"))
+        bx.addWidget(b.color("subtitles.style.box_color"))
+        bx.addWidget(b.slider("subtitles.style.box_opacity", 0.0, 1.0))
+        f.addRow("Fond", bx)
+        f.addRow("Largeur max.", b.slider("subtitles.style.max_width", 0.4, 1.0))
+        f.addRow(label("Sortie", "h2"))
+        f.addRow(b.check("subtitles.burn", "Incruster dans la vidéo"))
+        f.addRow(b.check("subtitles.sidecar_srt", "Créer aussi un fichier .srt séparé"))
+        f.addRow(label("Sous-titres", "h2"))
+        self.cue_list = QListWidget()
+        self.cue_list.setMinimumHeight(150)
+        self.cue_list.currentItemChanged.connect(self._cue_pick)
+        f.addRow(self.cue_list)
+        self.cue_text = QLineEdit()
+        self.cue_text.setPlaceholderText("Texte du sous-titre sélectionné")
+        self.cue_text.editingFinished.connect(self._cue_text)
+        f.addRow("Texte", self.cue_text)
+        tm = QHBoxLayout()
+        self.cue_start = QDoubleSpinBox()
+        self.cue_end = QDoubleSpinBox()
+        for sp in (self.cue_start, self.cue_end):
+            sp.setDecimals(2)
+            sp.setRange(0, 1e6)
+            sp.setSingleStep(0.05)
+            sp.setSuffix(" s")
+            sp.setKeyboardTracking(False)
+            sp.valueChanged.connect(self._cue_times)
+            tm.addWidget(sp)
+        f.addRow("Début / fin", tm)
+        cb = QHBoxLayout()
+        cb.addWidget(button("Début ici", on_click=lambda: self._cue_here("start")))
+        cb.addWidget(button("Fin ici", on_click=lambda: self._cue_here("end")))
+        cb.addWidget(button("Supprimer", "danger", on_click=self._cue_delete))
+        f.addRow(cb)
+        f.addRow(button("+ Sous-titre à la tête de lecture", "ghost", on_click=self._cue_add))
+        return w
+
+    def _cue(self):
+        it = self.cue_list.currentItem()
+        if not it:
+            return None
+        try:
+            return self.tl.subtitles.cue(it.data(Qt.UserRole))
+        except KeyError:
+            return None
+
+    def _load_cues(self) -> None:
+        st = self.tl.subtitles
+        cur = self.cue_list.currentItem().data(Qt.UserRole) if self.cue_list.currentItem() else None
+        self.cue_list.blockSignals(True)
+        self.cue_list.clear()
+        for c in sorted(st.cues, key=lambda x: x.start):
+            it = QListWidgetItem(f"{fmt_timecode(c.start, True)}  {c.text}")
+            it.setData(Qt.UserRole, c.id)
+            self.cue_list.addItem(it)
+            if c.id == cur:
+                self.cue_list.setCurrentItem(it)
+        self.cue_list.blockSignals(False)
+        self.subs_info.setText(f"{len(st.cues)} sous-titre(s)." if st.cues else
+                               "Aucun sous-titre. Transcrivez les médias (panneau « Transcription » à gauche), "
+                               "puis cliquez sur « Générer ».")
+        c = self._cue()
+        for wdg in (self.cue_text, self.cue_start, self.cue_end):
+            wdg.setEnabled(c is not None)
+            wdg.blockSignals(True)
+        self.cue_text.setText(c.text if c else "")
+        self.cue_start.setValue(c.start if c else 0)
+        self.cue_end.setValue(c.end if c else 0)
+        for wdg in (self.cue_text, self.cue_start, self.cue_end):
+            wdg.blockSignals(False)
+
+    def _cue_pick(self, it, _prev=None) -> None:
+        if self._loading or not it:
+            return
+        self._loading = True
+        self._load_cues()
+        self._loading = False
+        c = self._cue()
+        if c:
+            self.cue_selected.emit(c.start + 0.01)
+
+    def _cue_text(self) -> None:
+        c = self._cue()
+        if c and not self._loading and self.cue_text.text().strip() != c.text:
+            c.text = " ".join(self.cue_text.text().split())
+            c.words = []          # horodatage des mots recalculé uniformément
+            self.cue_list.currentItem().setText(f"{fmt_timecode(c.start, True)}  {c.text}")
+            self.changed.emit("subtitles")
+
+    def _cue_times(self) -> None:
+        c = self._cue()
+        if not c or self._loading:
+            return
+        a, b = self.cue_start.value(), self.cue_end.value()
+        if b - a < 0.1:
+            return
+        if c.words:
+            k = (b - a) / max(1e-6, c.end - c.start)
+            c.words = [[a + (w[0] - c.start) * k, a + (w[1] - c.start) * k, w[2]] for w in c.words]
+        c.start, c.end = a, b
+        self.tl.subtitles.sort()
+        self.changed.emit("subtitles")
+        self._loading = True
+        self._load_cues()
+        self._loading = False
+
+    def _cue_here(self, which: str) -> None:
+        c = self._cue()
+        if not c:
+            return
+        if which == "start" and self.playhead < c.end - 0.1:
+            self.cue_start.setValue(self.playhead)
+        elif which == "end" and self.playhead > c.start + 0.1:
+            self.cue_end.setValue(self.playhead)
+
+    def _cue_delete(self) -> None:
+        c = self._cue()
+        if c:
+            self.tl.subtitles.cues = [x for x in self.tl.subtitles.cues if x.id != c.id]
+            self._loading = True
+            self._load_cues()
+            self._loading = False
+            self.changed.emit("subtitles")
+
+    def _cue_add(self) -> None:
+        from ..edit.subtitles import Cue
+        t = self.playhead
+        nxt = min((c.start for c in self.tl.subtitles.cues if c.start > t), default=t + 2.0)
+        c = Cue(t, max(t + 0.3, min(t + 2.0, nxt)), "Nouveau sous-titre")
+        self.tl.subtitles.cues.append(c)
+        self.tl.subtitles.sort()
+        self.tl.subtitles.enabled = True
+        self.refresh()
+        for i in range(self.cue_list.count()):
+            if self.cue_list.item(i).data(Qt.UserRole) == c.id:
+                self.cue_list.setCurrentRow(i)
+        self.changed.emit("subtitles")
+        self.cue_text.setFocus()
+        self.cue_text.selectAll()
 
     # -- Audio --------------------------------------------------------------
     def _audio_tab(self) -> QWidget:
