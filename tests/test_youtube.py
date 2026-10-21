@@ -189,5 +189,12 @@ def test_jobs_connect_publish_and_private_case(google, tmp_path, monkeypatch):
         j = wait(app.jobs.submit("publish_upload", "YouTube", {"publication_id": p3}))
         assert j.status == "succeeded" and app.publications.get(p3)["status"] == "scheduled_platform"
         assert G.state["meta"]["status"]["publishAt"].startswith("2099-01-01")
+        # compte déconnecté entre-temps : la publication passe en échec (jamais bloquée « en cours d'envoi »)
+        m4 = app.publications.create_master(c.id, "Encore", "", "", variant_id=1)
+        p4 = app.publications.set_destinations(m4, [acc.id])[0]
+        app.publications.set_status(p4, "uploading")
+        store.pop("youtube_refresh_" + str(acc.id))
+        j = wait(app.jobs.submit("publish_upload", "YouTube", {"publication_id": p4}))
+        assert j.status == "failed" and app.publications.get(p4)["status"] == "failed"
     finally:
         app.close()
