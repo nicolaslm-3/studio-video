@@ -4,6 +4,32 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.10.0</title>
+      <pubDate>Wed, 21 Oct 2026 22:39:15 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.10.0 — Calendrier et publication (début de la V3)&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Nouvel espace **Calendrier** : toutes les publications de tous les concepts, mois par mois, filtrables par concept&lt;/li&gt;
+&lt;li&gt;**Nouvelle publication** (ou « Programmer la publication… » à la fin d&amp;#x27;un export) : la vidéo, un titre, un texte,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;des hashtags, puis les comptes du concept (un compte hors concept demande une confirmation explicite)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Chaque destination a son propre horaire et peut avoir son propre texte (le reste suit le texte commun)&lt;/li&gt;
+&lt;li&gt;Contrôle des limites de chaque plateforme : titre YouTube, légende TikTok / Instagram, 30 hashtags Instagram,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;280 caractères sur X, Shorts de plus de 3 minutes, format horizontal sur TikTok / Instagram&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;À l&amp;#x27;heure prévue (logiciel ouvert), un rappel apparaît (● sur « Calendrier ») et la **publication assistée** guide&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;l&amp;#x27;envoi : texte à copier, vidéo affichée, page d&amp;#x27;envoi de la plateforme ouverte. La publication n&amp;#x27;est marquée&lt;/p&gt;
+&lt;p&gt;« Publiée » qu&amp;#x27;avec le lien public de la vidéo, vérifié pour la bonne plateforme&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Tableau de bord : prochaines publications&lt;/li&gt;
+&lt;li&gt;Pas encore de mise en ligne automatique : elle nécessite de connecter chaque compte à l&amp;#x27;API de sa plateforme&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.10.0/StudioVideo-0.10.0-Setup.exe" sparkle:version="0.10.0" sparkle:shortVersionString="0.10.0" sparkle:os="windows-x64" length="193661603" type="application/octet-stream" sparkle:edSignature="yvUmnMyKTUlNmWcy/JEqkJDVl5lCaECy7lz58LWqL1akGLAOnMdJc3+i97+bOJwPYQPIbxNmayDRaC8AD6FiAg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.9.0</title>
       <pubDate>Wed, 21 Oct 2026 22:29:39 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.9.0 — Intervenants et masquage de zones&lt;/h2&gt;
