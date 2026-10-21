@@ -93,8 +93,8 @@ begin
   if Exec(ExpandConstant('{sys}\robocopy.exe'), '"' + Src + '" "' + Dst + '" /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS',
           '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code < 8) then
   begin
+    // Le script de restauration est copié à côté en fin d'installation (ssPostInstall).
     SaveStringToFile(Dst + '\version.txt', PreviousVersion, False);
-    FileCopy(ExpandConstant('{src}\restore-previous.cmd'), ExpandConstant('{#DataDir}\rollback\restore-previous.cmd'), False);
   end
   else
     Log('Copie de sauvegarde impossible (code ' + IntToStr(Code) + ') : la restauration ne sera pas proposée.');

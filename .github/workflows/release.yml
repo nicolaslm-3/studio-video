@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  FFMPEG_ZIP: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+  FFMPEG_ZIP: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip
   WINSPARKLE_VERSION: "0.9.4"
 
 jobs:
@@ -66,17 +66,18 @@ jobs:
 
       - name: FFmpeg et WinSparkle à embarquer
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force vendor/ffmpeg, vendor/winsparkle, tmp | Out-Null
           Invoke-WebRequest $env:FFMPEG_ZIP -OutFile tmp/ffmpeg.zip
           Expand-Archive tmp/ffmpeg.zip tmp/ffmpeg
           Get-ChildItem tmp/ffmpeg -Recurse -Include ffmpeg.exe,ffprobe.exe | Copy-Item -Destination vendor/ffmpeg
           Get-ChildItem tmp/ffmpeg -Recurse -Include LICENSE.txt | Select-Object -First 1 | Copy-Item -Destination vendor/ffmpeg/LICENSE.txt
-          gh release download "v$env:WINSPARKLE_VERSION" --repo vslavik/winsparkle --pattern "WinSparkle-*.zip" --dir tmp
-          Expand-Archive (Get-ChildItem tmp/WinSparkle-*.zip | Select-Object -First 1).FullName tmp/winsparkle
-          $dll = Get-ChildItem tmp/winsparkle -Recurse -Filter WinSparkle.dll | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not (Test-Path vendor/ffmpeg/ffmpeg.exe) -or -not (Test-Path vendor/ffmpeg/ffprobe.exe)) { throw "FFmpeg introuvable dans l'archive" }
+          $v = $env:WINSPARKLE_VERSION
+          Invoke-WebRequest "https://github.com/vslavik/winsparkle/releases/download/v$v/WinSparkle-$v.zip" -OutFile tmp/winsparkle.zip
+          Expand-Archive tmp/winsparkle.zip tmp/winsparkle
+          $dll = Get-ChildItem tmp/winsparkle -Recurse -Filter WinSparkle.dll | Where-Object { $_.FullName -match '\\x64\\Release\\' -and $_.FullName -notmatch '__MACOSX' } | Select-Object -First 1
           if (-not $dll) { throw "WinSparkle.dll x64 introuvable" }
           Copy-Item $dll.FullName vendor/winsparkle/WinSparkle.dll
 
@@ -132,8 +133,13 @@ jobs:
           NOTES="docs/releases/${V}.md"
           [ -f "$NOTES" ] || echo "Version ${V}" > "$NOTES"
           PRE=""; [ "${{ steps.ctx.outputs.channel }}" = "beta" ] && PRE="--prerelease"
-          gh release create "${GITHUB_REF_NAME}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" \
-            "dist/StudioVideo-${V}-Setup.exe" "dist/StudioVideo-${V}-portable.zip" dist/SHA256SUMS.txt
+          ASSETS=("dist/StudioVideo-${V}-Setup.exe" "dist/StudioVideo-${V}-portable.zip" dist/SHA256SUMS.txt)
+          # La release peut déjà exister si elle a été créée depuis le site GitHub.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}"
+          fi
 
       - name: Mise à jour du flux appcast (gh-pages)
         shell: bash
