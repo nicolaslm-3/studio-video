@@ -123,6 +123,11 @@ class AudioSettings:
     true_peak: float = -1.0
     fade_in: float = 0.0
     fade_out: float = 0.0
+    level_speakers: bool = False  # nivellement dynamique : rapproche voix faibles et fortes
+    compress: bool = False        # compression légère de la voix
+    deess: bool = False           # atténuation des sifflantes
+    presence: bool = False        # légère accentuation de l'intelligibilité (2-4 kHz)
+    noise_gate: bool = False      # réservé (non utilisé)
 
 
 @dataclass

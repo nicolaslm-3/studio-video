@@ -214,6 +214,15 @@ class GraphBuilder:
                 chain.append("highpass=f=80")
             if a.denoise:
                 chain.append(f"afftdn=nr={_fmt(max(1.0, min(40.0, a.denoise_amount)))}:nf=-40")
+            if getattr(a, "level_speakers", False):
+                # nivellement dynamique (fenêtres ~2 s) : compense les écarts entre intervenants
+                chain.append("dynaudnorm=f=250:g=15:p=0.9:m=12:s=8")
+            if getattr(a, "presence", False):
+                chain.append("equalizer=f=3000:t=q:w=1.2:g=2.5")
+            if getattr(a, "deess", False):
+                chain.append("deesser=i=0.4:m=0.5:f=0.5")
+            if getattr(a, "compress", False):
+                chain.append("acompressor=threshold=-20dB:ratio=3:attack=10:release=150:makeup=2")
             if a.gain_db:
                 chain.append(f"volume={_fmt(a.gain_db)}dB")
             self.graph.append(f"{cur}{','.join(chain) or 'anull'}[voice]")

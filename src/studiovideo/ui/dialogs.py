@@ -197,7 +197,7 @@ MODE_INFO = {
     ProjectMode.TRANSLATION: ("Transcrire, traduire et doubler une vidéo courte.", "V2"),
     ProjectMode.ORIGINAL: ("Créer une vidéo à partir d'un texte, d'un PDF ou d'une idée.", "V4"),
     ProjectMode.CAMPAIGN: ("Suivre un brief de campagne et la conformité des clips.", "V2"),
-    ProjectMode.BATCH: ("Produire plusieurs vidéos à partir d'un modèle.", "V2"),
+    ProjectMode.BATCH: ("Produire plusieurs vidéos à partir d'un modèle (bouton « Production en série »).", None),
 }
 
 

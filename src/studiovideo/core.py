@@ -168,6 +168,16 @@ def _register_handlers(app: AppContext) -> None:
         ids = app.candidates.replace_proposals(pid, aid, cands, req)
         return {"count": len(ids), "asset_id": aid, "engine": getattr(engine, "name", "local")}
 
+    def optimize_audio(ctx: JobContext, params: dict) -> dict:
+        from .edit import audiofix
+        from .edit.model import Timeline
+        tl = Timeline.from_dict(params["timeline"])
+        sources, music = app.montage.sources_for(tl)
+        p = audiofix.optimize(tl, sources, music, ctx.progress)
+        return {"audio": p.audio, "music": p.music, "seg_volumes": p.seg_volumes, "report": p.report,
+                "warnings": p.warnings}
+
+    app.jobs.register("optimize_audio", optimize_audio)
     app.jobs.register("find_highlights", find_highlights)
     app.jobs.register("transcribe", transcribe)
     app.jobs.register("download_model", download_model)

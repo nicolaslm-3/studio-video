@@ -164,6 +164,7 @@ class StudioPage(QWidget):
         self.panel.save_concept_requested.connect(self._save_concept)
         self.panel.apply_concept_requested.connect(self._apply_concept)
         self.panel.generate_subs_requested.connect(self._generate_subs)
+        self.panel.optimize_requested.connect(self._optimize_audio)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         hsplit.addWidget(self.panel)
         hsplit.setStretchFactor(0, 1)
@@ -183,6 +184,8 @@ class StudioPage(QWidget):
         bar.addWidget(button("Supprimer l'extrait", "ghost", tooltip="Suppr", on_click=self._delete_selected))
         bar.addWidget(button("Ajuster", "ghost", tooltip="Afficher toute la timeline", on_click=lambda: self.timeline.fit()))
         bar.addStretch(1)
+        bar.addWidget(button("Production en série…", tooltip="Exporter plusieurs clips dans plusieurs formats",
+                             on_click=self._batch))
         self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export)
         bar.addWidget(self.export_quick)
         tl_lay.addLayout(bar)
@@ -574,6 +577,23 @@ class StudioPage(QWidget):
                                                               "project_id": self.project_id})
         self._jobs[jid] = "preview"
 
+    def _batch(self) -> None:
+        if not self.project_id:
+            return
+        from ..batch_dialog import BatchDialog
+        self.flush()
+        dlg = BatchDialog(self.app, self.project_id, self.tl, default_export_dir(), self)
+        if dlg.exec() and dlg.job_ids:
+            self.save_lbl.setText(f"{len(dlg.job_ids)} export(s) en file · dossier « {dlg.folder.name} »")
+
+    def _optimize_audio(self) -> None:
+        if not self.tl.segments:
+            return
+        self.panel.opt_btn.setEnabled(False)
+        self.panel.opt_btn.setText("Analyse en cours…")
+        jid = self.app.jobs.submit("optimize_audio", "Optimisation de l'audio", {"timeline": self.tl.to_dict()})
+        self._jobs[jid] = "optimize"
+
     def _analyze(self) -> None:
         if not self.tl.segments:
             return
@@ -614,6 +634,22 @@ class StudioPage(QWidget):
                 self.mplayer.show_render(job.result["path"])
             elif job.status == "failed":
                 self.mplayer.render_failed(job.error)
+        elif kind == "optimize":
+            self.panel.opt_btn.setEnabled(True)
+            self.panel.opt_btn.setText("Optimiser l'audio")
+            if job.status == "succeeded":
+                from ...edit.audiofix import apply_plan
+                self._snapshot()
+                apply_plan(self.tl, job.result)
+                self._changed(panel=True)
+                r = job.result
+                msg = "Traitements appliqués :\n\n" + "\n".join(f"• {x}" for x in r["report"])
+                if r.get("warnings"):
+                    msg += "\n\n" + "\n".join(f"⚠ {w}" for w in r["warnings"])
+                msg += "\n\nÉcoutez le résultat ; Ctrl+Z annule l'ensemble."
+                QMessageBox.information(self, "Optimiser l'audio", msg)
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
         elif kind == "analyze":
             if job.status == "succeeded":
                 self.panel.show_analysis(job.result)

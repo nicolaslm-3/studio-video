@@ -180,6 +180,7 @@ class MontagePanel(QTabWidget):
     apply_concept_requested = Signal()
     text_added = Signal(str)
     generate_subs_requested = Signal()
+    optimize_requested = Signal()
     cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
@@ -763,6 +764,12 @@ class MontagePanel(QTabWidget):
     def _audio_tab(self) -> QWidget:
         w, f = _form()
         b = self.b
+        self.opt_btn = button("Optimiser l'audio", "primary",
+                              tooltip="Analyse les extraits et règle débruitage, équilibre des voix, musique et crêtes",
+                              on_click=self.optimize_requested.emit)
+        f.addRow(self.opt_btn)
+        f.addRow(label("Les traitements choisis apparaissent ci-dessous et restent modifiables (Ctrl+Z pour annuler).",
+                       "faint", wrap=True))
         f.addRow(label("Voix et son des extraits", "h2"))
         f.addRow("Gain", b.spin("audio.gain_db", -20, 20, 0.5, 1, " dB"))
         f.addRow(b.check("audio.highpass", "Couper les graves parasites (< 80 Hz)"))
@@ -770,6 +777,10 @@ class MontagePanel(QTabWidget):
         dn.addWidget(b.check("audio.denoise", "Réduire le bruit de fond"))
         dn.addWidget(b.spin("audio.denoise_amount", 1, 40, 1, 0, " dB"))
         f.addRow(dn)
+        f.addRow(b.check("audio.level_speakers", "Équilibrer les intervenants (nivellement dynamique)"))
+        f.addRow(b.check("audio.compress", "Compression légère de la voix"))
+        f.addRow(b.check("audio.presence", "Accentuer l'intelligibilité (2-4 kHz)"))
+        f.addRow(b.check("audio.deess", "Atténuer les sifflantes (« s », « ch »)"))
         f.addRow(b.check("audio.normalize", "Normaliser le volume (EBU R128)"))
         f.addRow("Volume cible", b.combo("audio.target_lufs", LOUDNESS))
         f.addRow("Crête max.", b.spin("audio.true_peak", -6, -0.1, 0.1, 1, " dBTP"))
