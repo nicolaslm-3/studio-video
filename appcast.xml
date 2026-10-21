@@ -4,6 +4,25 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.12.0</title>
+      <pubDate>Wed, 21 Oct 2026 22:56:32 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.12.0 — Analytiques (début de la V4)&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Nouvel espace **Analytiques** : vidéos publiées comparées par concept, par plateforme, par compte et par vidéo&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(vues avec barres de comparaison, j&amp;#x27;aime, commentaires, partages, taux d&amp;#x27;engagement)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Relever les statistiques YouTube** : chiffres publics lus par l&amp;#x27;API, y compris pour les vidéos publiées à la main&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(le lien suffit) — il faut un compte YouTube connecté&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Saisir des chiffres** pour TikTok, Instagram, Facebook, X : recopiés depuis la plateforme, marqués « saisi »&lt;/li&gt;
+&lt;li&gt;Un chiffre non fourni s&amp;#x27;affiche « — », jamais 0 ; chaque relevé est daté et conservé (historique)&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.12.0/StudioVideo-0.12.0-Setup.exe" sparkle:version="0.12.0" sparkle:shortVersionString="0.12.0" sparkle:os="windows-x64" length="193612336" type="application/octet-stream" sparkle:edSignature="RPBgS/uCVatsoBrfgSzFZE1oL0JT4U30Zh8+lgvJVEPHcKs9/fiGO0Bf4Zky44TIEor9jDkMl06D4RKnVqg2Bw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.11.0</title>
       <pubDate>Wed, 21 Oct 2026 22:49:11 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.11.0 — Mise en ligne automatique sur YouTube&lt;/h2&gt;
