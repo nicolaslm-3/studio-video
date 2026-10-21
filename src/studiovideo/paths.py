@@ -71,9 +71,13 @@ class AppPaths:
     def projects(self) -> Path:
         return self.root / "projects"
 
+    @property
+    def dubs(self) -> Path:
+        return self.root / "dubs"
+
     def ensure(self) -> "AppPaths":
         for p in (self.root, self.backups, self.logs, self.cache, self.thumbnails,
-                  self.proxies, self.temp, self.models, self.presets, self.projects):
+                  self.proxies, self.temp, self.models, self.presets, self.projects, self.dubs):
             p.mkdir(parents=True, exist_ok=True)
         return self
 

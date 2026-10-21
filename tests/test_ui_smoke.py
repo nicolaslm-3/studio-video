@@ -134,3 +134,51 @@ def test_translation_flow_in_ui(window, tmp_path):
         assert out[1][2].subtitles.language == "en" and out[1][2].texts == []
     finally:
         srv.shutdown()
+
+
+def test_dub_dialog_and_voice_choice(window, tmp_path, monkeypatch):
+    import threading
+    import time
+    from http.server import HTTPServer
+
+    from test_dubbing import Fake, translated
+    from studiovideo.services import secrets
+    srv = HTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setenv("STUDIOVIDEO_ELEVENLABS_URL", f"http://127.0.0.1:{srv.server_port}")
+    monkeypatch.setattr(secrets, "get_secret", lambda n: "good" if n == "elevenlabs_api_key" else None)
+    w, ctx = window
+    try:
+        pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Dub")
+        con = ctx.db.connect()
+        con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                    "audio_tracks, duration_s) VALUES (1,?,'video','x.mp4','x.mp4','fd',1,8)", (pid,))
+        aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        ctx.transcripts.store_original(aid, translated())
+        ctx.transcripts.store_translation(aid, translated())
+        from studiovideo.ui.dub_dialog import DubDialog
+        dlg = DubDialog(ctx, aid, "en")
+        assert not dlg.go.isEnabled()
+        dlg._load_voices()
+        assert dlg.go.isEnabled() and set(dlg.voice_boxes) == {"Alice", "Bob"}
+        assert dlg.voice_boxes["Bob"].count() == 2
+        dlg.consent.setChecked(True)
+        dlg._launch()
+        end = time.time() + 30
+        while time.time() < end and ctx.jobs.get(dlg.job_ids[0]).status in ("pending", "running"):
+            time.sleep(0.05)
+        assert ctx.jobs.get(dlg.job_ids[0]).status == "succeeded", ctx.jobs.get(dlg.job_ids[0]).error
+        # le montage propose maintenant « Doublage : anglais »
+        w.open_project(pid)
+        st = w.studio
+        st.tl.add_segment(aid, 0, 7)
+        mp = st.panel
+        mp.refresh()
+        i = mp.voice_combo.findData("en")
+        assert i > 0
+        mp.voice_combo.setCurrentIndex(i)
+        assert st.tl.voice.mode == "dub" and st.tl.voice.language == "en"
+        dlg2 = DubDialog(ctx, aid, "en")
+        assert dlg2.lines.count() == 3
+    finally:
+        srv.shutdown()

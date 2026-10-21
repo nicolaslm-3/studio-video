@@ -65,3 +65,17 @@ def test_batch_real_exports(tmp_path):
         rep = export(tl, {1: Source(str(v), 320, 180, 6.0, True)}, None, tmp_path / f"{asp.replace(':', 'x')}.mp4", run)
         sizes.add((rep["width"], rep["height"]))
     assert sizes == {(240, 426), (426, 240)}
+
+
+def test_batch_language_variant_uses_dub_when_available():
+    from studiovideo.edit.batch import BatchOptions, plan_batch
+    from studiovideo.edit.model import Timeline
+    from studiovideo.transcribe.model import TSegment, Transcript
+    tr = Transcript([TSegment(0, 2, "Hi", [], "")], "en", "t")
+    clips = [{"asset_id": 1, "start": 0, "end": 3, "name": "a"}, {"asset_id": 2, "start": 0, "end": 3, "name": "b"}]
+    opts = BatchOptions(aspects=["9:16"], languages=["", "en"], dubbed={(1, "en")})
+    plan = plan_batch(Timeline(), clips, opts, {(1, "en"): tr, (2, "en"): tr})
+    voices = {(c["name"], f): (tl.voice.mode, tl.voice.language) for c, f, tl in plan}
+    assert voices[("a", "9:16 · en")] == ("dub", "en")
+    assert voices[("b", "9:16 · en")] == ("original", "")
+    assert voices[("a", "9:16")] == ("original", "")

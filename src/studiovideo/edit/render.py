@@ -46,6 +46,7 @@ class Source:
     duration: float | None
     has_audio: bool
     file_name: str = ""
+    dub_path: str = ""   # piste de voix doublée (48 kHz mono), alignée sur le média
 
 
 @dataclass
@@ -164,6 +165,24 @@ class GraphBuilder:
                 self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i))}[v{i}]")
                 vlabels.append(f"[v{i}]")
             if audio:
+                vs = getattr(tl, "voice", None)
+                if vs is not None and vs.mode == "dub" and src.dub_path:
+                    d = self._input(["-ss", _fmt(seg.src_in), "-t", _fmt(dur), "-i", src.dub_path])
+                    vol = "volume=0" if seg.muted else f"volume={_fmt(seg.volume_db + vs.dub_gain_db)}dB"
+                    self.graph.append(
+                        f"[{d}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                        f"{vol},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[ad{i}]")
+                    if src.has_audio and vs.original_level_db > -59 and not seg.muted:
+                        self.graph.append(
+                            f"[{k}:a:0]aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                            f"volume={_fmt(seg.volume_db + vs.original_level_db)}dB,asetpts=PTS-STARTPTS,apad,"
+                            f"atrim=0:{_fmt(dur)}[ao{i}]")
+                        self.graph.append(f"[ad{i}][ao{i}]amix=inputs=2:duration=first:normalize=0:"
+                                          f"dropout_transition=0[a{i}]")
+                    else:
+                        self.graph.append(f"[ad{i}]anull[a{i}]")
+                    alabels.append(f"[a{i}]")
+                    continue
                 if src.has_audio:
                     vol = "volume=0" if seg.muted else f"volume={_fmt(seg.volume_db)}dB"
                     self.graph.append(

@@ -131,6 +131,15 @@ class AudioSettings:
 
 
 @dataclass
+class VoiceSettings:
+    """Voix du montage : originale, ou doublage dans une langue (§10.2 modes 2 et 3)."""
+    mode: str = "original"          # original | dub
+    language: str = ""              # langue du doublage
+    original_level_db: float = -60.0  # -60 : voix d'origine remplacée ; -18 : gardée en fond
+    dub_gain_db: float = 0.0
+
+
+@dataclass
 class ExportSettings:
     codec: str = "h264"         # h264 | h265
     crf: int = 20
@@ -151,6 +160,7 @@ class Timeline:
     audio: AudioSettings = field(default_factory=AudioSettings)
     export: ExportSettings = field(default_factory=ExportSettings)
     subtitles: SubtitleTrack = field(default_factory=lambda: SubtitleTrack(enabled=False))
+    voice: VoiceSettings = field(default_factory=VoiceSettings)
     schema: int = SCHEMA
 
     # -- sérialisation -----------------------------------------------------
@@ -168,6 +178,7 @@ class Timeline:
             video=_from_dict(VideoSettings, d.get("video")),
             audio=_from_dict(AudioSettings, d.get("audio")),
             export=_from_dict(ExportSettings, d.get("export")),
+            voice=_from_dict(VoiceSettings, d.get("voice")),
             subtitles=(SubtitleTrack.from_dict(d["subtitles"]) if "subtitles" in d
                        else SubtitleTrack(enabled=False)),
         )

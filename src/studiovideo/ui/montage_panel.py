@@ -222,6 +222,7 @@ class MontagePanel(QTabWidget):
             self._load_texts()
             self._load_cues()
             self._load_music_choices()
+            self._load_voice_choices()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
             self.apply_concept_btn.setText(f"Appliquer les réglages de « {self.concept_name} »")
@@ -799,6 +800,17 @@ class MontagePanel(QTabWidget):
         f.addRow(self.opt_btn)
         f.addRow(label("Les traitements choisis apparaissent ci-dessous et restent modifiables (Ctrl+Z pour annuler).",
                        "faint", wrap=True))
+        f.addRow(label("Voix", "h2"))
+        self.voice_combo = QComboBox()
+        self.voice_combo.currentIndexChanged.connect(self._voice_pick)
+        f.addRow("Piste de voix", self.voice_combo)
+        f.addRow("Voix d'origine", b.combo("voice.original_level_db",
+                                           [(-60.0, "Remplacée par le doublage"),
+                                            (-18.0, "Gardée en fond, très bas"),
+                                            (-10.0, "Gardée en fond, audible")]))
+        f.addRow("Gain du doublage", b.spin("voice.dub_gain_db", -20, 20, 0.5, 1, " dB"))
+        self.voice_note = label("", "faint", wrap=True)
+        f.addRow(self.voice_note)
         f.addRow(label("Voix et son des extraits", "h2"))
         f.addRow("Gain", b.spin("audio.gain_db", -20, 20, 0.5, 1, " dB"))
         f.addRow(b.check("audio.highpass", "Couper les graves parasites (< 80 Hz)"))
@@ -842,6 +854,48 @@ class MontagePanel(QTabWidget):
         f.addRow(label("Un limiteur de sécurité empêche toute saturation introduite par le logiciel.", "faint",
                        wrap=True))
         return w
+
+    def _load_voice_choices(self) -> None:
+        from .dialogs import LANGUAGES
+        names = dict(LANGUAGES)
+        ids = {sg.asset_id for sg in self.tl.segments}
+        langs: dict[str, int] = {}
+        for aid in ids:
+            for lg in (self.app.dubs.languages(aid) if self.app.dubs else []):
+                langs[lg] = langs.get(lg, 0) + 1
+        self.voice_combo.blockSignals(True)
+        self.voice_combo.clear()
+        self.voice_combo.addItem("Voix d'origine", "")
+        for lg in sorted(set(langs) | ({self.tl.voice.language} if self.tl.voice.mode == "dub" else set())):
+            if not lg:
+                continue
+            partial = langs.get(lg, 0) < len(ids)
+            self.voice_combo.addItem(f"Doublage : {names.get(lg, lg)}" + (" (incomplet)" if partial else ""), lg)
+        cur = self.tl.voice.language if self.tl.voice.mode == "dub" else ""
+        self.voice_combo.setCurrentIndex(max(0, self.voice_combo.findData(cur)))
+        self.voice_combo.blockSignals(False)
+        if self.voice_combo.count() == 1:
+            self.voice_note.setText("Pour doubler : transcription → Plus ▾ → Traduire, puis « Doubler cette "
+                                    "traduction ».")
+        elif cur and langs.get(cur, 0) < len(ids):
+            self.voice_note.setText("⚠ Certains médias du montage n'ont pas de doublage dans cette langue : "
+                                    "l'export sera refusé tant qu'ils ne sont pas doublés.")
+        else:
+            self.voice_note.setText(("L'aperçu en direct joue encore la voix d'origine ; l'export utilise le "
+                                     "doublage. " if cur else "") +
+                                    "Astuce : affichez les sous-titres dans la même langue (onglet Sous-titres).")
+
+    def _voice_pick(self) -> None:
+        if self._loading:
+            return
+        lg = self.voice_combo.currentData() or ""
+        self.tl.voice.mode, self.tl.voice.language = ("dub", lg) if lg else ("original", "")
+        self._loading = True
+        try:
+            self._load_voice_choices()
+        finally:
+            self._loading = False
+        self.changed.emit("structure")
 
     def _load_music_choices(self) -> None:
         self.music_combo.blockSignals(True)

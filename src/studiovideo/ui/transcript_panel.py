@@ -268,8 +268,21 @@ class TranscriptPanel(QWidget):
             self.refresh_models()
         if job.id in self.translate_jobs and job.status in ("succeeded", "failed", "cancelled"):
             self.translate_jobs.discard(job.id)
+            title = "Doublage" if job.kind.startswith("dub") else "Traduction"
             if job.status == "failed":
-                QMessageBox.warning(self, "Traduction", job.error[:800])
+                QMessageBox.warning(self, title, job.error[:800])
+            elif job.kind == "dub":
+                r = job.result or {}
+                msg = f"Doublage {r.get('language', '').upper()} prêt : {r.get('lines', 0)} phrase(s)."
+                if r.get("errors"):
+                    msg += f" {len(r['errors'])} phrase(s) en échec (⚠), à reprendre."
+                if r.get("accelerated"):
+                    msg += f" {len(r['accelerated'])} phrase(s) nettement accélérée(s) (⏩)."
+                self.status.setText(msg)
+                self.changed.emit(r.get("asset_id") or self.asset_id)
+            elif job.kind == "dub_line":
+                self.status.setText("Nouvelle prise enregistrée.")
+                self.changed.emit(self.asset_id)
             else:
                 lang = job.result.get("language") if job.result else None
                 if lang and job.result.get("asset_id") == self.asset_id:
@@ -299,6 +312,9 @@ class TranscriptPanel(QWidget):
         trn = m.addAction("Traduire…", self._translate)
         trn.setEnabled(bool(self.asset_id and self.app.transcripts.has(self.asset_id)))
         if self.lang:
+            label = "Doublage de cette traduction…" if self.app.dubs.get(self.asset_id, self.lang) \
+                else "Doubler cette traduction (voix)…"
+            m.addAction(label, self._dub)
             m.addAction("Supprimer cette traduction", self._delete_translation)
         te = m.addAction("Monter depuis le texte…", self._text_edit)
         te.setEnabled(self.tr is not None)
@@ -319,6 +335,13 @@ class TranscriptPanel(QWidget):
         if dlg.exec():
             self.translate_jobs.update(dlg.job_ids)
             self.status.setText(f"{len(dlg.job_ids)} traduction(s) en cours…")
+
+    def _dub(self) -> None:
+        from .dub_dialog import DubDialog
+        dlg = DubDialog(self.app, self.asset_id, self.lang, self)
+        if dlg.exec():
+            self.translate_jobs.update(dlg.job_ids)
+            self.status.setText("Doublage en cours…")
 
     def _delete_translation(self) -> None:
         if QMessageBox.question(self, "Traduction", "Supprimer cette traduction ?") == QMessageBox.Yes:

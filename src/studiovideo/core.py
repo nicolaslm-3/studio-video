@@ -18,6 +18,7 @@ from .services.projects import ProjectService
 from .services.publications import PublicationService
 from .services.settings import SettingsService
 from .services.transcripts import TranscriptService
+from .services.dubs import DubService
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class AppContext:
     transcripts: TranscriptService
     candidates: CandidateService
     workspace_id: int
+    dubs: DubService | None = None
 
     def importer(self) -> MediaImporter:
         return MediaImporter(self.db, self.paths, self.workspace_id)
@@ -55,7 +57,8 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
     ctx = AppContext(paths=paths, db=db, jobs=jobs, concepts=concepts, projects=ProjectService(db),
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
                      montage=MontageService(db), transcripts=TranscriptService(db),
-                     candidates=CandidateService(db), workspace_id=ws)
+                     candidates=CandidateService(db), workspace_id=ws,
+                     dubs=DubService(db, paths.dubs))
     _register_handlers(ctx)
     return ctx
 
@@ -193,6 +196,53 @@ def _register_handlers(app: AppContext) -> None:
         app.transcripts.store_translation(aid, out)
         return {"asset_id": aid, "language": dst, "segments": len(out.segments)}
 
+    def _tts(kind: str):
+        from .ai import tts
+        from .services import secrets
+        return tts.make_engine(kind, secrets.get_secret, app.paths.models)
+
+    def dub(ctx: JobContext, params: dict) -> dict:
+        """Doublage complet d'une traduction (§10.2, §11)."""
+        from .edit import dubbing
+        aid, lang = params["asset_id"], params["language"]
+        tr = app.transcripts.translation(aid, lang)
+        if tr is None:
+            raise ValueError(f"Traduisez d'abord la transcription en {lang.upper()}.")
+        tr.language = lang
+        a = app.library.get(aid)
+        if a is None:
+            raise ValueError("Média introuvable dans la bibliothèque.")
+        engine = _tts(params.get("engine") or "elevenlabs")
+        work = app.dubs.directory(aid, lang)
+        tmp = work.with_name(work.name + ".partial")
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        man = dubbing.build(tr, engine, params.get("voices") or {}, params["default_voice"], aid,
+                            float(a["duration_s"] or tr.segments[-1].end), tmp, ctx.progress,
+                            is_cancelled=lambda: ctx.cancelled, speed=float(params.get("speed") or 1.0))
+        ctx.check()
+        shutil.rmtree(work, ignore_errors=True)
+        tmp.rename(work)
+        app.dubs.store(man, work)
+        errors = [ln.index for ln in man.lines if ln.error]
+        fast = [ln.index for ln in man.lines if ln.tempo > 1.2]
+        return {"asset_id": aid, "language": lang, "lines": len(man.lines), "errors": errors, "accelerated": fast}
+
+    def dub_line(ctx: JobContext, params: dict) -> dict:
+        from .edit import dubbing
+        aid, lang = params["asset_id"], params["language"]
+        got = app.dubs.get(aid, lang)
+        if got is None:
+            raise ValueError("Doublage introuvable.")
+        man, work = got
+        engine = _tts(man.engine)
+        ctx.progress(0.2, "Nouvelle prise de la phrase")
+        dubbing.regenerate(man, int(params["index"]), params.get("text"), params.get("voice"), engine, work)
+        app.dubs.store(man, work)
+        return {"asset_id": aid, "language": lang, "index": params["index"]}
+
+    app.jobs.register("dub", dub)
+    app.jobs.register("dub_line", dub_line)
     app.jobs.register("translate", translate)
     app.jobs.register("optimize_audio", optimize_audio)
     app.jobs.register("find_highlights", find_highlights)

@@ -22,6 +22,7 @@ class BatchOptions:
     keep_music: bool = True
     keep_texts: bool = False        # recopier les textes du modèle (à éviter : ils sont propres au montage)
     languages: list[str] = field(default_factory=lambda: [""])   # "" = langue d'origine
+    dubbed: set = field(default_factory=set)   # {(asset_id, langue)} doublés : la variante prend la voix doublée
 
 
 def clip_timeline(template: Timeline, asset_id: int, start: float, end: float, aspect: str, opts: BatchOptions,
@@ -67,5 +68,9 @@ def plan_batch(template: Timeline, clips: list[dict], opts: BatchOptions, transc
                 tl = clip_timeline(template, c["asset_id"], c["start"], c["end"], asp, opts, tr,
                                    c.get("hook") or "" if not lang else "", title_style)
                 tl.subtitles.language = lang
+                if lang and (c["asset_id"], lang) in opts.dubbed:
+                    tl.voice.mode, tl.voice.language = "dub", lang
+                else:
+                    tl.voice.mode, tl.voice.language = "original", ""
                 out.append((c, f"{asp} · {lang}" if lang else asp, tl))
     return out

@@ -336,22 +336,26 @@ class SettingsPage(QWidget):
         tf = QFormLayout()
         self.deepl_key = QLineEdit()
         self.google_key = QLineEdit()
-        for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key")):
+        self.eleven_key = QLineEdit()
+        for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key"),
+                        (self.eleven_key, "elevenlabs_api_key")):
             w.setEchoMode(QLineEdit.Password)
             w.setEnabled(secrets.available())
             w.setPlaceholderText("Enregistrée" if secrets.get_secret(name) else
                                  ("Clé API" if secrets.available() else "Coffre d'identifiants indisponible"))
         tf.addRow("DeepL", self.deepl_key)
         tf.addRow("Google", self.google_key)
+        tf.addRow("ElevenLabs (voix)", self.eleven_key)
         card.lay.addLayout(tf)
-        card.lay.addWidget(button("Enregistrer les clés de traduction", on_click=self._save_translation_keys))
+        card.lay.addWidget(button("Enregistrer les clés de traduction et de voix", on_click=self._save_translation_keys))
         self.llm_kind.currentIndexChanged.connect(self._llm_kind_changed)
         self._llm_kind_changed()
         return card
 
     def _save_translation_keys(self) -> None:
         try:
-            for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key")):
+            for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key"),
+                            (self.eleven_key, "elevenlabs_api_key")):
                 if w.text().strip():
                     secrets.set_secret(name, w.text().strip())
                     w.clear()
@@ -359,7 +363,7 @@ class SettingsPage(QWidget):
         except secrets.SecretStoreUnavailable as exc:
             QMessageBox.warning(self, "Clés", str(exc))
             return
-        self.llm_status.setText("Clés de traduction enregistrées dans le coffre Windows.")
+        self.llm_status.setText("Clés enregistrées dans le coffre Windows.")
 
     def _llm_kind_changed(self) -> None:
         k = self.llm_kind.currentData()

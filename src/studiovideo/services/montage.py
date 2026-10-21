@@ -72,6 +72,18 @@ class MontageService:
                 raise FileNotFoundError(f"Fichier source introuvable : {a['path']}")
             out[aid] = Source(a["path"], a["width"], a["height"], a["duration_s"], a["audio_tracks"] > 0,
                               a["file_name"])
+            vs = tl.voice
+            if vs.mode == "dub" and vs.language:
+                d = self.db.query_one("SELECT directory, manifest_json FROM dub WHERE source_asset_id = ? "
+                                      "AND language = ?", (aid, vs.language))
+                if d is None:
+                    raise ValueError(f"Pas de doublage {vs.language.upper()} pour « {a['file_name']} » : "
+                                     "créez-le depuis la transcription traduite.")
+                import json as _json
+                track = Path(d["directory"]) / (_json.loads(d["manifest_json"]).get("track") or "dub.wav")
+                if not track.exists():
+                    raise FileNotFoundError(f"Piste de doublage introuvable : {track}")
+                out[aid].dub_path = str(track)
         music = None
         if tl.music.asset_id:
             m = self.db.query_one("SELECT * FROM source_asset WHERE id = ?", (tl.music.asset_id,))
