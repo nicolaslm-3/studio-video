@@ -4,6 +4,28 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.7.0</title>
+      <pubDate>Wed, 21 Oct 2026 22:13:20 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.7.0 — Doublage&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Doubler une traduction : onglet Transcription → afficher la traduction → Plus ▾ → « Doubler cette traduction (voix) »&lt;/li&gt;
+&lt;li&gt;Une voix par intervenant, choisie dans votre compte ElevenLabs (clé dans Paramètres → Matériel et moteurs) ;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Piper (hors ligne) est proposé s&amp;#x27;il est installé&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Chaque phrase est calée sur le temps de la phrase d&amp;#x27;origine (accélération limitée à ×1,35) ;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;les phrases accélérées (⏩) ou en échec (⚠) sont signalées et peuvent être reprises une par une&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Montage → onglet Audio → Voix : « Doublage : anglais » ; voix d&amp;#x27;origine remplacée ou gardée en fond&lt;/li&gt;
+&lt;li&gt;Production en série : les variantes traduites prennent la voix doublée quand elle existe&lt;/li&gt;
+&lt;li&gt;Confirmation obligatoire des droits sur les voix utilisées (voix clonée : accord de la personne)&lt;/li&gt;
+&lt;li&gt;Limite connue : l&amp;#x27;aperçu en direct joue la voix d&amp;#x27;origine ; l&amp;#x27;export utilise bien le doublage&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.7.0/StudioVideo-0.7.0-Setup.exe" sparkle:version="0.7.0" sparkle:shortVersionString="0.7.0" sparkle:os="windows-x64" length="193573756" type="application/octet-stream" sparkle:edSignature="a4jgPdACdV6+50wTXF5TggM73jeTnxvGvWAW70ix6GWlmS0jrYTB+Yxvz2qn706w32qD3zvHVd3PZLdEQJ/ZBA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.6.0</title>
       <pubDate>Wed, 21 Oct 2026 21:58:53 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.6.0 — Traduction&lt;/h2&gt;
