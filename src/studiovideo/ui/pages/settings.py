@@ -30,6 +30,7 @@ class SettingsPage(QWidget):
     edit_concept = Signal(object)
     theme_changed = Signal(str)
     check_updates = Signal()
+    llm_changed = Signal()
 
     def __init__(self, app: AppContext, updater_status: callable, parent=None):
         super().__init__(parent)
@@ -268,6 +269,7 @@ class SettingsPage(QWidget):
         card.lay.addLayout(form)
         lay.addWidget(card)
         lay.addWidget(self._models_card(ram))
+        lay.addWidget(self._llm_card())
         lay.addStretch(1)
         return w
 
@@ -290,6 +292,91 @@ class SettingsPage(QWidget):
         self._rec_model = rec
         self._fill_models()
         return card
+
+    def _llm_card(self) -> Card:
+        from PySide6.QtWidgets import QLineEdit
+        card = Card()
+        card.lay.addWidget(label("Modèle de langage (facultatif)", "h2"))
+        card.lay.addWidget(label(
+            "Utilisé par « Moments forts » pour mieux comprendre le sens des échanges. Sans lui, l'analyse locale "
+            "fonctionne hors ligne. Ollama tourne sur votre PC (rien ne sort) ; une API distante reçoit le texte "
+            "de la transcription analysée.", "muted", wrap=True))
+        cfg = self.app.settings.get("llm", None) or {}
+        form = QFormLayout()
+        self.llm_kind = QComboBox()
+        for k, n in (("none", "Aucun"), ("ollama", "Ollama (local, sur ce PC)"),
+                     ("openai", "API compatible OpenAI (OpenAI, Mistral, Groq, LM Studio…)")):
+            self.llm_kind.addItem(n, k)
+        self.llm_kind.setCurrentIndex(max(0, self.llm_kind.findData(cfg.get("kind", "none"))))
+        self.llm_url = QLineEdit(cfg.get("base_url", ""))
+        self.llm_url.setPlaceholderText("Adresse (vide = valeur par défaut)")
+        self.llm_model = QComboBox()
+        self.llm_model.setEditable(True)
+        self.llm_model.setCurrentText(cfg.get("model", ""))
+        self.llm_key = QLineEdit()
+        self.llm_key.setEchoMode(QLineEdit.Password)
+        self.llm_key.setPlaceholderText("Clé API (enregistrée dans le coffre Windows)" if secrets.available()
+                                        else "Coffre d'identifiants indisponible")
+        self.llm_key.setEnabled(secrets.available())
+        form.addRow("Type", self.llm_kind)
+        form.addRow("Adresse", self.llm_url)
+        form.addRow("Modèle", self.llm_model)
+        form.addRow("Clé API", self.llm_key)
+        card.lay.addLayout(form)
+        row = QHBoxLayout()
+        row.addWidget(button("Tester la connexion", on_click=self._llm_test))
+        row.addWidget(button("Enregistrer", "primary", on_click=self._llm_save))
+        row.addStretch(1)
+        card.lay.addLayout(row)
+        self.llm_status = label("", "faint", wrap=True)
+        card.lay.addWidget(self.llm_status)
+        self.llm_kind.currentIndexChanged.connect(self._llm_kind_changed)
+        self._llm_kind_changed()
+        return card
+
+    def _llm_kind_changed(self) -> None:
+        k = self.llm_kind.currentData()
+        for w in (self.llm_url, self.llm_model):
+            w.setEnabled(k != "none")
+        self.llm_key.setEnabled(k == "openai" and secrets.available())
+
+    def _llm_test(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from ...ai.highlights import LLMError, check_llm
+        k = self.llm_kind.currentData()
+        if k == "none":
+            return
+        self.llm_status.setText("Connexion…")
+        QApplication.processEvents()
+        key = self.llm_key.text().strip() or (secrets.get_secret("llm_api_key") or "")
+        try:
+            models = check_llm(k, self.llm_url.text().strip(), key)
+        except LLMError as exc:
+            self.llm_status.setText(f"⚠ {exc}")
+            return
+        cur = self.llm_model.currentText()
+        self.llm_model.clear()
+        self.llm_model.addItems(models)
+        self.llm_model.setCurrentText(cur or (models[0] if models else ""))
+        self.llm_status.setText(f"Connexion réussie · {len(models)} modèle(s) disponible(s).")
+
+    def _llm_save(self) -> None:
+        k = self.llm_kind.currentData()
+        cfg = {"kind": k, "base_url": self.llm_url.text().strip(), "model": self.llm_model.currentText().strip()}
+        if k != "none" and not cfg["model"]:
+            self.llm_status.setText("⚠ Indiquez le nom du modèle (bouton « Tester la connexion » pour la liste).")
+            return
+        if k == "openai" and self.llm_key.text().strip():
+            try:
+                secrets.set_secret("llm_api_key", self.llm_key.text().strip())
+            except secrets.SecretStoreUnavailable as exc:
+                self.llm_status.setText(f"⚠ {exc}")
+                return
+            self.llm_key.clear()
+        self.app.settings.set("llm", cfg)
+        self.llm_status.setText("Enregistré.")
+        self.llm_changed.emit()
 
     def _fill_models(self) -> None:
         from ...transcribe import engines

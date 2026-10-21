@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         for page in (self.dashboard, self.studio):
             page.new_project.connect(self.new_project)
         self.studio.open_models.connect(lambda: (self.go(5), self.settings_page.show_models()))
+        self.studio.open_ai_settings.connect(lambda: (self.go(5), self.settings_page.show_models()))
+        self.settings_page.llm_changed.connect(self.studio.highlights.refresh_engines)
         self.dashboard.open_project.connect(self.open_project)
         self.dashboard.edit_concept.connect(self.edit_concept)
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
@@ -159,6 +161,9 @@ class MainWindow(QMainWindow):
     def open_project(self, project_id: int) -> None:
         self.go(1)
         self.studio.open_project(project_id)
+        p = self.app.projects.get(project_id)
+        if p and p["mode"] == "smart_clipping":
+            self.studio.left_tabs.setCurrentIndex(2 if self.app.transcripts.has(self.studio.asset_id or 0) else 1)
 
     def edit_concept(self, concept_id=None) -> None:
         if ConceptDialog(self.app, concept_id, self).exec():

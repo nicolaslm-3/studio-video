@@ -18,6 +18,7 @@ from ..montage_panel import MontagePanel
 from ..montage_player import MontagePlayer
 from ..player import PlayerWidget
 from ..timeline_view import TimelineView
+from ..highlights_panel import HighlightsPanel
 from ..transcript_panel import TranscriptPanel
 from ..widgets import Card, EmptyState, button, label
 
@@ -32,6 +33,7 @@ def default_export_dir() -> Path:
 class StudioPage(QWidget):
     new_project = Signal(object)
     open_models = Signal()
+    open_ai_settings = Signal()
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -119,7 +121,14 @@ class StudioPage(QWidget):
         self.transcript.make_clip.connect(self._create_clip)
         self.transcript.add_to_timeline.connect(self._add_range_to_timeline)
         self.transcript.open_models.connect(self.open_models.emit)
+        self.transcript.text_edit.connect(self._text_edit_ranges)
         self.left_tabs.addTab(self.transcript, "Transcription")
+        self.highlights = HighlightsPanel(app)
+        self.highlights.play_range.connect(self._play_source_range)
+        self.highlights.clips_created.connect(self._load_clips)
+        self.highlights.add_to_timeline.connect(self._add_ranges)
+        self.highlights.open_settings.connect(self.open_ai_settings.emit)
+        self.left_tabs.addTab(self.highlights, "Moments forts")
         hsplit.addWidget(self.left_tabs)
 
         # -- lecteurs
@@ -138,7 +147,7 @@ class StudioPage(QWidget):
         sc.lay.addWidget(self.player)
         srow = QHBoxLayout()
         srow.addStretch(1)
-        srow.addWidget(button("Ajouter à la timeline", "primary",
+        srow.addWidget(button("Ajouter à la timeline (A)", "primary",
                               tooltip="Ajoute la sélection (ou tout le média) à la fin de la timeline (A)",
                               on_click=self._add_media_to_timeline))
         sc.lay.addLayout(srow)
@@ -279,6 +288,7 @@ class StudioPage(QWidget):
             return
         self.asset_id = aid
         self.transcript.set_asset(aid)
+        self.highlights.set_context(self.project_id, aid)
         io = self.app.projects.load_data(self.project_id).get("in_out", {}).get(str(aid), [None, None])
         self.player.load(a["path"], a["fps"], *io)
 
@@ -415,6 +425,39 @@ class StudioPage(QWidget):
         self._changed(panel=True)
         self.viewer_tabs.setCurrentIndex(0)
         QTimer.singleShot(30, self.timeline.fit)
+
+    def _play_source_range(self, a: float, b: float) -> None:
+        self.viewer_tabs.setCurrentIndex(1)
+        self.player.set_range(a, b)
+        self.player.preview_range()
+
+    def _add_ranges(self, ranges: list) -> None:
+        if not self.asset_id:
+            return
+        row = self.app.library.get(self.asset_id)
+        if row is None or row["kind"] != "video":
+            QMessageBox.information(self, "Timeline", "Seules les vidéos vont sur la piste vidéo.")
+            return
+        n = 0
+        for a, b in ranges:
+            try:
+                self.tl.add_segment(self.asset_id, max(0.0, a), min(b, row["duration_s"] or b))
+                n += 1
+            except ValueError:
+                pass
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        self.save_lbl.setText(f"{n} extrait(s) ajouté(s) à la timeline")
+        QTimer.singleShot(30, self.timeline.fit)
+
+    def _text_edit_ranges(self, ranges: list, replace: bool) -> None:
+        if replace and self.tl.segments:
+            if QMessageBox.question(self, "Montage par le texte", "Remplacer le contenu actuel de la timeline ? "
+                                    "(Annulable avec Ctrl+Z)") != QMessageBox.Yes:
+                return
+            self.tl.segments = []
+            self.tl.subtitles.cues = []
+        self._add_ranges(ranges)
 
     def _generate_subs(self) -> None:
         from ...edit.subtitles import generate
@@ -558,6 +601,10 @@ class StudioPage(QWidget):
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
         if job.kind in ("transcribe", "download_model"):
             self.transcript.on_job(job)
+            if job.kind == "transcribe" and job.status == "succeeded":
+                self.highlights.refresh()
+        if job.kind == "find_highlights":
+            self.highlights.on_job(job)
         kind = self._jobs.get(job.id)
         if not kind or job.status in ("pending", "running"):
             return

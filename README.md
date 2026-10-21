@@ -2,8 +2,9 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.3.0 — V1 complète.** Socle, montage, transcription et sous-titres : on peut importer,
-transcrire, monter, recadrer, titrer, sous-titrer, régler le son et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
+**Version 0.4.0 — V1 complète + début de la V2 (clipping intelligent).** On peut importer, transcrire,
+trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
+et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
 
 ## Ce qui fonctionne
@@ -38,7 +39,13 @@ l'interface : aucun bouton n'est simulé.
 | Sous-titres générés depuis la transcription, découpage réglable (mots, caractères, lignes, pauses) | ✅ |
 | Style complet, mot prononcé surligné, apparition mot par mot, effet pop, fondu ; incrustation ou .srt séparé | ✅ |
 | Identification automatique des intervenants (diarisation) | ⏳ V2 (saisie manuelle disponible) |
-| IA, traduction, doublage | ⏳ V2 |
+| **V2** — Moments forts : analyse locale hors ligne (texte, énergie de la voix, intervenants) | ✅ |
+| **V2** — Filtres humour, débat, politique, émotion, pédagogie, potentiel ; mots-clés ; intervenants ; durées | ✅ |
+| **V2** — Score d'estimation, justification, accroche proposée, protection du contexte (§7.4) | ✅ |
+| **V2** — Modèle de langage facultatif : Ollama local ou API compatible OpenAI | ✅ (à configurer) |
+| **V2** — Accepter / rejeter / favoris / timecodes ; clips et timeline depuis les propositions | ✅ |
+| **V2** — Montage par le texte (décocher des phrases, aperçu de la durée) | ✅ |
+| **V2** — Traduction, doublage, séparation audio, mixage intelligent, texte incrusté, lots | ⏳ |
 | Publication, calendrier | ⏳ V3 |
 | Analytiques | ⏳ V4 |
 
@@ -64,9 +71,10 @@ permet d'utiliser un autre dossier de données.
 QT_QPA_PLATFORM=offscreen python -m pytest
 ```
 
-Les 73 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
+Les 84 tests couvrent la base et ses migrations, ainsi que les scénarios D (Poussey Pass) et E (Pokémon).
 Ils couvrent aussi les tâches, l'import, l'interface, la signature des mises à jour, le flux appcast
-et de vrais exports FFmpeg (formats, modes de cadrage, musique, normalisation, vérification).
+et de vrais exports FFmpeg (formats, modes de cadrage, musique, normalisation, vérification),
+le scénario A complet du cahier des charges et une transcription Whisper réelle (intégration continue).
 
 ## Compiler l'exécutable Windows
 

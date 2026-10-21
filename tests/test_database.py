@@ -58,3 +58,25 @@ def test_failed_migration_rolls_back_and_backs_up(paths, monkeypatch):
 def test_foreign_keys_enforced(db):
     with pytest.raises(sqlite3.IntegrityError):
         db.connect().execute("INSERT INTO project(concept_id, name) VALUES (999, 'x')")
+
+
+def test_upgrade_from_v1_keeps_data_and_backs_up(paths, monkeypatch):
+    """Simule une base créée par la version 0.3 (schéma v1) puis mise à jour."""
+    real = dbmod.available_migrations()
+    monkeypatch.setattr(dbmod, "available_migrations", lambda: real[:1])
+    d = Database(paths.database, paths.backups)
+    d.migrate()
+    assert d.schema_version() == 1
+    con = d.connect()
+    con.execute("INSERT INTO workspace(name) VALUES ('W')")
+    con.execute("INSERT INTO concept(workspace_id, name) VALUES (1, 'Poussey Pass')")
+    con.execute("INSERT INTO project(concept_id, name) VALUES (1, 'P')")
+    con.execute("INSERT INTO source_asset(workspace_id, kind, path, file_name, fingerprint) VALUES (1,'video','x','x','f')")
+    con.execute("INSERT INTO clip_candidate(project_id, source_asset_id, start_s, end_s) VALUES (1, 1, 0, 10)")
+    monkeypatch.setattr(dbmod, "available_migrations", lambda: real)
+    applied = d.migrate()
+    assert applied == list(range(2, len(real) + 1))
+    row = d.query_one("SELECT * FROM clip_candidate")
+    assert row["end_s"] == 10 and row["engine"] == "" and row["speakers"] == ""
+    assert any("avant-migration-v1" in p.name for p in d.list_backups())
+    assert d.query_one("SELECT name FROM concept")["name"] == "Poussey Pass"

@@ -193,7 +193,7 @@ class ConceptDialog(QDialog):
 # Disponibilité des parcours dans cette version (§24, §25 : pas de faux boutons)
 MODE_INFO = {
     ProjectMode.FREE_EDIT: ("Assembler, découper, recadrer et exporter vos fichiers.", None),
-    ProjectMode.SMART_CLIPPING: ("Transcrire une vidéo longue et en extraire les meilleurs passages.", "V2"),
+    ProjectMode.SMART_CLIPPING: ("Transcrire une vidéo longue et en extraire les meilleurs passages.", None),
     ProjectMode.TRANSLATION: ("Transcrire, traduire et doubler une vidéo courte.", "V2"),
     ProjectMode.ORIGINAL: ("Créer une vidéo à partir d'un texte, d'un PDF ou d'une idée.", "V4"),
     ProjectMode.CAMPAIGN: ("Suivre un brief de campagne et la conformité des clips.", "V2"),

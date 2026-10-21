@@ -18,7 +18,11 @@ src/studiovideo/
 │   ├── montage.py      timeline du projet, réglages par concept, historique des exports
 │   ├── settings.py     paramètres
 │   ├── transcripts.py  transcriptions (original conservé + corrections)
+│   ├── candidates.py   propositions d'extraits (décisions, conversion en clips)
 │   └── secrets.py      coffre d'identifiants Windows (keyring)
+├── ai/
+│   ├── highlights.py   moments forts : analyse locale, moteur LLM (Ollama / OpenAI), protection du contexte
+│   └── lexicon.py      indices lexicaux FR / EN par catégorie
 ├── edit/
 │   ├── model.py        timeline : extraits, textes, musique, format, image, audio, export
 │   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification

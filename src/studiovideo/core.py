@@ -10,6 +10,7 @@ from .jobs.manager import JobContext, JobManager
 from .media import downloader
 from .media.importer import MediaImporter
 from .paths import AppPaths, app_paths
+from .services.candidates import CandidateService
 from .services.concepts import ConceptService
 from .services.library import LibraryService
 from .services.montage import MontageService
@@ -33,6 +34,7 @@ class AppContext:
     settings: SettingsService
     montage: MontageService
     transcripts: TranscriptService
+    candidates: CandidateService
     workspace_id: int
 
     def importer(self) -> MediaImporter:
@@ -52,7 +54,8 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
     jobs = JobManager(db, max_workers=max_workers or int(settings.get("max_workers", 2)))
     ctx = AppContext(paths=paths, db=db, jobs=jobs, concepts=concepts, projects=ProjectService(db),
                      publications=PublicationService(db), library=LibraryService(db), settings=settings,
-                     montage=MontageService(db), transcripts=TranscriptService(db), workspace_id=ws)
+                     montage=MontageService(db), transcripts=TranscriptService(db),
+                     candidates=CandidateService(db), workspace_id=ws)
     _register_handlers(ctx)
     return ctx
 
@@ -135,6 +138,37 @@ def _register_handlers(app: AppContext) -> None:
             raise
         return {"model": params["model"], "path": str(p)}
 
+    def find_highlights(ctx: JobContext, params: dict) -> dict:
+        import tempfile
+
+        from .ai import highlights as hl
+        from .transcribe import engines
+        aid, pid = params["asset_id"], params["project_id"]
+        a = app.library.get(aid)
+        tr = app.transcripts.get(aid)
+        if a is None or tr is None:
+            raise ValueError("Transcrivez d'abord ce média : l'analyse s'appuie sur la transcription.")
+        req = hl.Request(**{k: v for k, v in params["request"].items() if k in hl.Request.__dataclass_fields__})
+        energy = []
+        if a["audio_tracks"]:
+            ctx.progress(0.02, "Analyse de l'énergie de la voix")
+            with tempfile.TemporaryDirectory(dir=str(app.paths.temp)) as d:
+                wav = engines.extract_audio(Path(a["path"]), Path(d) / "a.wav")
+                ctx.check()
+                energy = hl.energy_profile(wav, 0.5)
+        eng_cfg = params.get("engine") or {"kind": "local"}
+        if eng_cfg.get("kind") in ("ollama", "openai"):
+            from .services import secrets
+            key = secrets.get_secret("llm_api_key") or "" if eng_cfg["kind"] == "openai" else ""
+            engine = hl.LLMEngine(eng_cfg["kind"], eng_cfg.get("model", ""), eng_cfg.get("base_url", ""), key)
+        else:
+            engine = hl.LocalEngine(energy, 0.5)
+        cands = engine.propose(tr, req, ctx.progress)
+        ctx.check()
+        ids = app.candidates.replace_proposals(pid, aid, cands, req)
+        return {"count": len(ids), "asset_id": aid, "engine": getattr(engine, "name", "local")}
+
+    app.jobs.register("find_highlights", find_highlights)
     app.jobs.register("transcribe", transcribe)
     app.jobs.register("download_model", download_model)
     app.jobs.register("import_file", import_file)

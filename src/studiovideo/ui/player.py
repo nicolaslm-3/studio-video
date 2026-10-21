@@ -96,12 +96,14 @@ class PlayerWidget(QWidget):
         self.io_lbl = label("Entrée — · Sortie — · Durée —", "faint")
         io.addWidget(self.io_lbl)
         io.addStretch(1)
-        io.addWidget(button("Prévisualiser l'extrait", tooltip="Lire de l'entrée à la sortie (P)",
-                            on_click=self.preview_range))
-        self.clip_btn = button("Créer un clip", "primary", "Créer un clip à partir de la sélection (C)",
-                               on_click=self._emit_clip)
-        io.addWidget(self.clip_btn)
         lay.addLayout(io)
+        io2 = QHBoxLayout()
+        io2.addWidget(button("▶ Extrait", tooltip="Lire de l'entrée à la sortie (P)", on_click=self.preview_range))
+        io2.addStretch(1)
+        self.clip_btn = button("Créer un clip", tooltip="Créer un clip à partir de la sélection (C)",
+                               on_click=self._emit_clip)
+        io2.addWidget(self.clip_btn)
+        lay.addLayout(io2)
         self.status = label("", "faint")
         lay.addWidget(self.status)
         self._range_end: float | None = None

@@ -26,6 +26,7 @@ class TranscriptPanel(QWidget):
     add_to_timeline = Signal(float, float)
     open_models = Signal()
     changed = Signal(int)                    # asset_id dont la transcription a changé
+    text_edit = Signal(list, bool)           # plages à conserver, remplacer la timeline
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -246,12 +247,25 @@ class TranscriptPanel(QWidget):
         exp = m.addMenu("Exporter la transcription")
         for f in EXPORT_FORMATS:
             exp.addAction(f.upper(), lambda f=f: self._export(f)).setEnabled(self.tr is not None)
+        te = m.addAction("Monter depuis le texte…", self._text_edit)
+        te.setEnabled(self.tr is not None)
+        m.addSeparator()
         m.addAction("Importer des sous-titres (SRT, VTT)…", self._import)
         a = m.addAction("Revenir au texte original", self._revert)
         a.setEnabled(bool(self.asset_id and self.app.transcripts.is_edited(self.asset_id)))
         m.addSeparator()
         m.addAction("Modèles de reconnaissance vocale…", self.open_models.emit)
         m.exec(self.more.mapToGlobal(self.more.rect().bottomLeft()))
+
+    def _text_edit(self) -> None:
+        from .text_edit_dialog import TextEditDialog
+        a = self.app.library.get(self.asset_id)
+        if a["kind"] != "video":
+            QMessageBox.information(self, "Montage par le texte", "Disponible pour les vidéos.")
+            return
+        dlg = TextEditDialog(self.tr, a["file_name"], self)
+        if dlg.exec() and dlg.ranges:
+            self.text_edit.emit(dlg.ranges, dlg.replace)
 
     def _export(self, fmt: str) -> None:
         a = self.app.library.get(self.asset_id)
