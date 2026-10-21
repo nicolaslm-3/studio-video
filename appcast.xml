@@ -4,6 +4,17 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.13.1</title>
+      <pubDate>Wed, 21 Oct 2026 23:12:11 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.13.1 — Correctif&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Mise en ligne YouTube : si le compte a été déconnecté ou la vidéo déplacée, la publication passe en « Échec »&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;avec la raison, au lieu de rester « en cours d&amp;#x27;envoi »&lt;/p&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.13.1/StudioVideo-0.13.1-Setup.exe" sparkle:version="0.13.1" sparkle:shortVersionString="0.13.1" sparkle:os="windows-x64" length="193618114" type="application/octet-stream" sparkle:edSignature="gGgkcgaydeuoXYLIcVU2zdS5GU25NG35TwVzg9u7KURrRiZC5BK8yJqjxVgKbV1yQQuO+4aF5m/b9z22nW5MBQ==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.13.0</title>
       <pubDate>Wed, 21 Oct 2026 23:04:18 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.13.0 — Détection du texte incrusté&lt;/h2&gt;
