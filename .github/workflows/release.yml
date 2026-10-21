@@ -153,7 +153,12 @@ jobs:
         if: steps.ctx.outputs.skip != 'true'
         shell: pwsh
         run: |
-          Get-ChildItem dist -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist/SHA256SUMS.txt -Encoding ascii
+          $ErrorActionPreference = "Stop"
+          # Liste figée AVANT d'écrire le fichier (sinon il est lu pendant son écriture).
+          $files = @(Get-ChildItem dist -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" })
+          $lines = foreach ($f in $files) { "$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower())  $($f.Name)" }
+          Set-Content -Path dist/SHA256SUMS.txt -Value $lines -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
 
       - name: Publication GitHub Release
         if: steps.ctx.outputs.skip != 'true'
