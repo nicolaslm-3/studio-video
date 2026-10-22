@@ -468,7 +468,11 @@ def _register_handlers(app: AppContext) -> None:
             when = r["at"] if r["at"] and r["at"] > datetime.now().strftime("%Y-%m-%dT%H:%M") else None
             privacy = (app.settings.get("youtube_privacy", "public") or "public")
             meta = youtube.metadata(r["title"] or "", r["description"] or "", r["hashtags"] or "", privacy, when)
-            video = youtube.upload(Path(r["output_path"]), meta, token, ctx.progress, lambda: ctx.cancelled)
+            key = f"yt_session_{r['id']}"
+            video = youtube.upload(Path(r["output_path"]), meta, token, ctx.progress, lambda: ctx.cancelled,
+                                   session=app.settings.get(key, None),
+                                   on_session=lambda url: app.settings.set(key, {"url": url}))
+            app.settings.set(key, None)
         except Exception as exc:
             if not isinstance(exc, youtube.YouTubeError):
                 ps.set_status(r["id"], PublicationStatus.FAILED, error=str(exc)[:300])

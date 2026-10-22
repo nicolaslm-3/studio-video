@@ -55,6 +55,7 @@ class G(BaseHTTPRequestHandler):
             else:
                 self._json(400, {"error": "invalid_grant"})
         elif self.path.startswith("/upload/youtube/v3/videos"):
+            G.state["inits"] = G.state.get("inits", 0) + 1
             G.state["meta"] = json.loads(raw)
             G.state["total"] = int(self.headers["X-Upload-Content-Length"])
             G.state["data"] = b""
@@ -198,3 +199,21 @@ def test_jobs_connect_publish_and_private_case(google, tmp_path, monkeypatch):
         assert j.status == "failed" and app.publications.get(p4)["status"] == "failed"
     finally:
         app.close()
+
+
+def test_resume_after_restart_no_duplicate(google, tmp_path):
+    video = tmp_path / "v.mp4"
+    payload = bytes(range(256)) * 3000
+    video.write_bytes(payload)
+    saved = {}
+    G.state["failed"] = True                          # pas de panne simulée ici
+    res = youtube.upload(video, youtube.metadata("T", "", "", "public"), "ACCESS", chunk=256 * 1024,
+                         on_session=lambda url: saved.__setitem__("url", url))
+    assert res["id"] == "VID42" and G.state["inits"] == 1 and saved["url"].endswith("/session/1")
+    # relance après fermeture du logiciel : l'envoi était fini → même vidéo, aucun nouvel envoi
+    again = youtube.upload(video, youtube.metadata("T", "", "", "public"), "ACCESS", session=saved)
+    assert again["id"] == "VID42" and G.state["inits"] == 1
+    # envoi coupé à mi-parcours : la relance reprend là où il s'était arrêté
+    G.state["data"] = payload[:300_000]
+    again = youtube.upload(video, youtube.metadata("T", "", "", "public"), "ACCESS", session=saved, chunk=256 * 1024)
+    assert again["id"] == "VID42" and G.state["inits"] == 1 and G.state["data"] == payload

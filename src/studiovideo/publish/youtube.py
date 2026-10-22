@@ -183,19 +183,31 @@ def metadata(title: str, description: str, hashtags: str, privacy: str = "public
 
 def upload(path: Path, meta: dict, token: str, progress: Callable[[float, str], None] = lambda f, m: None,
            is_cancelled: Callable[[], bool] = lambda: False, ep: Endpoints | None = None,
-           chunk: int = CHUNK, retries: int = 5) -> dict:
-    """Envoi reprenable. Retourne la ressource vidéo créée (id, status…)."""
+           chunk: int = CHUNK, retries: int = 5, session: dict | None = None,
+           on_session: Callable[[str], None] = lambda url: None) -> dict:
+    """Envoi reprenable. Retourne la ressource vidéo créée (id, status…).
+
+    session : {"url"} d'un envoi interrompu (logiciel fermé pendant l'envoi) : on reprend ce même envoi,
+    ou l'on récupère la vidéo s'il était déjà terminé — jamais de doublon. on_session mémorise l'adresse."""
     ep = ep or Endpoints.from_env()
     path = Path(path)
     if not path.exists():
         raise YouTubeError(f"Vidéo introuvable : {path}")
     total = path.stat().st_size
+    if session and session.get("url"):
+        try:
+            sent, done = _resume_point(session["url"], token, total)
+            if done is not None:
+                return done
+            return _send(path, session["url"], token, total, sent, progress, is_cancelled, chunk, retries)
+        except YouTubeError:
+            pass                       # session expirée (> 1 semaine) : nouvel envoi
     body = json.dumps(meta).encode()
     try:
         with _api("POST", ep.api + "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", token, body,
                   {"Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": str(total),
                    "X-Upload-Content-Type": "video/mp4"}) as r:
-            session = r.headers["Location"]
+            session_url = r.headers["Location"]
     except urllib.error.HTTPError as exc:
         detail = exc.read()[:400].decode("utf-8", "replace")
         if exc.code == 403 and "quota" in detail.lower():
@@ -203,7 +215,13 @@ def upload(path: Path, meta: dict, token: str, progress: Callable[[float, str], 
         raise YouTubeError(f"YouTube a refusé l'envoi ({exc.code}) : {detail}") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise YouTubeError(f"YouTube injoignable : {exc}") from exc
-    sent, fails = 0, 0
+    on_session(session_url)
+    return _send(path, session_url, token, total, 0, progress, is_cancelled, chunk, retries)
+
+
+def _send(path: Path, session: str, token: str, total: int, sent: int, progress, is_cancelled, chunk: int,
+          retries: int) -> dict:
+    fails = 0
     with open(path, "rb") as f:
         while True:
             if is_cancelled():
