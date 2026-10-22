@@ -25,7 +25,8 @@ def test_lut_applied(tmp_path):
     src = tmp_path / "w.mp4"
     subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "color=white:s=64x64:d=1:r=10",
                     "-pix_fmt", "yuv420p", str(src)], check=True)
-    d = tmp_path / "a:b c'd"
+    import sys
+    d = tmp_path / ("a,b c'd [x]" if sys.platform == "win32" else "a:b c'd [x]")   # « : » interdit sous Windows
     d.mkdir()
     lut = d / "inverse.cube"
     lut.write_text(INVERT)
