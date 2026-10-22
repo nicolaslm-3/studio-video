@@ -4,6 +4,22 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.21.0</title>
+      <pubDate>Thu, 22 Oct 2026 05:36:31 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.21.0 — Texte de publication proposé, lecture fluide&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Publication → **Proposer le texte** : titre, description et hashtags rédigés à partir de ce qui est dit dans la&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;vidéo (seulement les passages montés). Avec un modèle de langage : rédaction soignée, sans fait inventé ; sans :&lt;/p&gt;
+&lt;p&gt;première phrase forte et mots-clés les plus fréquents. Toujours à relire&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Aperçus légers** : les vidéos 4K, HEVC, ProRes… reçoivent automatiquement une copie 540p pour une lecture&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;fluide dans le logiciel ; l&amp;#x27;export utilise toujours l&amp;#x27;original (Paramètres → Général pour désactiver)&lt;/p&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.21.0/StudioVideo-0.21.0-Setup.exe" sparkle:version="0.21.0" sparkle:shortVersionString="0.21.0" sparkle:os="windows-x64" length="194551271" type="application/octet-stream" sparkle:edSignature="zx+G6++nIFGa13tR69tdlNmX9voFlbu+mDCsIDRzoJTiolx39sReDw+FW3fiU02KsZ/PZZ6TBrCO/gNB3lyIAg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.20.0</title>
       <pubDate>Thu, 22 Oct 2026 05:27:59 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.20.0 — Miniatures et premiers pas&lt;/h2&gt;
@@ -284,28 +300,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.5.0/StudioVideo-0.5.0-Setup.exe" sparkle:version="0.5.0" sparkle:shortVersionString="0.5.0" sparkle:os="windows-x64" length="193473141" type="application/octet-stream" sparkle:edSignature="0r8bCA7/wVv3oqnRSxcMGy5cqSj6nUzWqevLvHbusjTAessp5u6SQrxkZcLSL0YtF8Zt+wzXQrmLhbwFkemrAw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.4.0</title>
-      <pubDate>Wed, 21 Oct 2026 21:37:13 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.4.0 — Clipping intelligent&lt;/h2&gt;
-&lt;p&gt;Début de la V2 : trouver automatiquement les meilleurs passages d&amp;#x27;une vidéo longue.&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Nouvel onglet « Moments forts » dans le Studio (parcours « Clipping intelligent » activé)&lt;/li&gt;
-&lt;li&gt;Filtres : humour, débat et désaccord, politique, émotion, pédagogie, potentiel d&amp;#x27;intérêt&lt;/li&gt;
-&lt;li&gt;Mots-clés ou demande libre, intervenants à privilégier, nombre et durées des extraits, intensité&lt;/li&gt;
-&lt;li&gt;Chaque proposition : score d&amp;#x27;estimation, justification, accroche proposée, intervenants&lt;/li&gt;
-&lt;li&gt;Protection du contexte : phrase coupée, réserve supprimée (« mais… »), réponse ou question coupée,&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;chiffres à vérifier&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Lire, accepter, rejeter, favori, ajuster début et fin ; créer les clips ou les envoyer sur la timeline&lt;/li&gt;
-&lt;li&gt;Analyse locale hors ligne ; modèle de langage facultatif (Ollama sur votre PC ou API de votre choix)&lt;/li&gt;
-&lt;li&gt;Montage par le texte : décochez des phrases de la transcription pour obtenir la coupe&lt;/li&gt;
-&lt;li&gt;Base de données mise à jour automatiquement (sauvegarde faite avant)&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.4.0/StudioVideo-0.4.0-Setup.exe" sparkle:version="0.4.0" sparkle:shortVersionString="0.4.0" sparkle:os="windows-x64" length="193525930" type="application/octet-stream" sparkle:edSignature="4ulT2ZJcPxiurUBYZHHTZE6aOMui76aOF2mQ9XHWktCZFq+78afjwc4ZCETkKVJLUErMoVJaF85csPWMMPaJDg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
