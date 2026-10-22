@@ -388,6 +388,10 @@ class SettingsPage(QWidget):
         self.workers.currentIndexChanged.connect(
             lambda: self.app.settings.set("max_workers", self.workers.currentData()))
         form.addRow("Traitements en parallèle", self.workers)
+        self.proxies_cb = QCheckBox("Créer un aperçu léger des vidéos lourdes (4K, HEVC…) pour une lecture fluide")
+        self.proxies_cb.setChecked(bool(self.app.settings.get("proxies", True)))
+        self.proxies_cb.toggled.connect(lambda v: self.app.settings.set("proxies", bool(v)))
+        form.addRow("Aperçus", self.proxies_cb)
         card.lay.addLayout(form)
         card.lay.addWidget(label("Le nombre de traitements parallèles s'applique au prochain démarrage.",
                                  "faint"))

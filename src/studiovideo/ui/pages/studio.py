@@ -498,8 +498,10 @@ class StudioPage(QWidget):
         ids = {s.asset_id for s in self.tl.segments} | ({self.tl.music.asset_id} if self.tl.music.asset_id else set())
         rows = self.app.db.query("SELECT * FROM source_asset WHERE project_id = ? ORDER BY id", (self.project_id,))
         extra = [self.app.montage.asset_row(i) for i in ids - {r["id"] for r in rows}]
+        from ...media import proxy
         for a in list(rows) + [e for e in extra if e]:
             self.assets[a["id"]] = dict(a)
+            self.assets[a["id"]]["preview_path"] = proxy.preview_path(self.app.paths.proxies, a)
             if a["project_id"] != self.project_id:
                 continue
             it = QListWidgetItem(f"{a['file_name']}\n{fmt_timecode(a['duration_s']) if a['duration_s'] else a['kind']}"
@@ -533,7 +535,8 @@ class StudioPage(QWidget):
         self.transcript.set_asset(aid)
         self.highlights.set_context(self.project_id, aid)
         io = self.app.projects.load_data(self.project_id).get("in_out", {}).get(str(aid), [None, None])
-        self.player.load(a["path"], a["fps"], *io)
+        from ...media import proxy
+        self.player.load(proxy.preview_path(self.app.paths.proxies, a), a["fps"], *io)
 
     def _viewer_changed(self, i: int) -> None:
         if i == 0:

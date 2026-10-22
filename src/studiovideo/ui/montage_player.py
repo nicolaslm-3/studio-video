@@ -413,7 +413,7 @@ class MontagePlayer(QWidget):
                 return
             self.loaded_asset = seg.asset_id
             self._pending = src_t
-            self.player.setSource(QUrl.fromLocalFile(a["path"]))
+            self.player.setSource(QUrl.fromLocalFile(a.get("preview_path") or a["path"]))
         else:
             self.player.setPosition(int(src_t * 1000))
         self._sync_aux(src_t, keep_playing)

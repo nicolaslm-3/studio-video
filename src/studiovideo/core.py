@@ -75,7 +75,26 @@ def _register_handlers(app: AppContext) -> None:
         res = app.importer().import_file(
             params["path"], project_id=params.get("project_id"),
             allow_duplicate=params.get("allow_duplicate", False), progress=ctx.progress)
+        _maybe_proxy(res.asset_id)
         return {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings}
+
+    def _maybe_proxy(asset_id: int) -> None:
+        from .media import proxy
+        row = app.library.get(asset_id)
+        if row and proxy.needed(row) and not proxy.path_for(app.paths.proxies, asset_id).exists() \
+                and app.settings.get("proxies", True):
+            app.jobs.submit("make_proxy", f"Aperçu léger · {row['file_name']}", {"asset_id": asset_id})
+
+    def make_proxy(ctx: JobContext, params: dict) -> dict:
+        from .media import proxy
+        row = app.library.get(params["asset_id"])
+        if row is None or not Path(row["path"]).exists():
+            raise ValueError("Média introuvable.")
+        dest = proxy.path_for(app.paths.proxies, row["id"])
+        proxy.make(Path(row["path"]), dest, row["duration_s"], ctx.run_process, ctx.progress)
+        return {"asset_id": row["id"], "path": str(dest)}
+
+    app.jobs.register("make_proxy", make_proxy)
 
     def import_url(ctx: JobContext, params: dict) -> dict:
         dest = app.paths.root / "downloads"
