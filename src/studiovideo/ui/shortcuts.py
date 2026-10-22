@@ -15,7 +15,10 @@ GROUPS = [
     ("Studio (montage)", [("Espace", "Lecture / pause de l'aperçu"), ("← / →", "Image précédente / suivante"),
                           ("S", "Couper l'extrait à la tête de lecture"), ("Suppr", "Supprimer l'élément sélectionné"),
                           ("A", "Ajouter le média ou la sélection à la timeline"),
-                          ("Ctrl+Z", "Annuler"), ("Ctrl+Y / Ctrl+Maj+Z", "Rétablir"), ("Ctrl+E", "Exporter")]),
+                          ("Ctrl+Z", "Annuler"), ("Ctrl+Y / Ctrl+Maj+Z", "Rétablir"), ("Ctrl+E", "Exporter"),
+                          ("Glisser un bord d'extrait", "Rogner l'extrait"),
+                          ("Glisser un texte", "Le déplacer (ses bords : le rallonger)"),
+                          ("Ctrl + molette", "Zoom de la timeline")]),
 ]
 
 

@@ -426,10 +426,28 @@ class SettingsPage(QWidget):
         info.lay.addLayout(hb)
         lay.addWidget(info)
 
+        wf = Card()
+        wf.lay.addWidget(label("Dossier surveillé", "h2"))
+        wf.lay.addWidget(label("Les vidéos, sons et images déposés dans ce dossier (ou un de ses sous-dossiers "
+                               "directs) sont importés automatiquement dans la bibliothèque, une fois la copie "
+                               "terminée. Les doublons sont ignorés ; les fichiers ne sont ni déplacés ni modifiés.",
+                               "muted", wrap=True))
+        self.watch_lbl = label("", wrap=True)
+        wf.lay.addWidget(self.watch_lbl)
+        hw = QHBoxLayout()
+        hw.addWidget(button("Choisir le dossier…", on_click=self._pick_watch))
+        self.watch_off = button("Arrêter la surveillance", "ghost", on_click=lambda: self._set_watch(""))
+        hw.addWidget(self.watch_off)
+        hw.addStretch(1)
+        wf.lay.addLayout(hw)
+        lay.addWidget(wf)
+        self._show_watch()
+
         bk = Card()
         bk.lay.addWidget(label("Sauvegardes de la base", "h2"))
-        bk.lay.addWidget(label("Une sauvegarde est créée automatiquement avant chaque migration et chaque "
-                               "mise à jour. Les 20 plus récentes sont conservées.", "muted", wrap=True))
+        bk.lay.addWidget(label("Une sauvegarde est créée automatiquement chaque jour au démarrage (les 7 dernières "
+                               "sont gardées), ainsi qu'avant chaque migration et chaque mise à jour (les 20 plus "
+                               "récentes).", "muted", wrap=True))
         self.backup_list = QListWidget()
         bk.lay.addWidget(self.backup_list, 1)
         hb2 = QHBoxLayout()
@@ -440,6 +458,21 @@ class SettingsPage(QWidget):
         lay.addWidget(bk, 1)
         self._refresh_backups()
         return w
+
+    def _show_watch(self) -> None:
+        f = self.app.settings.get("watch_folder", "") or ""
+        self.watch_lbl.setText(f"Surveillé : {f}" if f else "Aucun dossier surveillé.")
+        self.watch_off.setEnabled(bool(f))
+
+    def _pick_watch(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        f = QFileDialog.getExistingDirectory(self, "Dossier à surveiller", self.app.settings.get("watch_folder", "") or "")
+        if f:
+            self._set_watch(f)
+
+    def _set_watch(self, folder: str) -> None:
+        self.app.settings.set("watch_folder", folder)
+        self._show_watch()
 
     def _refresh_backups(self) -> None:
         self.backup_list.clear()

@@ -205,6 +205,7 @@ class StudioPage(QWidget):
         self.timeline = TimelineView()
         c = self.timeline.canvas
         c.seek.connect(lambda t: self.mplayer.seek(t))
+        c.edited.connect(self._on_timeline_drag)
         c.segment_selected.connect(self._select_segment)
         c.text_selected.connect(self._select_text)
         c.music_selected.connect(lambda: self.panel.setCurrentIndex(4))
@@ -582,6 +583,7 @@ class StudioPage(QWidget):
             music = dict(row) if row else None
             if music:
                 self.assets[music["id"]] = music
+        self.timeline.canvas.durations = {k: v.get("duration_s") or 0 for k, v in self.assets.items()}
         self.timeline.set_timeline(self.tl, names, music["file_name"] if music else "")
         self._ensure_waves()
         self.mplayer.set_timeline(self.tl, self.assets)
@@ -891,11 +893,7 @@ class StudioPage(QWidget):
         self._snapshot()
         res = silence.apply(self.tl, {k: [tuple(x) for x in v] for k, v in silences.items()})
         res["zoomed"] = silence.punch_in(self.tl) if punch else 0
-        if self.tl.subtitles.cues:                  # sous-titres recalés sur le nouveau montage
-            from ...edit.subtitles import generate
-            lang = self.tl.subtitles.language
-            trs = {i: self.app.transcripts.for_language(i, lang) for i in {sg.asset_id for sg in self.tl.segments}}
-            self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
+        self._resync_subs()                         # sous-titres recalés sur le nouveau montage
         self._changed(panel=True)
         self._snapshot()
         return res
@@ -1001,6 +999,22 @@ class StudioPage(QWidget):
                                    critical=True)
         self._jobs[jid] = "export"
         self.save_lbl.setText(f"Export lancé : {dest.name}")
+
+    def _resync_subs(self) -> bool:
+        """Sous-titres recalculés sur le montage actuel (après une coupe ou un rognage)."""
+        if not self.tl.subtitles.cues:
+            return False
+        from ...edit.subtitles import generate
+        lang = self.tl.subtitles.language
+        trs = {i: self.app.transcripts.for_language(i, lang) for i in {sg.asset_id for sg in self.tl.segments}}
+        self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
+        return True
+
+    def _on_timeline_drag(self, kind: str) -> None:
+        resynced = kind == "segment" and self._resync_subs()
+        self._changed(panel=True)
+        self.save_lbl.setText(("Extrait rogné" if kind == "segment" else "Texte déplacé")
+                              + (" · sous-titres recalés" if resynced else "") + ". Ctrl+Z pour annuler.")
 
     def _ensure_waves(self) -> None:
         """Formes d'onde des médias de la timeline : depuis le cache, sinon calculées en tâche de fond."""

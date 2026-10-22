@@ -681,3 +681,69 @@ def test_studio_draws_waveform(window, tmp_path):
     assert aid in st.timeline.canvas.peaks
     st.timeline.canvas.grab()
     assert st.timeline.canvas._cols                            # colonnes réellement calculées au dessin
+
+
+def test_timeline_drag_trims_and_moves(window):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QEvent
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Glisser")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s) VALUES (1,?,'video','x','x.mp4','fdrag',1,20)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    w.open_project(pid)
+    st = w.studio
+    st.tl.add_segment(aid, 2, 6)
+    st.tl.add_segment(aid, 10, 14)
+    txt = st.tl.add_text("Titre", 1.0, 3.0)
+    st._changed(panel=True)
+    c = st.timeline.canvas
+    c.resize(1200, c.minimumHeight())
+
+    def drag(x0, x1, y):
+        for typ, x, btns in ((QEvent.MouseButtonPress, x0, Qt.LeftButton), (QEvent.MouseMove, x1, Qt.LeftButton),
+                             (QEvent.MouseButtonRelease, x1, Qt.NoButton)):
+            ev = QMouseEvent(typ, QPointF(x, y), QPointF(x, y), Qt.LeftButton, btns, Qt.NoModifier)
+            {QEvent.MouseButtonPress: c.mousePressEvent, QEvent.MouseMove: c.mouseMoveEvent,
+             QEvent.MouseButtonRelease: c.mouseReleaseEvent}[typ](ev)
+
+    y0 = c.track_rect(0).center().y()
+    drag(c.x_of(4.0) - 2, c.x_of(3.0), y0)                      # bord droit du 1er extrait : 1 s plus court
+    assert st.tl.segments[0].src_out == pytest.approx(5.0, abs=0.05) and st.tl.duration == pytest.approx(7, abs=0.05)
+    drag(c.x_of(st.tl.duration) - 2, c.x_of(st.tl.duration + 50), y0)     # limité par la durée du média
+    assert st.tl.segments[1].src_out == 20
+    drag(c.x_of(0) + 1, c.x_of(1.0), y0)                         # bord gauche : début de source avancé
+    assert st.tl.segments[0].src_in == pytest.approx(3.0, abs=0.05)
+    y1 = c.track_rect(1).center().y()
+    drag(c.x_of(2.0), c.x_of(4.0), y1)                           # texte déplacé
+    assert (txt.start, txt.end) == (pytest.approx(3.0, abs=0.05), pytest.approx(5.0, abs=0.05))
+    n = len(st._history)
+    st.undo()
+    assert st.tl.texts[0].start == pytest.approx(1.0, abs=0.05) and len(st._history) == n - 1
+
+
+def test_watch_folder_imports(window, tmp_path):
+    import os
+    import subprocess
+    import time
+
+    from studiovideo.media import ffmpeg
+    if not ffmpeg.available():
+        pytest.skip("FFmpeg absent")
+    w, ctx = window
+    d = tmp_path / "surveille"
+    d.mkdir()
+    v = d / "rush.mp4"
+    subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:d=1:r=25",
+                    "-pix_fmt", "yuv420p", str(v)], check=True)
+    os.utime(v, (time.time() - 60, time.time() - 60))
+    assert w.check_watch_folder() == 0                            # aucun dossier choisi
+    w.settings_page._set_watch(str(d)) if hasattr(w, "settings_page") else ctx.settings.set("watch_folder", str(d))
+    assert w.check_watch_folder() == 0 and w.check_watch_folder() == 1
+    end = time.time() + 20
+    while not ctx.db.query_one("SELECT 1 FROM source_asset WHERE path = ?", (str(v),)) and time.time() < end:
+        time.sleep(0.05)
+    assert ctx.db.query_one("SELECT provenance FROM source_asset WHERE path = ?", (str(v),)) is not None
+    assert w.check_watch_folder() == 0

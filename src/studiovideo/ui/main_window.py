@@ -123,6 +123,10 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+I"), self, activated=lambda: pick_and_import(self.app, self))
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self.toggle_jobs)
         QShortcut(QKeySequence("F1"), self, activated=self.show_shortcuts)
+        from ..media.watch import FolderWatcher
+        self.watcher = FolderWatcher(app.db, app.workspace_id)
+        self._watch_timer = QTimer(self, interval=15000, timeout=self.check_watch_folder)
+        self._watch_timer.start()
 
         self._restore_layout()
         self.go(0)
@@ -177,6 +181,19 @@ class MainWindow(QMainWindow):
                 self.calendar.refresh()
             QApplication.alert(self)
         return len(due)
+
+    def check_watch_folder(self) -> int:
+        """Importe les médias nouvellement déposés dans le dossier surveillé (Paramètres → Stockage)."""
+        folder = self.app.settings.get("watch_folder", "") or ""
+        if not folder:
+            return 0
+        try:
+            files = self.watcher.scan(folder)
+        except OSError:
+            return 0
+        for f in files:
+            self.app.jobs.submit("import_file", f"Import (dossier surveillé) · {f.name}", {"path": str(f)})
+        return len(files)
 
     def show_shortcuts(self) -> None:
         from .shortcuts import ShortcutsDialog

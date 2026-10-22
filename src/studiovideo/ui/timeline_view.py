@@ -23,6 +23,7 @@ class TimelineCanvas(QWidget):
     text_selected = Signal(object)
     music_selected = Signal()
     cue_selected = Signal(str)
+    edited = Signal(str)                # "segment" | "text" : modification par glisser terminée
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,6 +36,8 @@ class TimelineCanvas(QWidget):
         self.sel_text: str | None = None
         self.in_out: tuple[float | None, float | None] = (None, None)
         self._drag_head = False
+        self.durations: dict = {}         # asset_id -> durée du média (limite des poignées)
+        self._drag: dict | None = None    # poignée en cours : {"kind", "id", "edge", "t0", valeurs d'origine}
         self.peaks: dict = {}             # asset_id -> pics (forme d'onde), voir media/waveform.py
         self._cols: dict = {}             # cache des colonnes dessinées
         self.setMinimumHeight(RULER_H + len(TRACKS) * (TRACK_H + TRACK_GAP) + 8)
@@ -199,9 +202,48 @@ class TimelineCanvas(QWidget):
         p.end()
 
     # -- souris -------------------------------------------------------------
+    HANDLE_PX = 6
+
+    def handle_at(self, pos) -> dict | None:
+        """Poignée sous le pointeur : bord d'un extrait (rogner) ou texte (déplacer / bords)."""
+        x, hp = pos.x(), self.HANDLE_PX
+        if self.track_rect(0).contains(pos):
+            acc = 0.0
+            for i, s in enumerate(self.tl.segments):
+                xa, xb = self.x_of(acc), self.x_of(acc + s.duration)
+                if xa <= x <= xa + hp and (i == 0 or x > xa):
+                    return {"kind": "segment", "id": s.id, "edge": "in"}
+                if xb - hp <= x <= xb:
+                    return {"kind": "segment", "id": s.id, "edge": "out"}
+                acc += s.duration
+        elif self.track_rect(1).contains(pos):
+            for item in reversed(self.tl.texts):
+                xa, xb = self.x_of(item.start), self.x_of(item.end)
+                if xa - 2 <= x <= xb + 2:
+                    edge = "in" if x <= xa + hp else "out" if x >= xb - hp else "move"
+                    return {"kind": "text", "id": item.id, "edge": edge}
+        return None
+
     def mousePressEvent(self, e) -> None:
         pos = e.position()
         t = self.t_of(pos.x())
+        h = self.handle_at(pos) if e.button() == Qt.LeftButton and pos.y() >= RULER_H else None
+        if h:
+            h["t0"] = t
+            if h["kind"] == "segment":
+                s = self.tl.segments[self.tl.index_of(h["id"])]
+                h["orig"] = (s.src_in, s.src_out)
+                self.sel_segment, self.sel_text = s.id, None
+                self.segment_selected.emit(s.id)
+            else:
+                item = self.tl.text(h["id"])
+                h["orig"] = (item.start, item.end)
+                self.sel_text, self.sel_segment = item.id, None
+                self.text_selected.emit(item.id)
+            h["changed"] = False
+            self._drag = h
+            self.update()
+            return
         if pos.y() < RULER_H or e.button() != Qt.LeftButton:
             self._drag_head = True
             self.seek.emit(t)
@@ -227,11 +269,47 @@ class TimelineCanvas(QWidget):
         self.update()
 
     def mouseMoveEvent(self, e) -> None:
+        pos = e.position()
+        if self._drag is not None and e.buttons() & Qt.LeftButton:
+            self._drag_to(self.t_of(pos.x()) - self._drag["t0"])
+            return
         if self._drag_head and e.buttons() & Qt.LeftButton:
-            self.seek.emit(min(self.t_of(e.position().x()), self.tl.duration))
+            self.seek.emit(min(self.t_of(pos.x()), self.tl.duration))
+            return
+        h = self.handle_at(pos)
+        self.setCursor(Qt.SizeHorCursor if h and h["edge"] != "move" else
+                       Qt.SizeAllCursor if h else Qt.ArrowCursor)
+
+    def _drag_to(self, dt: float) -> None:
+        d = self._drag
+        a, b = d["orig"]
+        if d["kind"] == "segment":
+            from ..edit.model import MIN_SEGMENT
+            seg = self.tl.segments[self.tl.index_of(d["id"])]
+            dur = self.durations.get(seg.asset_id) or None
+            if d["edge"] == "in":
+                self.tl.trim(d["id"], src_in=min(max(0.0, a + dt), seg.src_out - MIN_SEGMENT), source_duration=dur)
+            else:
+                self.tl.trim(d["id"], src_out=max(b + dt, seg.src_in + MIN_SEGMENT), source_duration=dur)
+        else:
+            item = self.tl.text(d["id"])
+            if d["edge"] == "move":
+                dt = max(-a, dt)
+                item.start, item.end = round(a + dt, 3), round(b + dt, 3)
+            elif d["edge"] == "in":
+                item.start = round(min(max(0.0, a + dt), b - 0.2), 3)
+            else:
+                item.end = round(max(b + dt, a + 0.2), 3)
+        d["changed"] = True
+        self._resize()
+        self.update()
 
     def mouseReleaseEvent(self, _e) -> None:
         self._drag_head = False
+        if self._drag is not None:
+            d, self._drag = self._drag, None
+            if d["changed"]:
+                self.edited.emit(d["kind"])
 
     def wheelEvent(self, e) -> None:
         if e.modifiers() & Qt.ControlModifier:
