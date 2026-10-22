@@ -190,6 +190,12 @@ class GraphBuilder:
         self.inputs: list[list[str]] = []
         self.graph: list[str] = []
 
+    def _afade(self, i: int, afade: str) -> str:
+        if not afade:
+            return f"[a{i}]"
+        self.graph.append(f"[a{i}]{afade}[af{i}]")
+        return f"[af{i}]"
+
     def _input(self, args: list[str]) -> int:
         self.inputs.append(args)
         return len(self.inputs) - 1
@@ -203,8 +209,13 @@ class GraphBuilder:
             src = self.sources[seg.asset_id]
             dur = seg.duration
             k = self._input(["-ss", _fmt(seg.src_in), "-t", _fmt(dur), "-i", src.path])
+            fi, fo = seg.fades() if hasattr(seg, "fades") else (0.0, 0.0)
+            vfade = (f",fade=t=in:st=0:d={_fmt(fi)}" if fi else "") + \
+                (f",fade=t=out:st={_fmt(dur - fo)}:d={_fmt(fo)}" if fo else "")
+            afade = (f"afade=t=in:st=0:d={_fmt(fi)}" if fi else "") + ("," if fi and fo else "") + \
+                (f"afade=t=out:st={_fmt(dur - fo)}:d={_fmt(fo)}" if fo else "")
             if video:
-                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i), seg)}[v{i}]")
+                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i), seg)}{vfade}[v{i}]")
                 vlabels.append(f"[v{i}]")
             if audio:
                 vs = getattr(tl, "voice", None)
@@ -231,7 +242,7 @@ class GraphBuilder:
                                           f"dropout_transition=0[a{i}]")
                     else:
                         self.graph.append(f"[ad{i}]anull[a{i}]")
-                    alabels.append(f"[a{i}]")
+                    alabels.append(self._afade(i, afade))
                     continue
                 ain = f"[{k}:a:0]"
                 if vs is not None and vs.mode != "dub" and vs.isolate and src.voice_stem:
@@ -245,7 +256,7 @@ class GraphBuilder:
                     z = self._input(["-f", "lavfi", "-t", _fmt(dur), "-i",
                                      f"anullsrc=r={SAMPLE_RATE}:cl=stereo"])
                     self.graph.append(f"[{z}:a]aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]")
-                alabels.append(f"[a{i}]")
+                alabels.append(self._afade(i, afade))
         n = len(tl.segments)
         vout = aout = None
         if video:
@@ -477,9 +488,20 @@ def preview_frame(tl: Timeline, sources: dict[int, Source], t: float, dest: Path
     seg = tl.segments[i]
     one = tl.copy()
     step = 1.0 / max(1.0, tl.format.fps)
-    start = max(seg.src_in, min(src_t, seg.src_out - step))
-    one.segments = [type(seg)(asset_id=seg.asset_id, src_in=start, src_out=start + step * 2, id=seg.id,
-                              reframe=list(getattr(seg, "reframe", []) or []))]
+    import dataclasses
+    fi, fo = seg.fades() if hasattr(seg, "fades") else (0.0, 0.0)
+    offset, fin, fout = 0.0, 0.0, 0.0
+    if fi and src_t - seg.src_in < fi:                       # dans un fondu : on rend le fondu puis on prend l'image
+        a, b, fin = seg.src_in, min(seg.src_out, seg.src_in + 2 * fi + step), fi
+        offset = src_t - a
+    elif fo and src_t > seg.src_out - fo:
+        a, b, fout = max(seg.src_in, seg.src_out - 2 * fo), seg.src_out, fo
+        offset = min(src_t, seg.src_out - step) - a
+    else:
+        a = max(seg.src_in, min(src_t, seg.src_out - step))
+        b = a + step * 2
+    one.segments = [dataclasses.replace(seg, src_in=a, src_out=b, fade_in=fin, fade_out=fout)
+                    if dataclasses.is_dataclass(seg) else seg]
     one.texts = []
     for item in tl.texts:
         if item.start <= t <= item.end:
@@ -504,7 +526,8 @@ def preview_frame(tl: Timeline, sources: dict[int, Source], t: float, dest: Path
         gb = GraphBuilder(one, sources, None, _text_images(one, tmp), subs)
         args, vout, _ = gb.build(video=True, audio=False)
         scale_h = min(max_height, one.format.height)
-        gb.graph.append(f"{vout}scale=-2:{scale_h}[pv]")
+        pick = f"trim=start={_fmt(offset)},setpts=PTS-STARTPTS," if offset > 0 else ""
+        gb.graph.append(f"{vout}{pick}scale=-2:{scale_h}[pv]")
         cmd = _base() + ["-loglevel", "error"] + args + _write_graph(tmp, gb.graph) + \
             ["-map", "[pv]", "-frames:v", "1", str(dest)]
         dest.parent.mkdir(parents=True, exist_ok=True)

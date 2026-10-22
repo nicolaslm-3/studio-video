@@ -89,7 +89,9 @@ def apply(tl: Timeline, silences_by_segment: dict[str, list[tuple]], pad: float 
         cuts += len(ranges) - 1 + (ranges[0][0] > seg.src_in + 0.01) + (ranges[-1][1] < seg.src_out - 0.01)
         for k, (a, b) in enumerate(ranges):
             ns = Segment(asset_id=seg.asset_id, src_in=round(a, 3), src_out=round(b, 3), volume_db=seg.volume_db,
-                         muted=seg.muted, reframe=list(seg.reframe), zoom=seg.zoom)
+                         muted=seg.muted, reframe=list(seg.reframe), zoom=seg.zoom,
+                         fade_in=seg.fade_in if k == 0 else 0.0,
+                         fade_out=seg.fade_out if k == len(ranges) - 1 else 0.0)
             if k == 0:
                 ns.id = seg.id
             out.append(ns)

@@ -148,6 +148,17 @@ def _register_handlers(app: AppContext) -> None:
         render.preview_frame(tl, sources, float(params["t"]), dest)
         return {"path": str(dest), "t": params["t"]}
 
+    def export_still(ctx: JobContext, params: dict) -> dict:
+        """Image fixe en pleine définition (miniature, affiche, visuel de réseau social)."""
+        from .edit import render
+        from .edit.model import Timeline
+        tl = Timeline.from_dict(params["timeline"])
+        sources, _ = app.montage.sources_for(tl)
+        dest = Path(params["dest"])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        render.preview_frame(tl, sources, float(params["t"]), dest, max_height=tl.format.height)
+        return {"path": str(dest)}
+
     def analyze(ctx: JobContext, params: dict) -> dict:
         from .edit import render
         from .edit.model import Timeline
@@ -958,4 +969,5 @@ def _register_handlers(app: AppContext) -> None:
     app.jobs.register("import_url", import_url)
     app.jobs.register("export_timeline", export_timeline)
     app.jobs.register("preview_frame", preview)
+    app.jobs.register("export_still", export_still)
     app.jobs.register("analyze_audio", analyze)

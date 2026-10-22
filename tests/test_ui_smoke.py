@@ -747,3 +747,24 @@ def test_watch_folder_imports(window, tmp_path):
         time.sleep(0.05)
     assert ctx.db.query_one("SELECT provenance FROM source_asset WHERE path = ?", (str(v),)) is not None
     assert w.check_watch_folder() == 0
+
+
+def test_segment_fades_in_panel_and_preview(window):
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Fondus")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','x','x.mp4','ffade',1,10,320,180)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    w.open_project(pid)
+    st = w.studio
+    seg = st.tl.add_segment(aid, 0, 4)
+    st._changed(panel=True)
+    st.panel.sel_segment = seg.id
+    st.panel._load_segment()
+    st.panel.seg_fin.setValue(1.0)
+    assert seg.fade_in == 1.0
+    st.mplayer.seek(0.5)
+    assert st.mplayer.view.fader.opacity() == pytest.approx(0.5, abs=0.05)
+    st.mplayer.seek(2.0)
+    assert st.mplayer.view.fader.opacity() == pytest.approx(0.0, abs=0.01)

@@ -98,6 +98,11 @@ class LivePreview(QGraphicsView):
         self.texts: dict[str, QGraphicsPixmapItem] = {}
         self._text_keys: dict[str, tuple] = {}
         self.zones: list[QGraphicsRectItem] = []
+        self.fader = QGraphicsRectItem(self.frame)          # fondus au noir des extraits
+        self.fader.setBrush(QColor("#000000"))
+        self.fader.setPen(Qt.NoPen)
+        self.fader.setZValue(5)
+        self.fader.setOpacity(0.0)
         self.sub_item = QGraphicsPixmapItem(self.frame)
         self.sub_item.setZValue(9)
         self._sub_states: list = []
@@ -117,6 +122,10 @@ class LivePreview(QGraphicsView):
         self.ox_override = ox
         self._geometry()
 
+    def set_fade(self, level: float) -> None:
+        """Opacité de l'image (1 = normale, 0 = noir)."""
+        self.fader.setOpacity(max(0.0, min(1.0, 1.0 - level)))
+
     def set_seg_zoom(self, z: float) -> None:
         """Zoom propre à l'extrait affiché."""
         z = max(1.0, float(z or 1.0))
@@ -130,6 +139,7 @@ class LivePreview(QGraphicsView):
         self.src_size = src_size
         W, H = tl.format.width, tl.format.height
         self.frame.setRect(0, 0, W, H)
+        self.fader.setRect(0, 0, W, H)
         self.frame.setBrush(QColor("#1A1B1E") if tl.format.fit == "blur" else QColor("#000000"))
         self.scene_.setSceneRect(0, 0, W, H)
         self._geometry()
@@ -539,14 +549,16 @@ class MontagePlayer(QWidget):
         self.tc.setText(f"{fmt_timecode(self.t, True)} / {fmt_timecode(self.tl.duration)}")
         self.play_btn.setText("❚❚" if self._playing else "▶")
         loc = self.tl.locate(self.t)
-        ox, z = None, 1.0
+        ox, z, lv = None, 1.0, 1.0
         if loc:
             seg = self.tl.segments[loc[0]]
             z = getattr(seg, "zoom", 1.0) or 1.0
+            lv = seg.fade_level(loc[1] - seg.src_in)
             a = self.assets.get(seg.asset_id) or {}
             if a.get("width"):
                 ox = reframe_offset(self.tl, seg, loc[1], a["width"], a["height"])
         self.view.set_seg_zoom(z)
+        self.view.set_fade(lv)
         self.view.set_ox(ox)
         self.view.set_time(self.t)
         self.time_changed.emit(self.t)

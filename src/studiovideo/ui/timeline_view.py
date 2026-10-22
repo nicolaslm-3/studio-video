@@ -138,6 +138,15 @@ class TimelineCanvas(QWidget):
                     v = float(cols[j])
                     if v > 0.02:
                         p.drawLine(QPointF(x0 + j, base), QPointF(x0 + j, base - v * hh))
+            fi, fo = s.fades() if hasattr(s, "fades") else (0.0, 0.0)
+            if fi or fo:
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(0, 0, 0, 110))
+                if fi:
+                    p.drawPolygon([rect.topLeft(), rect.bottomLeft(), QPointF(rect.left() + fi * self.pps, rect.top())])
+                if fo:
+                    p.drawPolygon([rect.topRight(), rect.bottomRight(),
+                                   QPointF(rect.right() - fo * self.pps, rect.top())])
             p.setPen(QColor(c["text"]))
             txt = f"{k + 1}. {self.names.get(s.asset_id, '?')}" + ("  (muet)" if s.muted else "")
             p.drawText(rect.adjusted(6, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft,

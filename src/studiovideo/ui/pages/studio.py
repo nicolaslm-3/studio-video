@@ -199,6 +199,8 @@ class StudioPage(QWidget):
         bar.addStretch(1)
         bar.addWidget(button("Production en série…", tooltip="Exporter plusieurs clips dans plusieurs formats",
                              on_click=self._batch))
+        bar.addWidget(button("Image…", "ghost", tooltip="Enregistrer l'image affichée en pleine définition "
+                             "(Ctrl+Maj+S)", on_click=self._export_still))
         self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export)
         bar.addWidget(self.export_quick)
         tl_lay.addLayout(bar)
@@ -218,7 +220,7 @@ class StudioPage(QWidget):
 
         for key, fn in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Shift+Z", self.redo),
                         ("S", self.split), ("Delete", self._delete_selected), ("A", self._add_media_to_timeline),
-                        ("Ctrl+E", self._export)):
+                        ("Ctrl+E", self._export), ("Ctrl+Shift+S", self._export_still)):
             sc_ = QShortcut(QKeySequence(key), self)
             sc_.setContext(Qt.WidgetWithChildrenShortcut)
             sc_.activated.connect(fn)
@@ -833,6 +835,21 @@ class StudioPage(QWidget):
                                                               "project_id": self.project_id})
         self._jobs[jid] = "preview"
 
+    def _export_still(self) -> None:
+        if not self.tl.segments:
+            QMessageBox.information(self, "Image", "La timeline est vide.")
+            return
+        t = min(self.mplayer.t, max(0.0, self.tl.duration - 0.01))
+        name = (self.app.projects.get(self.project_id)["name"] if self.project_id else "image")
+        path, _ = QFileDialog.getSaveFileName(self, "Enregistrer l'image",
+                                              str(default_export_dir() / f"{name} - {int(t // 60):02d}m{int(t % 60):02d}s.png"),
+                                              "Image PNG (*.png);;Image JPEG (*.jpg)")
+        if not path:
+            return
+        jid = self.app.jobs.submit("export_still", "Image fixe", {"timeline": self.tl.to_dict(), "t": t, "dest": path})
+        self._jobs[jid] = "still"
+        self.save_lbl.setText("Enregistrement de l'image…")
+
     def _batch(self) -> None:
         if not self.project_id:
             return
@@ -1090,6 +1107,11 @@ class StudioPage(QWidget):
                                       f"{src}). Ctrl+Z pour annuler.")
             elif job.status == "failed":
                 QMessageBox.warning(self, "Silences", job.error[:600])
+        elif kind == "still":
+            if job.status == "succeeded":
+                self.save_lbl.setText(f"Image enregistrée : {Path(job.result['path']).name}")
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Image", job.error[:600])
         elif kind == "archive":
             if job.status == "succeeded":
                 self.save_lbl.setText(f"Archive créée : {Path(job.result['path']).name}")

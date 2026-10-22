@@ -147,3 +147,28 @@ def test_fingerprint_large_file(tmp_path):
         f.seek(25 * 1024 * 1024)
         f.write(b"y")
     assert fingerprint(p) != a
+
+
+def test_cancel_during_process_launch_is_not_lost(app, monkeypatch):
+    """Annulation reçue pendant le lancement du processus (avant qu'il soit connu) : il est quand même tué."""
+    import subprocess as sp
+
+    from studiovideo.jobs import manager as mgr
+    real = sp.Popen
+    holder = {}
+
+    def slow_popen(*a, **k):
+        app.jobs.cancel(holder["jid"])              # l'annulation tombe pile pendant le lancement
+        return real(*a, **k)
+
+    def proc(ctx, p):
+        monkeypatch.setattr(mgr.subprocess, "Popen", slow_popen)
+        try:
+            ctx.run_process(["sleep", "30"])
+        finally:
+            monkeypatch.setattr(mgr.subprocess, "Popen", real)
+    app.jobs.register("proc2", proc)
+    t0 = time.time()
+    holder["jid"] = app.jobs.submit("proc2", "Processus")
+    assert wait(app.jobs, holder["jid"]).status == "cancelled"
+    assert time.time() - t0 < 5

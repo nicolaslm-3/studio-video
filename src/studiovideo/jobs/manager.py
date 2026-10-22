@@ -54,6 +54,7 @@ class JobContext:
         self.job_id = job_id
         self.cancel_event = threading.Event()
         self._proc: subprocess.Popen | None = None
+        self._proc_lock = threading.Lock()
 
     @property
     def cancelled(self) -> bool:
@@ -71,11 +72,14 @@ class JobContext:
         """Lance un processus externe, relaie stderr ligne à ligne, tue en cas d'annulation."""
         self.check()
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                      stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-                                      errors="replace", creationflags=flags)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                errors="replace", creationflags=flags)
+        with self._proc_lock:
+            self._proc = proc
+        if self.cancelled:          # annulation arrivée pendant le lancement : _kill n'a pas pu voir le processus
+            proc.kill()
         tail: list[str] = []
-        proc = self._proc
         assert proc.stderr is not None
         try:
             for line in proc.stderr:
@@ -90,14 +94,16 @@ class JobContext:
             if proc.poll() is None and (self.cancelled or sys.exc_info()[0] is not None):
                 proc.kill()
             rc = proc.wait()
-            self._proc = None
+            with self._proc_lock:
+                self._proc = None
         self.check()
         if rc != 0:
             raise RuntimeError(f"Le processus a échoué (code {rc}) :\n" + "\n".join(tail[-8:]))
         return rc
 
     def _kill(self) -> None:
-        p = self._proc
+        with self._proc_lock:
+            p = self._proc
         if p and p.poll() is None:
             p.kill()
 

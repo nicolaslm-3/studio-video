@@ -46,11 +46,28 @@ class Segment:
     volume_db: float = 0.0
     muted: bool = False
     reframe: list = field(default_factory=list)   # recadrage auto : [[temps source, centre x 0..1], …]
+    fade_in: float = 0.0        # fondu depuis le noir (image et son), en secondes
+    fade_out: float = 0.0       # fondu vers le noir
     zoom: float = 1.0           # zoom propre à l'extrait (multiplie le zoom général), ex. 1.15 « plan resserré »
 
     @property
     def duration(self) -> float:
         return max(0.0, self.src_out - self.src_in)
+
+    def fades(self) -> tuple[float, float]:
+        """Durées de fondu effectives (bornées à la moitié de l'extrait chacune)."""
+        half = self.duration / 2
+        return min(max(0.0, self.fade_in), half), min(max(0.0, self.fade_out), half)
+
+    def fade_level(self, t: float) -> float:
+        """Opacité de l'image (0 noir … 1) à l'instant t relatif au début de l'extrait."""
+        fi, fo = self.fades()
+        lv = 1.0
+        if fi > 0 and t < fi:
+            lv = max(0.0, t / fi)
+        if fo > 0 and t > self.duration - fo:
+            lv = min(lv, max(0.0, (self.duration - t) / fo))
+        return lv
 
 
 @dataclass
@@ -252,8 +269,9 @@ class Timeline:
         if src_t - s.src_in < MIN_SEGMENT or s.src_out - src_t < MIN_SEGMENT:
             return None
         right = Segment(asset_id=s.asset_id, src_in=src_t, src_out=s.src_out,
-                        volume_db=s.volume_db, muted=s.muted, reframe=list(s.reframe), zoom=s.zoom)
-        s.src_out = src_t
+                        volume_db=s.volume_db, muted=s.muted, reframe=list(s.reframe), zoom=s.zoom,
+                        fade_out=s.fade_out)
+        s.src_out, s.fade_out = src_t, 0.0
         self.segments.insert(i + 1, right)
         return s, right
 
