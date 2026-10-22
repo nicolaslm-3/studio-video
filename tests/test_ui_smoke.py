@@ -924,7 +924,10 @@ def test_font_picker_and_speakers_menu(window):
     got = []
     fp.fontChanged.connect(got.append)
     assert fp.count() > 0
-    fp.setCurrentIndex(fp.count() - 1)
+    idx = max(i for i in range(fp.count()) if fp.itemData(i))   # dernière police (pas un séparateur)
+    fp.setCurrentIndex(0 if idx == 0 else idx)
+    if idx == 0:
+        fp.fontChanged.emit(fp.currentData())
     assert got and got[-1] == fp.currentData()
     fp.set_family("Police Inventée")                        # police absente : ajoutée et choisie
     assert fp.currentData() == "Police Inventée"

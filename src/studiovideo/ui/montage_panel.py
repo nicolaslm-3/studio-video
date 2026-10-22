@@ -76,7 +76,7 @@ class FontPicker(QComboBox):
         top = [have[f.lower()] for f in POPULAR_FONTS if f.lower() in have]
         for f in top:
             self._add(f)
-        if top:
+        if top and len(top) < len(fams):            # séparateur seulement s'il y a d'autres polices après
             self.insertSeparator(self.count())
         for f in fams:
             if f not in top and not f.startswith("@"):
