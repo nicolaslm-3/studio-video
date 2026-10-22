@@ -571,3 +571,25 @@ def test_getting_started_card(window):
     assert w.settings_page.tabs.tabText(w.settings_page.tabs.currentIndex()) == "Publication"
     w.dashboard._hide_start()
     assert ctx.settings.get("hide_getting_started") is True
+
+
+def test_propose_copy_in_publication(window, tmp_path, monkeypatch):
+    from test_copywriter import TEXT
+    from studiovideo.edit.model import Timeline
+    from studiovideo.transcribe.model import TSegment, Transcript
+    from studiovideo.ui.publication_dialog import PublicationDialog
+    w, ctx = window
+    c = ctx.concepts.list_concepts()[0]
+    pid = ctx.projects.create(c.id, "Copie")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s) VALUES (1,?,'video','x','x.mp4','fcp',1,30)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 10, TEXT)], "fr"))
+    tl = Timeline()
+    tl.add_segment(aid, 0, 10)
+    vid = ctx.montage.record_export(pid, tl, {"path": str(tmp_path / "o.mp4"), "duration": 10}, None)
+    d = PublicationDialog(ctx, variant_id=vid)
+    d._propose_copy()
+    assert d.title.text().startswith("Aujourd'hui") and "#Citron" in d.tags.text()
+    assert "relisez" in d.warn.text()

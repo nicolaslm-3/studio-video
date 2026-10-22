@@ -828,6 +828,45 @@ def _register_handlers(app: AppContext) -> None:
         app.projects.save_data(pid, data)
         return {"asset_id": imp.asset_id, "duration": res["duration"], "texts": res["texts"], "path": res["path"]}
 
+    def write_copy(ctx: JobContext, params: dict) -> dict:
+        """Titre, description et hashtags proposés à partir de la transcription de la vidéo publiée."""
+        import json as _json
+
+        from .edit.model import Timeline
+        from .publish import copywriter
+        from .services import secrets
+        row = app.db.query_one("SELECT e.settings_json, p.concept_id, c.name concept FROM video_variant v "
+                               "JOIN clip cl ON cl.id = v.clip_id JOIN project p ON p.id = cl.project_id "
+                               "JOIN concept c ON c.id = p.concept_id LEFT JOIN export_job e ON e.variant_id = v.id "
+                               "WHERE v.id = ?", (params["variant_id"],))
+        if row is None:
+            raise ValueError("Vidéo introuvable.")
+        st = _json.loads(row["settings_json"] or "{}")
+        texts, lang = [], params.get("language") or "fr"
+        tl = Timeline.from_dict(st["timeline"]) if st.get("timeline") else None
+        if tl:
+            for sg in tl.segments:
+                tr = app.transcripts.get(sg.asset_id)
+                if tr:
+                    lang = tr.language or lang
+                    texts += [s.text for s in tr.segments if s.end > sg.src_in and s.start < sg.src_out]
+        text = " ".join(texts).strip()
+        if not text:
+            raise ValueError("Pas de transcription pour cette vidéo : transcrivez le média dans le Studio d'abord.")
+        llm = app.settings.get("llm", None) or {}
+        if llm.get("kind") in ("ollama", "openai") and llm.get("model") and params.get("use_llm", True):
+            from .ai.highlights import LLMEngine
+            eng = LLMEngine(llm["kind"], llm["model"], llm.get("base_url", ""),
+                            (secrets.get_secret("llm_api_key") or "") if llm["kind"] == "openai" else "")
+            ctx.progress(0.3, "Rédaction par le modèle de langage")
+            out = copywriter.with_llm(eng, text, row["concept"], lang, params.get("platforms"))
+            out["engine"] = "llm"
+        else:
+            out = copywriter.heuristic(text, row["concept"])
+            out["engine"] = "local"
+        return out
+
+    app.jobs.register("write_copy", write_copy)
     app.jobs.register("write_script", write_script)
     app.jobs.register("create_original", create_original)
     def reframe_job(ctx: JobContext, params: dict) -> dict:

@@ -188,6 +188,10 @@ class PublicationDialog(QDialog):
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
         row.addWidget(button("Ajouter un compte hors concept…", "ghost", on_click=self._add_external))
+        self.copy_btn = button("Proposer le texte", "ghost", tooltip="Titre, description et hashtags rédigés à "
+                               "partir de la transcription de la vidéo (modèle de langage si configuré)",
+                               on_click=self._propose_copy)
+        row.addWidget(self.copy_btn)
         self.thumb_btn = button("Miniature…", "ghost", on_click=self._thumbnail)
         row.addWidget(self.thumb_btn)
         self.thumb_lbl = label("", "faint")
@@ -360,6 +364,39 @@ class PublicationDialog(QDialog):
             if when != p.scheduled_at:
                 ps.schedule(p.id, when)
         self.accept()
+
+    def _propose_copy(self) -> None:
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+        vid = self.video.currentData()
+        if not vid:
+            QMessageBox.information(self, "Texte", "Choisissez d'abord la vidéo.")
+            return
+        if (self.title.text().strip() or self.desc.toPlainText().strip()) and QMessageBox.question(
+                self, "Texte", "Remplacer le titre, le texte et les hashtags actuels par une proposition ?"
+        ) != QMessageBox.Yes:
+            return
+        platforms = sorted({r["account"].platform.label for r in self.rows if r["check"].isChecked()})
+        jid = self.app.jobs.submit("write_copy", "Proposition de texte", {"variant_id": vid, "platforms": platforms})
+        self.copy_btn.setEnabled(False)
+        self.copy_btn.setText("Rédaction…")
+        end = time.time() + 180
+        while self.app.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+            QCoreApplication.processEvents()
+            time.sleep(0.05)
+        self.copy_btn.setEnabled(True)
+        self.copy_btn.setText("Proposer le texte")
+        j = self.app.jobs.get(jid)
+        if j.status != "succeeded":
+            QMessageBox.warning(self, "Texte", (j.error or "Délai dépassé").splitlines()[-1][:400])
+            return
+        r = j.result
+        self.title.setText(r["title"])
+        self.desc.setPlainText(r["description"])
+        self.tags.setText(r["hashtags"])
+        self.warn.setText(("Proposition du modèle de langage" if r["engine"] == "llm" else
+                           "Proposition simple (sans modèle de langage)") + " : relisez avant de publier.")
 
     def _thumbnail(self) -> None:
         from .thumbnail_dialog import ThumbnailDialog
