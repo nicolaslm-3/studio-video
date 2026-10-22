@@ -368,6 +368,23 @@ def _register_handlers(app: AppContext) -> None:
             app.db.audit("account.connect", f"account={acc.id} tiktok={tok.get('open_id', '')}")
             return {"account_id": acc.id, "channel": "@" + user if user else (info.get("creator_nickname") or "TikTok"),
                     "channel_id": tok.get("open_id", "")}
+        if acc.platform.value in ("instagram", "facebook"):
+            from .publish import meta
+            aid_, sec = app.settings.get("meta_app_id", "") or "", secrets.get_secret("meta_app_secret") or ""
+            ctx.progress(0.1, "Autorisation dans le navigateur…")
+            res = meta.connect(aid_, sec, webbrowser.open, is_cancelled=lambda: ctx.cancelled)
+            pg = meta.pick(res["pages"], acc.platform.value, acc.name)
+            secrets.set_secret(f"meta_token_{acc.id}", pg["token"])
+            remote = pg["ig_id"] if acc.platform.value == "instagram" else pg["id"]
+            url = (f"https://www.instagram.com/{pg['ig_username']}/" if acc.platform.value == "instagram"
+                   else f"https://www.facebook.com/{pg['id']}")
+            with app.db.transaction() as c:
+                c.execute("UPDATE social_account SET connection_status = 'connected', remote_id = ?, scopes = ?, "
+                          "public_url = CASE WHEN public_url = '' THEN ? ELSE public_url END WHERE id = ?",
+                          (remote, meta.SCOPES, url, acc.id))
+            app.db.audit("account.connect", f"account={acc.id} {acc.platform.value}={remote}")
+            who = ("@" + pg["ig_username"]) if acc.platform.value == "instagram" else pg["name"]
+            return {"account_id": acc.id, "channel": who, "channel_id": remote}
         if acc.platform.value != "youtube":
             raise ValueError(f"La connexion automatique {acc.platform.label} n'est pas encore disponible.")
         cid = app.settings.get("youtube_client_id", "") or ""
@@ -398,11 +415,13 @@ def _register_handlers(app: AppContext) -> None:
         def fail(msg: str):
             ps.set_status(r["id"], PublicationStatus.FAILED, error=msg)
             raise ValueError(msg)
-        if r["platform"] not in ("youtube", "tiktok"):
-            fail("Mise en ligne automatique disponible pour YouTube et TikTok uniquement.")
+        if r["platform"] not in ("youtube", "tiktok", "instagram", "facebook"):
+            fail("Mise en ligne automatique non disponible pour cette plateforme.")
         acc = app.concepts.get_account(r["account_id"])
         if r["platform"] == "tiktok":
             return _publish_tiktok(ctx, r, acc, params, fail)
+        if r["platform"] in ("instagram", "facebook"):
+            return _publish_meta(ctx, r, acc, params, fail)
         refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
         if acc.connection_status != "connected" or not refresh:
             fail("Compte YouTube non connecté (Paramètres → Comptes).")
@@ -440,6 +459,42 @@ def _register_handlers(app: AppContext) -> None:
             ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=vid, public_url=url)
             state = "publiée"
         return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state}
+
+    def _publish_meta(ctx: JobContext, r, acc, params: dict, fail) -> dict:
+        from datetime import datetime
+
+        from .domain.models import PublicationStatus
+        from .publish import meta, rules
+        from .services import secrets
+        ps = app.publications
+        token = secrets.get_secret(f"meta_token_{acc.id}")
+        if acc.connection_status != "connected" or not token or not acc_remote(acc.id):
+            fail(f"Compte {acc.platform.label} non connecté (Paramètres → Comptes).")
+        if r["at"] and r["at"] > datetime.now().strftime("%Y-%m-%dT%H:%M") and not params.get("now"):
+            raise ValueError(f"{acc.platform.label} : la vidéo partira automatiquement à l'heure prévue si "
+                             "Studio Vidéo est ouvert.")
+        if not r["output_path"] or not Path(r["output_path"]).exists():
+            fail("La vidéo de cette publication est introuvable.")
+        text = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")["text"]
+        try:
+            ps.set_status(r["id"], PublicationStatus.UPLOADING)
+            if r["platform"] == "instagram":
+                res = meta.instagram_reel(Path(r["output_path"]), text, acc_remote(acc.id), token, ctx.progress,
+                                          lambda: ctx.cancelled)
+            else:
+                res = meta.facebook_reel(Path(r["output_path"]), text, acc_remote(acc.id), token, ctx.progress)
+        except Exception as exc:
+            if "révoquée" in str(exc):
+                with app.db.transaction() as c:
+                    c.execute("UPDATE social_account SET connection_status = 'expired' WHERE id = ?", (acc.id,))
+            ps.set_status(r["id"], PublicationStatus.FAILED, error=str(exc)[:300])
+            raise
+        ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=res["id"], public_url=res["url"])
+        return {"publication_id": r["id"], "video_id": res["id"], "url": res["url"], "state": "publiée"}
+
+    def acc_remote(acc_id: int) -> str:
+        row = app.db.query_one("SELECT remote_id FROM social_account WHERE id = ?", (acc_id,))
+        return (row["remote_id"] if row else "") or ""
 
     def _publish_tiktok(ctx: JobContext, r, acc, params: dict, fail) -> dict:
         from datetime import datetime
@@ -485,6 +540,31 @@ def _register_handlers(app: AppContext) -> None:
             url, state = "", f"envoyée ({res['privacy']})"
         return {"publication_id": r["id"], "video_id": res["publish_id"], "url": url, "state": state}
 
+    def _instagram_stats() -> tuple[int, list[str]]:
+        from .publish import meta
+        from .services import secrets
+        done, errors = 0, []
+        rows = app.db.query("SELECT p.id, p.remote_id, p.social_account_id FROM publication p JOIN social_account a "
+                            "ON a.id = p.social_account_id WHERE a.platform = 'instagram' AND p.status = 'published' "
+                            "AND p.remote_id != '' AND p.remote_id NOT LIKE 'http%'")
+        by_acc: dict = {}
+        for r in rows:
+            by_acc.setdefault(r["social_account_id"], []).append((r["id"], r["remote_id"]))
+        for acc_id, items in by_acc.items():
+            token = secrets.get_secret(f"meta_token_{acc_id}")
+            if not token:
+                continue
+            try:
+                stats = meta.instagram_stats([m for _, m in items], token)
+            except meta.MetaError as exc:
+                errors.append(f"Instagram : {exc}")
+                continue
+            for pid, mid in items:
+                if stats.get(mid):
+                    app.analytics.record(pid, stats[mid], "api")
+                    done += 1
+        return done, errors
+
     def _tiktok_stats() -> tuple[int, list[str]]:
         """Statistiques des vidéos TikTok publiques, compte par compte (chaque compte ne voit que les siennes)."""
         from .publish import tiktok
@@ -516,11 +596,13 @@ def _register_handlers(app: AppContext) -> None:
         from .publish import youtube
         from .services import secrets
         tk_done, tk_errors = _tiktok_stats()
+        ig_done, ig_errors = _instagram_stats()
+        tk_done, tk_errors = tk_done + ig_done, tk_errors + ig_errors
         items = app.analytics.youtube_ids()
         if not items:
             if tk_done or tk_errors:
                 return {"updated": tk_done, "errors": tk_errors}
-            return {"updated": 0, "errors": [], "note": "Aucune vidéo YouTube ou TikTok publiée à relever."}
+            return {"updated": 0, "errors": [], "note": "Aucune vidéo publiée à relever (YouTube, TikTok, Instagram)."}
         token, errors = None, list(tk_errors)
         for acc in app.concepts.list_accounts():
             refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")

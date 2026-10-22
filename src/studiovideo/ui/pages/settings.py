@@ -78,7 +78,7 @@ class SettingsPage(QWidget):
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
         right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Connecter un compte permet la "
-                                  "mise en ligne automatique (YouTube, TikTok) ; sinon la publication est "
+                                  "mise en ligne automatique (YouTube, TikTok, Instagram, Facebook) ; sinon la publication est "
                                   "assistée.", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)
         self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
@@ -180,6 +180,22 @@ class SettingsPage(QWidget):
         tf.addRow("Visibilité", self.tk_privacy)
         self._plat_lay.addLayout(tf)
         self._plat_lay.addWidget(button("Enregistrer les réglages TikTok", on_click=self._save_tiktok))
+        self._plat_lay.addWidget(label("Instagram et Facebook — application Meta", "h2"))
+        self._plat_lay.addWidget(label(
+            "developers.facebook.com → créez une application (type Entreprise), ajoutez « Facebook Login for "
+            "Business » avec l'adresse de redirection http://localhost:8767/callback/ et le produit Instagram. Le "
+            "compte Instagram doit être professionnel et relié à une Page Facebook. Collez l'identifiant et la clé "
+            "secrète. Guide : docs/META.md.", "faint", wrap=True))
+        mf = QFormLayout()
+        self.meta_id = QLineEdit(self.app.settings.get("meta_app_id", "") or "")
+        self.meta_secret = QLineEdit()
+        self.meta_secret.setEchoMode(QLineEdit.Password)
+        self.meta_secret.setEnabled(secrets.available())
+        self.meta_secret.setPlaceholderText("Enregistrée" if secrets.get_secret("meta_app_secret") else "Clé secrète")
+        mf.addRow("Identifiant de l'app", self.meta_id)
+        mf.addRow("Clé secrète", self.meta_secret)
+        self._plat_lay.addLayout(mf)
+        self._plat_lay.addWidget(button("Enregistrer les réglages Meta", on_click=self._save_meta))
         from PySide6.QtWidgets import QScrollArea
         sc = QScrollArea()
         sc.setWidgetResizable(True)
@@ -201,6 +217,18 @@ class SettingsPage(QWidget):
             self.yt_secret.clear()
             self.yt_secret.setPlaceholderText("Enregistré")
         self.acc_status.setText("Réglages YouTube enregistrés.")
+
+    def _save_meta(self) -> None:
+        self.app.settings.set("meta_app_id", self.meta_id.text().strip())
+        if self.meta_secret.text().strip():
+            try:
+                secrets.set_secret("meta_app_secret", self.meta_secret.text().strip())
+            except secrets.SecretStoreUnavailable as exc:
+                QMessageBox.warning(self, "Meta", str(exc))
+                return
+            self.meta_secret.clear()
+            self.meta_secret.setPlaceholderText("Enregistrée")
+        self.acc_status.setText("Réglages Meta enregistrés.")
 
     def _save_tiktok(self) -> None:
         self.app.settings.set("tiktok_client_key", self.tk_key.text().strip())
@@ -235,6 +263,15 @@ class SettingsPage(QWidget):
                                                      {"account_id": acc.id})
             self.acc_status.setText("Autorisez l'accès dans la page TikTok ouverte dans votre navigateur…")
             return
+        if acc.platform.value in ("instagram", "facebook"):
+            if not (self.app.settings.get("meta_app_id", "") and secrets.get_secret("meta_app_secret")):
+                QMessageBox.information(self, "Connexion", "Renseignez d'abord l'identifiant et la clé secrète de "
+                                        "votre application Meta (Paramètres → Publication).")
+                return
+            self._connect_job = self.app.jobs.submit("connect_account", f"Connexion · {acc.display}",
+                                                     {"account_id": acc.id})
+            self.acc_status.setText("Autorisez l'accès dans la page Facebook ouverte dans votre navigateur…")
+            return
         if acc.platform.value != "youtube":
             QMessageBox.information(self, "Connexion", f"La connexion {acc.platform.label} n'est pas encore "
                                     "disponible : ses publications restent assistées.")
@@ -251,7 +288,7 @@ class SettingsPage(QWidget):
         acc = self._selected_account()
         if acc is None:
             return
-        for name in (f"youtube_refresh_{acc.id}", f"tiktok_refresh_{acc.id}"):
+        for name in (f"youtube_refresh_{acc.id}", f"tiktok_refresh_{acc.id}", f"meta_token_{acc.id}"):
             try:
                 secrets.delete_secret(name)
             except Exception:

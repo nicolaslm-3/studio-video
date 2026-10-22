@@ -152,7 +152,8 @@ class MainWindow(QMainWindow):
         manual = []
         for r in due:
             acc = self.app.concepts.get_account(r["account_id"])
-            if auto and r["platform"] in ("youtube", "tiktok") and acc.connection_status == "connected" \
+            if auto and r["platform"] in ("youtube", "tiktok", "instagram", "facebook") \
+                    and acc.connection_status == "connected" \
                     and r["output_path"]:
                 from ..domain.models import PublicationStatus
                 self.app.publications.set_status(r["id"], PublicationStatus.UPLOADING)

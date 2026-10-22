@@ -258,9 +258,10 @@ class PublicationDialog(QDialog):
                     up = menu.addAction("Mettre en ligne sur YouTube" + (" (à l'heure prévue)" if pub.scheduled_at
                                                                          else " maintenant"),
                                         lambda p=pub.id: self._upload(p))
-                elif acc.platform.value == "tiktok":
-                    up = menu.addAction("Publier sur TikTok maintenant", lambda p=pub.id: self._upload(p, now=True))
-                if acc.platform.value in ("youtube", "tiktok"):
+                elif acc.platform.value in ("tiktok", "instagram", "facebook"):
+                    up = menu.addAction(f"Publier sur {acc.platform.label} maintenant",
+                                        lambda p=pub.id: self._upload(p, now=True))
+                if acc.platform.value in ("youtube", "tiktok", "instagram", "facebook"):
                     up.setEnabled(not done and acc.connection_status == "connected"
                                   and pub.status != PublicationStatus.SCHEDULED_PLATFORM)
                     if acc.connection_status != "connected":
