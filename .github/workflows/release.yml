@@ -245,13 +245,15 @@ jobs:
           # La release peut déjà exister si elle a été créée depuis le site GitHub.
           TAG="${{ steps.ctx.outputs.tag }}"
           # jusqu'à 4 tentatives : les envois de gros fichiers vers GitHub échouent parfois sans raison
+          ls -la dist/
           for attempt in 1 2 3 4; do
             if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "${ASSETS[@]}" --clobber && exit 0
+              out=$(gh release upload "$TAG" "${ASSETS[@]}" --clobber 2>&1) && exit 0
             else
-              gh release create "$TAG" --target "${GITHUB_SHA}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}" && exit 0
+              out=$(gh release create "$TAG" --target "${GITHUB_SHA}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}" 2>&1) && exit 0
             fi
-            echo "::warning title=Publication::tentative ${attempt} échouée, nouvel essai"
+            echo "$out"
+            echo "::warning title=Publication (tentative ${attempt})::$(echo "$out" | tail -5 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
             sleep $((attempt * 20))
           done
           echo "::error title=Publication::la release ${TAG} n'a pas pu être publiée sur GitHub"
