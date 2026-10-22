@@ -70,7 +70,8 @@ class FontPicker(QComboBox):
         super().__init__(parent)
         from PySide6.QtGui import QFontDatabase
         self.setMaxVisibleItems(16)
-        fams = sorted(set(QFontDatabase.families()), key=str.lower)
+        fams = sorted(set(QFontDatabase.families()), key=str.lower) or ["Segoe UI", "Arial", "Impact"]
+        # (environnement sans polices installées : liste minimale plutôt qu'un menu vide)
         have = {f.lower(): f for f in fams}
         top = [have[f.lower()] for f in POPULAR_FONTS if f.lower() in have]
         for f in top:
