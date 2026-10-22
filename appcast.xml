@@ -4,6 +4,28 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.19.0</title>
+      <pubDate>Thu, 22 Oct 2026 05:13:26 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.19.0 — Recadrage intelligent, Instagram, Facebook et X&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;**Recadrage intelligent** (Cadrage → « Suivre les visages ») : d&amp;#x27;une vidéo horizontale vers le vertical ou le carré,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;le cadre suit le visage principal ; il reste fixe quand la personne bouge peu, glisse en douceur sinon, et coupe&lt;/p&gt;
+&lt;p&gt;net aux changements de plan. Visible dans l&amp;#x27;aperçu et l&amp;#x27;export ; option dans la Production en série&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Instagram** (Reels d&amp;#x27;un compte professionnel), **Facebook** (Reels d&amp;#x27;une Page) et **X** : connexion des comptes,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;publication automatique (immédiate, ou à l&amp;#x27;heure prévue si le logiciel est ouvert) et statistiques&lt;/p&gt;
+&lt;p&gt;(guides : docs/META.md, docs/X.md)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Détection du texte incrusté plus fiable sur les logos peu contrastés&lt;/li&gt;
+&lt;li&gt;Inclut aussi la 0.16 à la 0.18 (Traduction guidée, Campagne, Création originale, voix hors ligne, TikTok), dont&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;la publication sur GitHub avait échoué&lt;/p&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.19.0/StudioVideo-0.19.0-Setup.exe" sparkle:version="0.19.0" sparkle:shortVersionString="0.19.0" sparkle:os="windows-x64" length="194636075" type="application/octet-stream" sparkle:edSignature="AQBC21/dJ6EphBVg/qsvNoXZ6HES8sIqfIaU00pG6Fo4KcZ782b2LtkiP2S4CUxDN7cZC1G3VvCJizFNK+KkCQ==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.15.0</title>
       <pubDate>Thu, 22 Oct 2026 04:15:57 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.15.0 — Durée de visionnage et rétention&lt;/h2&gt;
@@ -286,27 +308,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.3.0/StudioVideo-0.3.0-Setup.exe" sparkle:version="0.3.0" sparkle:shortVersionString="0.3.0" sparkle:os="windows-x64" length="193381069" type="application/octet-stream" sparkle:edSignature="dvM9rPyTJOVpO50SbD1V2x65OIXyCXs9UfbCQa9tPmEHKPc6Et0d/nx5YO9AT8vDO2RPtaV5AbEahhHW1+kuAw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.2.0</title>
-      <pubDate>Wed, 21 Oct 2026 19:45:23 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.2.0 — Montage et export&lt;/h2&gt;
-&lt;p&gt;Vous pouvez maintenant produire une vidéo complète.&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Timeline : ajoutez des extraits, coupez (S), déplacez, dupliquez, supprimez ; annuler / rétablir&lt;/li&gt;
-&lt;li&gt;Formats 9:16, 16:9, 1:1, 4:5 ; zoom, position, rotation, effet miroir&lt;/li&gt;
-&lt;li&gt;Image entière avec fond flou ou bandes noires, ou image recadrée&lt;/li&gt;
-&lt;li&gt;Luminosité, contraste, saturation, température, netteté&lt;/li&gt;
-&lt;li&gt;Titres, accroches, call to action, noms : police, couleurs, contour, fond, fondu&lt;/li&gt;
-&lt;li&gt;Son : gain, coupe des graves, réduction de bruit, normalisation (-14 LUFS par défaut), limiteur&lt;/li&gt;
-&lt;li&gt;Musique de fond qui baisse automatiquement quand on parle&lt;/li&gt;
-&lt;li&gt;Analyse du son : volume, crêtes, silences&lt;/li&gt;
-&lt;li&gt;Aperçu en direct du cadrage et des textes, et aperçu exact de l&amp;#x27;export&lt;/li&gt;
-&lt;li&gt;Export MP4 vérifié (dimensions, durée, volume final)&lt;/li&gt;
-&lt;li&gt;Réglages mémorisés par concept&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.2.0/StudioVideo-0.2.0-Setup.exe" sparkle:version="0.2.0" sparkle:shortVersionString="0.2.0" sparkle:os="windows-x64" length="137959745" type="application/octet-stream" sparkle:edSignature="yjgPe9Joept+BVrV6750LP+1DiwSKJ2J1S9qIrBUrI6iPkBYty3GprNYA7LhaRlp9OsB7FAOtrvvGwicdbbMBw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
