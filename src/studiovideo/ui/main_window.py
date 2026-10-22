@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+N"), self, activated=lambda: self.new_project(None))
         QShortcut(QKeySequence("Ctrl+I"), self, activated=lambda: pick_and_import(self.app, self))
         QShortcut(QKeySequence("Ctrl+J"), self, activated=self.toggle_jobs)
+        QShortcut(QKeySequence("F1"), self, activated=self.show_shortcuts)
 
         self._restore_layout()
         self.go(0)
@@ -176,6 +177,10 @@ class MainWindow(QMainWindow):
                 self.calendar.refresh()
             QApplication.alert(self)
         return len(due)
+
+    def show_shortcuts(self) -> None:
+        from .shortcuts import ShortcutsDialog
+        ShortcutsDialog(self).exec()
 
     def toggle_jobs(self, force: bool | None = None) -> None:
         show = (not self.jobs_panel.isVisible()) if force is None or not isinstance(force, bool) else force

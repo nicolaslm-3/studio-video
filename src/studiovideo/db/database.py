@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 
 _MIGRATION_RE = re.compile(r"^(\d{4})_[\w-]+\.sql$")
 MAX_BACKUPS = 20
+MAX_DAILY = 7          # sauvegardes automatiques quotidiennes conservées (en plus des autres)
 
 
 class MigrationError(RuntimeError):
@@ -150,8 +151,27 @@ class Database:
             return []
         return sorted(self.backups_dir.glob("studio-*.db"), reverse=True)
 
+    def daily_backup(self, min_age_h: float = 20.0) -> Path | None:
+        """Sauvegarde automatique, au plus une par jour (au démarrage). None si inutile."""
+        last = next(iter(sorted(self.backups_dir.glob("studio-*-quotidienne.db"), reverse=True)), None) \
+            if self.backups_dir.exists() else None
+        if last is not None:
+            try:
+                made = datetime.strptime(last.name[7:22], "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc)
+            except ValueError:
+                made = None
+            if made and (datetime.now(timezone.utc) - made).total_seconds() < min_age_h * 3600:
+                return None
+        return self.backup("quotidienne")
+
     def _prune_backups(self) -> None:
-        for old in self.list_backups()[MAX_BACKUPS:]:
+        daily = [b for b in self.list_backups() if b.name.endswith("-quotidienne.db")]
+        for old in daily[MAX_DAILY:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        for old in [b for b in self.list_backups() if not b.name.endswith("-quotidienne.db")][MAX_BACKUPS:]:
             try:
                 old.unlink()
             except OSError:

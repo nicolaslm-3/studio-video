@@ -49,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(None, "Studio Vidéo", f"Démarrage impossible : {exc}\n\nJournal : {paths.logs}")
         return 1
 
+    try:
+        ctx.db.daily_backup()                      # au plus une sauvegarde automatique par jour
+    except Exception:                              # une sauvegarde ratée ne doit pas empêcher de travailler
+        log.exception("Sauvegarde quotidienne impossible")
     theme.apply(qapp, ctx.settings.get("theme"))
     win = MainWindow(ctx, message)
     win.show()

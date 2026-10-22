@@ -285,6 +285,15 @@ class MontagePanel(QTabWidget):
         self.seg_vol.setKeyboardTracking(False)
         self.seg_vol.valueChanged.connect(lambda v: self._seg_set("volume_db", round(v, 1)))
         f.addRow("Volume de l'extrait", self.seg_vol)
+        self.seg_zoom = QDoubleSpinBox()
+        self.seg_zoom.setRange(100, 200)
+        self.seg_zoom.setDecimals(0)
+        self.seg_zoom.setSingleStep(5)
+        self.seg_zoom.setSuffix(" %")
+        self.seg_zoom.setKeyboardTracking(False)
+        self.seg_zoom.setToolTip("Plan resserré sur cet extrait seulement (s'ajoute au zoom du cadrage)")
+        self.seg_zoom.valueChanged.connect(lambda v: self._seg_set("zoom", round(v / 100, 3)))
+        f.addRow("Zoom de l'extrait", self.seg_zoom)
         self.seg_mute = QCheckBox("Couper le son de cet extrait")
         self.seg_mute.toggled.connect(lambda v: self._seg_set("muted", bool(v)))
         f.addRow(self.seg_mute)
@@ -314,7 +323,7 @@ class MontagePanel(QTabWidget):
 
     def _load_segment(self) -> None:
         s = self._seg()
-        for wdg in (self.seg_in, self.seg_out, self.seg_vol, self.seg_mute, self.seg_left, self.seg_right,
+        for wdg in (self.seg_in, self.seg_out, self.seg_vol, self.seg_zoom, self.seg_mute, self.seg_left, self.seg_right,
                     self.seg_dup, self.seg_del):
             wdg.setEnabled(s is not None)
         if not s:
@@ -335,6 +344,9 @@ class MontagePanel(QTabWidget):
         self.seg_vol.blockSignals(True)
         self.seg_vol.setValue(s.volume_db)
         self.seg_vol.blockSignals(False)
+        self.seg_zoom.blockSignals(True)
+        self.seg_zoom.setValue(round(max(1.0, s.zoom) * 100))
+        self.seg_zoom.blockSignals(False)
         self.seg_mute.blockSignals(True)
         self.seg_mute.setChecked(s.muted)
         self.seg_mute.blockSignals(False)
@@ -368,7 +380,7 @@ class MontagePanel(QTabWidget):
         s = self._seg()
         if s:
             n = self.tl.add_segment(s.asset_id, s.src_in, s.src_out, self.tl.index_of(s.id) + 1)
-            n.volume_db, n.muted = s.volume_db, s.muted
+            n.volume_db, n.muted, n.zoom, n.reframe = s.volume_db, s.muted, s.zoom, list(s.reframe)
             self.sel_segment = n.id
             self.changed.emit("structure")
             self._load_segment()

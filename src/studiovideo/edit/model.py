@@ -46,6 +46,7 @@ class Segment:
     volume_db: float = 0.0
     muted: bool = False
     reframe: list = field(default_factory=list)   # recadrage auto : [[temps source, centre x 0..1], …]
+    zoom: float = 1.0           # zoom propre à l'extrait (multiplie le zoom général), ex. 1.15 « plan resserré »
 
     @property
     def duration(self) -> float:
@@ -251,7 +252,7 @@ class Timeline:
         if src_t - s.src_in < MIN_SEGMENT or s.src_out - src_t < MIN_SEGMENT:
             return None
         right = Segment(asset_id=s.asset_id, src_in=src_t, src_out=s.src_out,
-                        volume_db=s.volume_db, muted=s.muted)
+                        volume_db=s.volume_db, muted=s.muted, reframe=list(s.reframe), zoom=s.zoom)
         s.src_out = src_t
         self.segments.insert(i + 1, right)
         return s, right

@@ -42,7 +42,7 @@ def reframe_offset(tl: Timeline, seg, src_t: float, sw: int, sh: int) -> float |
         return None
     from ..edit.reframe import cx_at
     W, H = tl.format.width, tl.format.height
-    s = max(W / sw, H / sh) * max(1.0, tl.video.zoom)
+    s = max(W / sw, H / sh) * max(1.0, tl.video.zoom) * max(1.0, getattr(seg, "zoom", 1.0) or 1.0)
     w = sw * s
     if w <= W + 1:
         return None
@@ -53,11 +53,12 @@ def reframe_offset(tl: Timeline, seg, src_t: float, sw: int, sh: int) -> float |
     return max(-1.0, min(1.0, left / ((w - W) / 2) - 1))
 
 
-def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = None) -> tuple[float, float, float, float]:
+def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = None,
+                 seg_zoom: float = 1.0) -> tuple[float, float, float, float]:
     """Position (x, y, w, h) de l'image source (déjà tournée) dans l'image de sortie."""
     W, H = tl.format.width, tl.format.height
     v = tl.video
-    zoom = max(1.0, v.zoom)
+    zoom = max(1.0, v.zoom) * max(1.0, seg_zoom)
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
     if ox_override is not None:
         ox = ox_override
@@ -116,6 +117,14 @@ class LivePreview(QGraphicsView):
         self.ox_override = ox
         self._geometry()
 
+    def set_seg_zoom(self, z: float) -> None:
+        """Zoom propre à l'extrait affiché."""
+        z = max(1.0, float(z or 1.0))
+        if abs(z - getattr(self, "seg_zoom", 1.0)) < 1e-4:
+            return
+        self.seg_zoom = z
+        self._geometry()
+
     def apply(self, tl: Timeline, src_size: tuple[int, int] | None) -> None:
         self.tl = tl
         self.src_size = src_size
@@ -135,7 +144,7 @@ class LivePreview(QGraphicsView):
             sw, sh = src_size
             rot = tl.video.rotation % 360
             rw, rh = (sh, sw) if rot in (90, 270) else (sw, sh)
-            x, y, w, h = display_rect(tl, rw, rh, getattr(self, "ox_override", None))
+            x, y, w, h = display_rect(tl, rw, rh, getattr(self, "ox_override", None), getattr(self, "seg_zoom", 1.0))
             iw, ih = (h, w) if rot in (90, 270) else (w, h)
             self.video_item.setSize(QSizeF(iw, ih))
             t = QTransform()
@@ -530,12 +539,14 @@ class MontagePlayer(QWidget):
         self.tc.setText(f"{fmt_timecode(self.t, True)} / {fmt_timecode(self.tl.duration)}")
         self.play_btn.setText("❚❚" if self._playing else "▶")
         loc = self.tl.locate(self.t)
-        ox = None
+        ox, z = None, 1.0
         if loc:
             seg = self.tl.segments[loc[0]]
+            z = getattr(seg, "zoom", 1.0) or 1.0
             a = self.assets.get(seg.asset_id) or {}
             if a.get("width"):
                 ox = reframe_offset(self.tl, seg, loc[1], a["width"], a["height"])
+        self.view.set_seg_zoom(z)
         self.view.set_ox(ox)
         self.view.set_time(self.t)
         self.time_changed.emit(self.t)

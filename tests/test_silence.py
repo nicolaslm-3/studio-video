@@ -55,3 +55,50 @@ def test_job_on_real_audio(tmp_path):
         assert len(sil) == 2 and abs(sil[0][0] - 2.0) < 0.1 and abs(sil[1][1] - 8.0) < 0.1
     finally:
         app.close()
+
+
+def test_punch_in_alternates_within_a_take():
+    from studiovideo.edit.model import Timeline
+    from studiovideo.edit.silence import punch_in
+    tl = Timeline()
+    for a, b in ((0, 2), (3, 5), (6, 8)):
+        tl.add_segment(1, a, b)
+    tl.add_segment(2, 0, 2)                  # autre média : nouvelle prise
+    tl.add_segment(2, 4, 6)
+    tl.add_segment(2, 1, 3)                  # retour en arrière : nouvelle prise
+    tl.segments[2].zoom = 1.3                # réglage manuel conservé
+    assert punch_in(tl) == 2
+    assert [s.zoom for s in tl.segments] == [1.0, 1.12, 1.3, 1.0, 1.12, 1.0]
+    left, right = tl.split_at(tl.segment_start(1) + 1.0)
+    assert right.zoom == 1.12                # une coupe garde le zoom
+
+
+def test_segment_zoom_rendered(tmp_path):
+    """Le zoom d'un extrait agrandit réellement l'image exportée (mire : bords différents)."""
+    import subprocess
+
+    import numpy as np
+
+    from studiovideo.edit import render
+    from studiovideo.edit.model import Timeline
+    from studiovideo.media import ffmpeg
+    if not ffmpeg.available():
+        pytest.skip("FFmpeg absent")
+    src = tmp_path / "s.mp4"
+    subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x320:d=1:r=10",
+                    "-pix_fmt", "yuv420p", str(src)], check=True)
+    tl = Timeline()
+    tl.set_aspect("1:1", 160)
+    s1 = tl.add_segment(1, 0, 1)
+    source = render.Source(path=str(src), width=320, height=320, duration=1.0, has_audio=False)
+    frames = []
+    for z in (1.0, 2.0):
+        s1.zoom = z
+        chain = render.video_chain(tl, source, "0", s1)
+        raw = subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-i", str(src), "-vf", chain, "-frames:v", "1",
+                              "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        frames.append(np.frombuffer(raw, np.uint8).reshape(160, 160).astype(float))
+    full = frames[0]
+    # le centre du plan large, agrandi ×2, doit ressembler au plan zoomé
+    centre = np.kron(full[40:120, 40:120], np.ones((2, 2)))
+    assert np.abs(centre - frames[1]).mean() < np.abs(full - frames[1]).mean() * 0.6

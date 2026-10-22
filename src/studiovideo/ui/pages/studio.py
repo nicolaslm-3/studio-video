@@ -583,6 +583,7 @@ class StudioPage(QWidget):
             if music:
                 self.assets[music["id"]] = music
         self.timeline.set_timeline(self.tl, names, music["file_name"] if music else "")
+        self._ensure_waves()
         self.mplayer.set_timeline(self.tl, self.assets)
         self.export_quick.setEnabled(bool(self.tl.segments))
         self.undo_btn.setEnabled(len(self._history) > 1)
@@ -857,22 +858,39 @@ class StudioPage(QWidget):
         if not self.tl.segments:
             QMessageBox.information(self, "Silences", "La timeline est vide.")
             return
-        choices = ["Blancs longs (1 s et plus)", "Blancs moyens (0,6 s et plus) — conseillé",
-                   "Rythme serré (0,35 s et plus)"]
-        choice, ok = QInputDialog.getItem(self, "Retirer les silences", "Que retirer ?", choices, 1, False)
-        if not ok:
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Retirer les silences")
+        dl = QVBoxLayout(dlg)
+        dl.addWidget(label("Que retirer ?"))
+        combo = QComboBox()
+        combo.addItems(["Blancs longs (1 s et plus)", "Blancs moyens (0,6 s et plus) — conseillé",
+                        "Rythme serré (0,35 s et plus)"])
+        combo.setCurrentIndex(1)
+        dl.addWidget(combo)
+        punch = QCheckBox("Alterner plan large et plan resserré à chaque coupe (zoom 112 %)")
+        punch.setToolTip("Rend les coupes dans une même prise moins visibles et plus dynamiques ; "
+                         "réglable ensuite extrait par extrait (onglet Extrait → Zoom de l'extrait)")
+        dl.addWidget(punch)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        dl.addWidget(bb)
+        if not dlg.exec():
             return
-        min_len = {0: 1.0, 1: 0.6, 2: 0.35}[choices.index(choice)]
+        self._punch_in = punch.isChecked()
+        min_len = {0: 1.0, 1: 0.6, 2: 0.35}[combo.currentIndex()]
         segs = [{"id": sg.id, "asset_id": sg.asset_id, "src_in": sg.src_in, "src_out": sg.src_out}
                 for sg in self.tl.segments]
         jid = self.app.jobs.submit("find_silences", "Recherche des silences", {"segments": segs, "min_len": min_len})
         self._jobs[jid] = "silences"
         self.save_lbl.setText("Recherche des silences…")
 
-    def apply_silences(self, silences: dict) -> dict:
+    def apply_silences(self, silences: dict, punch: bool = False) -> dict:
         from ...edit import silence
         self._snapshot()
         res = silence.apply(self.tl, {k: [tuple(x) for x in v] for k, v in silences.items()})
+        res["zoomed"] = silence.punch_in(self.tl) if punch else 0
         if self.tl.subtitles.cues:                  # sous-titres recalés sur le nouveau montage
             from ...edit.subtitles import generate
             lang = self.tl.subtitles.language
@@ -984,8 +1002,35 @@ class StudioPage(QWidget):
         self._jobs[jid] = "export"
         self.save_lbl.setText(f"Export lancé : {dest.name}")
 
+    def _ensure_waves(self) -> None:
+        """Formes d'onde des médias de la timeline : depuis le cache, sinon calculées en tâche de fond."""
+        from ...media import waveform
+        canvas = self.timeline.canvas
+        pending = self.__dict__.setdefault("_wave_pending", {})          # id de tâche -> média
+        failed = self.__dict__.setdefault("_wave_failed", set())
+        for aid in {sg.asset_id for sg in self.tl.segments} - set(canvas.peaks) - set(pending.values()) - failed:
+            a = self.assets.get(aid) or self.app.library.get(aid)
+            if not a or a["missing"] or not a["audio_tracks"]:
+                continue
+            pk = waveform.load(self.app.paths.root, a["fingerprint"])
+            if pk is not None:
+                canvas.set_peaks(aid, pk)
+            elif Path(a["path"]).exists():
+                jid = self.app.jobs.submit("waveform", f"Forme d'onde · {a['file_name']}", {"asset_id": aid})
+                pending[jid] = aid
+
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        if job.kind == "waveform" and job.status in ("succeeded", "failed", "cancelled"):
+            aid = getattr(self, "_wave_pending", {}).pop(job.id, None)
+            if aid is not None and job.status != "succeeded":
+                self._wave_failed.add(aid)                  # pas de nouvel essai pendant la session
+            if aid is not None and job.status == "succeeded" and job.result.get("peaks"):
+                a = self.app.library.get(aid)
+                from ...media import waveform
+                pk = waveform.load(self.app.paths.root, a["fingerprint"]) if a else None
+                if pk is not None:
+                    self.timeline.canvas.set_peaks(aid, pk)
         if getattr(self, "_orig_dlg", None) is not None:
             self._orig_dlg.on_job(job)
         if job.status in ("succeeded", "failed", "cancelled") and not self.guide.isHidden():
@@ -1025,7 +1070,7 @@ class StudioPage(QWidget):
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
         elif kind == "silences":
             if job.status == "succeeded":
-                r = self.apply_silences(job.result["silences"])
+                r = self.apply_silences(job.result["silences"], getattr(self, "_punch_in", False))
                 src = " et ".join(k for k, v in job.result["used"].items() if v) or "aucune source"
                 self.save_lbl.setText(f"{r['removed']:.1f} s de silence retirées ({r['cuts']} coupe(s), d'après "
                                       f"{src}). Ctrl+Z pour annuler.")

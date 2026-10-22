@@ -128,7 +128,7 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None) -> str:
     if v.flip:
         parts.append("vflip")
 
-    zoom = max(1.0, float(v.zoom))
+    zoom = max(1.0, float(v.zoom)) * max(1.0, float(getattr(seg, "zoom", 1.0) or 1.0))
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
 
     keys = list(getattr(seg, "reframe", None) or []) if seg is not None and rot in (0, 180) else []

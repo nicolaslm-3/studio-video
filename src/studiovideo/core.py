@@ -96,6 +96,18 @@ def _register_handlers(app: AppContext) -> None:
 
     app.jobs.register("make_proxy", make_proxy)
 
+    def waveform_job(ctx: JobContext, params: dict) -> dict:
+        from .media import waveform
+        row = app.library.get(params["asset_id"])
+        if row is None or not Path(row["path"]).exists():
+            raise ValueError("Média introuvable.")
+        if not row["audio_tracks"]:
+            return {"asset_id": row["id"], "peaks": 0}
+        peaks = waveform.ensure(app.paths.root, row["fingerprint"], Path(row["path"]), lambda: ctx.cancelled)
+        return {"asset_id": row["id"], "peaks": int(peaks.size)}
+
+    app.jobs.register("waveform", waveform_job)
+
     def import_url(ctx: JobContext, params: dict) -> dict:
         dest = app.paths.root / "downloads"
         path, meta = downloader.download(params["url"], dest, progress=ctx.progress,

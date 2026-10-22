@@ -80,3 +80,20 @@ def test_upgrade_from_v1_keeps_data_and_backs_up(paths, monkeypatch):
     assert row["end_s"] == 10 and row["engine"] == "" and row["speakers"] == ""
     assert any("avant-migration-v1" in p.name for p in d.list_backups())
     assert d.query_one("SELECT name FROM concept")["name"] == "Poussey Pass"
+
+
+def test_daily_backup_once_a_day_and_pruned(tmp_path):
+    from studiovideo.db import database as dbm
+    db = dbm.open_database(tmp_path / "s.db", tmp_path / "bk")
+    try:
+        assert db.daily_backup() is not None
+        assert db.daily_backup() is None                         # déjà faite aujourd'hui
+        manual = db.backup("manuelle")
+        for i in range(10):                                      # anciennes quotidiennes
+            (tmp_path / "bk" / f"studio-2026010{i % 10}-0{i}0000-000000-quotidienne.db").write_bytes(b"x")
+        db.daily_backup(min_age_h=0)
+        names = [b.name for b in db.list_backups()]
+        assert sum(n.endswith("-quotidienne.db") for n in names) == dbm.MAX_DAILY
+        assert manual.name in names                              # les autres ne sont pas évincées
+    finally:
+        db.close()

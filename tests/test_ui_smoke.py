@@ -636,3 +636,48 @@ def test_remove_silences_regenerates_subtitles(window):
     assert deux.start < 2.0                                      # recalé après la coupe
     st.undo()
     assert len(st.tl.segments) == 1
+    res = st.apply_silences({st.tl.segments[0].id: [(0.8, 6.2)]}, punch=True)
+    assert res["zoomed"] == 1 and [s.zoom for s in st.tl.segments] == [1.0, 1.12]
+    st.panel.sel_segment = st.tl.segments[1].id
+    st.panel._load_segment()
+    assert st.panel.seg_zoom.value() == 112
+    st.panel.seg_zoom.setValue(130)
+    assert st.tl.segments[1].zoom == 1.3
+
+
+def test_shortcuts_dialog(window):
+    from studiovideo.ui.shortcuts import GROUPS, ShortcutsDialog
+    w, _ctx = window
+    d = ShortcutsDialog(w)
+    texts = {d.table.item(r, 0).text() for r in range(d.table.rowCount())}
+    assert {"Ctrl+N", "S", "I / O", "Studio (montage)"} <= texts
+    assert d.table.rowCount() == sum(len(i) + 1 for _g, i in GROUPS)
+
+
+def test_studio_draws_waveform(window, tmp_path):
+    import subprocess
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    from studiovideo.media import ffmpeg
+    if not ffmpeg.available():
+        pytest.skip("FFmpeg absent")
+    w, ctx = window
+    vid = tmp_path / "w.mp4"
+    subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:d=3:r=25",
+                    "-f", "lavfi", "-i", "sine=f=300:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(vid)], check=True)
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Onde")
+    aid = ctx.importer().import_file(vid, project_id=pid).asset_id
+    w.open_project(pid)
+    st = w.studio
+    st.tl.add_segment(aid, 0, 3)
+    st._changed(panel=True)
+    end = time.time() + 30
+    while aid not in st.timeline.canvas.peaks and time.time() < end:
+        QApplication.processEvents()
+        time.sleep(0.05)
+    assert aid in st.timeline.canvas.peaks
+    st.timeline.canvas.grab()
+    assert st.timeline.canvas._cols                            # colonnes réellement calculées au dessin

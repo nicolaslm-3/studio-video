@@ -39,7 +39,9 @@ src/studiovideo/
 ├── media/
 │   ├── ffmpeg.py       localisation de FFmpeg, ffprobe, miniatures
 │   ├── importer.py     import non destructif, empreinte, doublons, fichiers manquants
-│   └── downloader.py   import par URL (yt-dlp)
+│   ├── downloader.py   import par URL (yt-dlp)
+│   ├── proxy.py        aperçus légers des médias lourds
+│   └── waveform.py     forme d'onde (pics à 50/s, cache disque) pour la timeline
 ├── update/
 │   ├── updater.py      WinSparkle (ctypes), journal, coordination de l'arrêt avant installation
 │   ├── config.py       clé publique et URL du flux (injectées à la compilation)
@@ -109,6 +111,9 @@ src/studiovideo/
 | `ai/diarize.py` | Intervenants : empreintes WeSpeaker + regroupement hiérarchique |
 | `edit/textdetect.py` | Repérage des logos (contours permanents) et sous-titres incrustés (bandes intermittentes) |
 | `edit/reframe.py` | Recadrage intelligent : visages UltraFace, trajectoire lissée par plan, expression `crop` FFmpeg |
+| `edit/silence.py` | Retrait des silences (silencedetect ou mots transcrits), alternance de zoom à chaque coupe |
+| `publish/copywriter.py` | Titre, description, hashtags et chapitres YouTube proposés depuis la transcription |
+| `services/archive.py` | Archive de projet `.studioproj` (export / import, renumérotation, médias reconnus par empreinte) |
 | `edit/campaign.py`, `services/campaigns.py` | Brief de campagne, contrôle de conformité des exports et des textes |
 | `edit/original.py` | Création originale : script en scènes, voix off, fabrication de la vidéo |
 | `publish/rules.py` | Limites de texte par plateforme, composition des légendes, contrôle des liens |

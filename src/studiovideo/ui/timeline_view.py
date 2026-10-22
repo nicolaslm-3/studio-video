@@ -35,6 +35,8 @@ class TimelineCanvas(QWidget):
         self.sel_text: str | None = None
         self.in_out: tuple[float | None, float | None] = (None, None)
         self._drag_head = False
+        self.peaks: dict = {}             # asset_id -> pics (forme d'onde), voir media/waveform.py
+        self._cols: dict = {}             # cache des colonnes dessinées
         self.setMinimumHeight(RULER_H + len(TRACKS) * (TRACK_H + TRACK_GAP) + 8)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
@@ -44,6 +46,23 @@ class TimelineCanvas(QWidget):
         self.tl, self.names, self.music_name = tl, names, music_name
         self._resize()
         self.update()
+
+    def set_peaks(self, asset_id: int, peaks) -> None:
+        self.peaks[asset_id] = peaks
+        self._cols.clear()
+        self.update()
+
+    def _wave(self, s, width: int):
+        pk = self.peaks.get(s.asset_id)
+        if pk is None or width < 2:
+            return None
+        key = (s.asset_id, round(s.src_in, 3), round(s.src_out, 3), width)
+        if key not in self._cols:
+            from ..media.waveform import columns
+            if len(self._cols) > 400:
+                self._cols.clear()
+            self._cols[key] = columns(pk, s.src_in, s.src_out, width)
+        return self._cols[key]
 
     def set_playhead(self, t: float) -> None:
         self.playhead = max(0.0, t)
@@ -105,6 +124,17 @@ class TimelineCanvas(QWidget):
             p.setBrush(col)
             p.setPen(QPen(QColor(c["text"] if sel else c["border"]), 1.5 if sel else 1))
             p.drawRoundedRect(rect, 5, 5)
+            cols = None if s.muted else self._wave(s, int(rect.width()))
+            if cols is not None:
+                wc = QColor(c["text"])
+                wc.setAlphaF(0.35)
+                p.setPen(QPen(wc, 1))
+                base, hh = rect.bottom() - 2, rect.height() * 0.62
+                x0 = rect.left()
+                for j in range(0, len(cols), 1 if len(cols) < 3000 else 2):
+                    v = float(cols[j])
+                    if v > 0.02:
+                        p.drawLine(QPointF(x0 + j, base), QPointF(x0 + j, base - v * hh))
             p.setPen(QColor(c["text"]))
             txt = f"{k + 1}. {self.names.get(s.asset_id, '?')}" + ("  (muet)" if s.muted else "")
             p.drawText(rect.adjusted(6, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft,

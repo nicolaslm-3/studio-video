@@ -89,9 +89,25 @@ def apply(tl: Timeline, silences_by_segment: dict[str, list[tuple]], pad: float 
         cuts += len(ranges) - 1 + (ranges[0][0] > seg.src_in + 0.01) + (ranges[-1][1] < seg.src_out - 0.01)
         for k, (a, b) in enumerate(ranges):
             ns = Segment(asset_id=seg.asset_id, src_in=round(a, 3), src_out=round(b, 3), volume_db=seg.volume_db,
-                         muted=seg.muted, reframe=list(seg.reframe))
+                         muted=seg.muted, reframe=list(seg.reframe), zoom=seg.zoom)
             if k == 0:
                 ns.id = seg.id
             out.append(ns)
     tl.segments = out
     return {"removed": round(before - tl.duration, 2), "cuts": cuts}
+
+
+def punch_in(tl: Timeline, amount: float = 1.12) -> int:
+    """Alterne plan large / plan resserré à chaque coupe dans une même prise (« jump cut » dynamique).
+
+    Une prise = extraits consécutifs du même média qui avancent dans le temps. Retourne le nombre
+    d'extraits resserrés. Le zoom manuel d'un extrait (différent de 1 et de `amount`) est respecté."""
+    n, prev, k = 0, None, 0
+    for seg in tl.segments:
+        same_take = prev is not None and prev.asset_id == seg.asset_id and seg.src_in >= prev.src_out - 0.01
+        k = k + 1 if same_take else 0
+        if seg.zoom in (1.0, amount):
+            seg.zoom = amount if k % 2 else 1.0
+            n += k % 2
+        prev = seg
+    return n

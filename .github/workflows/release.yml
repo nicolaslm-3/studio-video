@@ -41,7 +41,7 @@ jobs:
     env:
       HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Contexte de version
         id: ctx
@@ -78,7 +78,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: steps.ctx.outputs.skip != 'true'
         with:
           python-version: "3.12"
