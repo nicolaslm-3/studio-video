@@ -173,6 +173,7 @@ class StudioPage(QWidget):
         self.panel.optimize_requested.connect(self._optimize_audio)
         self.panel.separate_requested.connect(self._separate)
         self.panel.detect_text_requested.connect(self._detect_text)
+        self.panel.reframe_requested.connect(self._reframe)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         hsplit.addWidget(self.panel)
         hsplit.setStretchFactor(0, 1)
@@ -872,6 +873,28 @@ class StudioPage(QWidget):
         self.panel.stems_note.setText(f"Séparation lancée pour {len(todo)} média(s). Durée : environ celle du "
                                       "média (calcul sur le processeur).")
 
+    def _reframe(self, on: bool) -> None:
+        if not self.tl.segments:
+            QMessageBox.information(self, "Recadrage", "Ajoutez d'abord un extrait vidéo au montage.")
+            return
+        if not on:
+            self._snapshot()
+            for sg in self.tl.segments:
+                sg.reframe = []
+            self._changed(panel=True)
+            self.panel.reload_reframe()
+            return
+        if self.tl.format.fit != "fill":
+            self._snapshot()
+            self.tl.format.fit = "fill"
+        sel = getattr(self.panel, "sel_segment", None)
+        segs = [sg for sg in self.tl.segments if sg.id == sel] or list(self.tl.segments)
+        for sg in segs:
+            jid = self.app.jobs.submit("reframe", "Recadrage automatique", {
+                "asset_id": sg.asset_id, "src_in": sg.src_in, "src_out": sg.src_out, "segment_id": sg.id})
+            self._jobs[jid] = "reframe"
+        self.panel.reframe_note.setText(f"Analyse des visages : {len(segs)} extrait(s)…")
+
     def _detect_text(self) -> None:
         if not self.tl.segments:
             QMessageBox.information(self, "Détection", "Ajoutez d'abord un extrait vidéo au montage.")
@@ -954,6 +977,19 @@ class StudioPage(QWidget):
             elif job.status == "failed":
                 QMessageBox.warning(self, "Création originale", job.error[:800])
                 self.save_lbl.setText("")
+        elif kind == "reframe":
+            if job.status == "succeeded":
+                r = job.result
+                seg = next((sg for sg in self.tl.segments if sg.id == r.get("segment_id")), None)
+                if seg is not None:
+                    self._snapshot()
+                    seg.reframe = [list(k) for k in r["keys"]]
+                    self._changed(panel=True)
+                if r.get("frames") and not r.get("with_face"):
+                    self.save_lbl.setText("Recadrage : aucun visage trouvé dans un extrait, cadre centré.")
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Recadrage automatique", job.error[:600])
+            self.panel.reload_reframe()
         elif kind == "detect_text":
             self.panel.detect_btn.setEnabled(True)
             self.panel.detect_btn.setText("Détecter le texte incrusté et les logos")

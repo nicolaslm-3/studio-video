@@ -82,3 +82,21 @@ def test_preview_audio_plan():
     p = audio_plan(tl, tracks)
     assert p["main"] == 0.0 and p["aux"][1][0] == "m.wav" and abs(p["aux"][1][1] - 0.501) < 0.001
     assert "Pas de doublage" in audio_plan(tl, {"dub": None})["note"]
+
+
+def test_reframe_offset_for_preview():
+    from studiovideo.ui.montage_player import display_rect, reframe_offset
+    tl = Timeline()
+    tl.set_aspect("9:16", 1080)
+    seg = tl.add_segment(1, 0, 10)
+    assert reframe_offset(tl, seg, 2.0, 1920, 1080) is None              # pas de recadrage auto
+    seg.reframe = [[0, 0.2], [10, 0.8]]
+    ox0, ox1 = reframe_offset(tl, seg, 0, 1920, 1080), reframe_offset(tl, seg, 10, 1920, 1080)
+    x0, _, w, _ = display_rect(tl, 1920, 1080, ox0)
+    assert abs((-x0 + 540) / w - 0.2) < 0.01                              # visage au centre du cadre
+    x1, _, w, _ = display_rect(tl, 1920, 1080, ox1)
+    assert abs((-x1 + 540) / w - 0.8) < 0.01
+    seg.reframe = [[0, 0.01]]
+    assert reframe_offset(tl, seg, 0, 1920, 1080) == -1.0                 # bloqué au bord
+    tl.video.mirror = True
+    assert reframe_offset(tl, seg, 0, 1920, 1080) == 1.0

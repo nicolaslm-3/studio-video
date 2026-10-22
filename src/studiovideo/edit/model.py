@@ -45,6 +45,7 @@ class Segment:
     id: str = field(default_factory=_id)
     volume_db: float = 0.0
     muted: bool = False
+    reframe: list = field(default_factory=list)   # recadrage auto : [[temps source, centre x 0..1], …]
 
     @property
     def duration(self) -> float:
@@ -113,6 +114,7 @@ class VideoSettings:
     # zones masquées (texte incrusté, logo) en proportions de l'image source :
     # {"x", "y", "w", "h" (0..1), "mode": "blur" | "delogo" | "box"}
     masks: list = field(default_factory=list)
+    auto_reframe: bool = False  # à l'export : suivre les visages sur les extraits sans recadrage calculé
 
 
 @dataclass

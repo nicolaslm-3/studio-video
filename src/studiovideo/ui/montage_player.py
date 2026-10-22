@@ -35,12 +35,32 @@ SAFE_ZONES = {
 }
 
 
-def display_rect(tl: Timeline, sw: int, sh: int) -> tuple[float, float, float, float]:
+def reframe_offset(tl: Timeline, seg, src_t: float, sw: int, sh: int) -> float | None:
+    """Décalage horizontal (-1..1) équivalent au recadrage automatique à l'instant source src_t."""
+    keys = getattr(seg, "reframe", None) if seg is not None else None
+    if not keys or tl.format.fit != "fill" or tl.video.rotation % 360 not in (0, 180):
+        return None
+    from ..edit.reframe import cx_at
+    W, H = tl.format.width, tl.format.height
+    s = max(W / sw, H / sh) * max(1.0, tl.video.zoom)
+    w = sw * s
+    if w <= W + 1:
+        return None
+    c = cx_at(keys, src_t)
+    if tl.video.mirror:
+        c = 1 - c
+    left = min(max(0.0, c * w - W / 2), w - W)
+    return max(-1.0, min(1.0, left / ((w - W) / 2) - 1))
+
+
+def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = None) -> tuple[float, float, float, float]:
     """Position (x, y, w, h) de l'image source (déjà tournée) dans l'image de sortie."""
     W, H = tl.format.width, tl.format.height
     v = tl.video
     zoom = max(1.0, v.zoom)
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
+    if ox_override is not None:
+        ox = ox_override
     if tl.format.fit == "fill":
         s = max(W / sw, H / sh) * zoom
     else:
@@ -85,18 +105,37 @@ class LivePreview(QGraphicsView):
         self._sub_shown = None
         self.zone_name: str | None = None
         self.tl = Timeline()
+        self.src_size = None
+        self.ox_override: float | None = None
+
+    def set_ox(self, ox: float | None) -> None:
+        """Recadrage automatique : décalage horizontal à l'instant affiché (None = réglage manuel)."""
+        if ox == self.ox_override or (ox is not None and self.ox_override is not None
+                                      and abs(ox - self.ox_override) < 0.002):
+            return
+        self.ox_override = ox
+        self._geometry()
 
     def apply(self, tl: Timeline, src_size: tuple[int, int] | None) -> None:
         self.tl = tl
+        self.src_size = src_size
         W, H = tl.format.width, tl.format.height
         self.frame.setRect(0, 0, W, H)
         self.frame.setBrush(QColor("#1A1B1E") if tl.format.fit == "blur" else QColor("#000000"))
         self.scene_.setSceneRect(0, 0, W, H)
+        self._geometry()
+        self._sync_texts()
+        self._sync_subs()
+        self._draw_zones()
+        self.fit()
+
+    def _geometry(self) -> None:
+        tl, src_size = self.tl, getattr(self, "src_size", None)
         if self.video_item is not None and src_size:
             sw, sh = src_size
             rot = tl.video.rotation % 360
             rw, rh = (sh, sw) if rot in (90, 270) else (sw, sh)
-            x, y, w, h = display_rect(tl, rw, rh)
+            x, y, w, h = display_rect(tl, rw, rh, getattr(self, "ox_override", None))
             iw, ih = (h, w) if rot in (90, 270) else (w, h)
             self.video_item.setSize(QSizeF(iw, ih))
             t = QTransform()
@@ -106,10 +145,6 @@ class LivePreview(QGraphicsView):
             t.translate(-iw / 2, -ih / 2)
             self.video_item.setTransform(t)
             self.video_item.setPos(0, 0)
-        self._sync_texts()
-        self._sync_subs()
-        self._draw_zones()
-        self.fit()
 
     def _sync_texts(self) -> None:
         W, H = self.tl.format.width, self.tl.format.height
@@ -494,6 +529,14 @@ class MontagePlayer(QWidget):
             self.slider.setValue(int(self.t * 1000))
         self.tc.setText(f"{fmt_timecode(self.t, True)} / {fmt_timecode(self.tl.duration)}")
         self.play_btn.setText("❚❚" if self._playing else "▶")
+        loc = self.tl.locate(self.t)
+        ox = None
+        if loc:
+            seg = self.tl.segments[loc[0]]
+            a = self.assets.get(seg.asset_id) or {}
+            if a.get("width"):
+                ox = reframe_offset(self.tl, seg, loc[1], a["width"], a["height"])
+        self.view.set_ox(ox)
         self.view.set_time(self.t)
         self.time_changed.emit(self.t)
 

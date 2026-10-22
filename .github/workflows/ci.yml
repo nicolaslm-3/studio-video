@@ -157,3 +157,25 @@ jobs:
             echo "::error title=Piper réel::$msg"
           fi
           exit $rc
+      - name: Recadrage intelligent réel (détecteur de visages)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STUDIOVIDEO_FACE_MODEL: facemodel/version-RFB-320.onnx
+          STUDIOVIDEO_FACE_IMG: facemodel/faces.jpg
+        shell: bash
+        run: |
+          mkdir -p facemodel
+          R=https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/master
+          curl -sSfL -o facemodel/version-RFB-320.onnx $R/models/onnx/version-RFB-320.onnx
+          echo "34cd7e60aeff28744c657de7a3dc64e872d506741de66987f3426f2b79f88017  facemodel/version-RFB-320.onnx" | sha256sum -c
+          curl -sSfL -o facemodel/faces.jpg $R/imgs/2.jpg
+          set +e
+          python -m pytest -q tests/test_reframe.py -rA > rf.txt 2>&1
+          rc=$?
+          cat rf.txt
+          if grep -q "SKIPPED" rf.txt; then echo "::error title=Recadrage réel::test réel ignoré"; rc=1; fi
+          if [ $rc -ne 0 ]; then
+            msg=$(grep -E "Error|error|assert|Exception|^E " rf.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Recadrage réel::$msg"
+          fi
+          exit $rc

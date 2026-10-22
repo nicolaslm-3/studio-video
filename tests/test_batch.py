@@ -79,3 +79,12 @@ def test_batch_language_variant_uses_dub_when_available():
     assert voices[("a", "9:16 · en")] == ("dub", "en")
     assert voices[("b", "9:16 · en")] == ("original", "")
     assert voices[("a", "9:16")] == ("original", "")
+
+
+def test_batch_auto_reframe_flag():
+    from studiovideo.edit.batch import BatchOptions, plan_batch
+    from studiovideo.edit.model import Timeline
+    clips = [{"asset_id": 1, "start": 0, "end": 3, "name": "a"}]
+    plan = plan_batch(Timeline(), clips, BatchOptions(aspects=["9:16", "16:9"], reframe=True), {})
+    flags = {f: (tl.video.auto_reframe, tl.format.fit) for _, f, tl in plan}
+    assert flags == {"9:16": (True, "fill"), "16:9": (False, flags["16:9"][1])}

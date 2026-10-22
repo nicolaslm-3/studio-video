@@ -22,7 +22,8 @@ class BatchOptions:
     keep_music: bool = True
     keep_texts: bool = False        # recopier les textes du modèle (à éviter : ils sont propres au montage)
     languages: list[str] = field(default_factory=lambda: [""])   # "" = langue d'origine
-    dubbed: set = field(default_factory=set)   # {(asset_id, langue)} doublés : la variante prend la voix doublée
+    dubbed: set = field(default_factory=set)
+    reframe: bool = False           # suivre les visages (vidéo horizontale → vertical / carré)   # {(asset_id, langue)} doublés : la variante prend la voix doublée
 
 
 def clip_timeline(template: Timeline, asset_id: int, start: float, end: float, aspect: str, opts: BatchOptions,
@@ -32,6 +33,9 @@ def clip_timeline(template: Timeline, asset_id: int, start: float, end: float, a
     tl.add_segment(asset_id, start, end)
     if aspect in ASPECTS:
         tl.set_aspect(aspect, opts.short_side)
+    tl.video.auto_reframe = bool(opts.reframe and aspect != "16:9")
+    if tl.video.auto_reframe:
+        tl.format.fit = "fill"
     if not opts.keep_texts:
         tl.texts = []
     if not opts.keep_music:

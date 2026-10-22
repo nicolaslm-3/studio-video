@@ -87,10 +87,12 @@ class BatchDialog(QDialog):
         self.o_music = QCheckBox("Garder la musique du montage")
         self.o_music.setChecked(bool(template.music.asset_id))
         self.o_music.setEnabled(bool(template.music.asset_id))
+        self.o_reframe = QCheckBox("Formats vertical et carré : suivre les visages (recadrage automatique)")
+        self.o_reframe.setChecked(True)
         self.o_dub = QCheckBox("Variantes traduites : utiliser la voix doublée quand un doublage existe")
         self.o_dub.setChecked(True)
         self.o_dub.setVisible(bool(self.langs))
-        for w in (self.o_subs, self.o_hook, self.o_music, self.o_dub):
+        for w in (self.o_subs, self.o_hook, self.o_music, self.o_reframe, self.o_dub):
             lay.addWidget(w)
         self.summary = label("", "h2")
         lay.addWidget(self.summary)
@@ -133,7 +135,8 @@ class BatchDialog(QDialog):
         opts = BatchOptions(aspects=self._formats(), short_side=min(self.template.format.width,
                                                                     self.template.format.height),
                             subtitles=self.o_subs.isChecked(), hook_title=self.o_hook.isChecked(),
-                            keep_music=self.o_music.isChecked(), languages=self._languages() or [""])
+                            keep_music=self.o_music.isChecked(), languages=self._languages() or [""],
+                            reframe=self.o_reframe.isChecked())
         clips = self._clips()
         if self.o_dub.isChecked() and self.app.dubs:
             opts.dubbed = {(c["asset_id"], lg) for c in clips for lg in self.app.dubs.languages(c["asset_id"])}

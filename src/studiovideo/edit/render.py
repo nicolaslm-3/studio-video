@@ -105,7 +105,7 @@ def mask_chain(masks: list, sw: int, sh: int, tag: str = "") -> str:
     return ",".join(out)
 
 
-def video_chain(tl: Timeline, src: Source, tag: str = "") -> str:
+def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None) -> str:
     """Filtres appliqués à un segment pour obtenir une image W×H au bon format."""
     f, v = tl.format, tl.video
     W, H = f.width, f.height
@@ -131,11 +131,17 @@ def video_chain(tl: Timeline, src: Source, tag: str = "") -> str:
     zoom = max(1.0, float(v.zoom))
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
 
-    def fill_chain(z: float) -> str:
+    keys = list(getattr(seg, "reframe", None) or []) if seg is not None and rot in (0, 180) else []
+
+    def fill_chain(z: float, follow: bool = True) -> str:
         s = max(W / sw, H / sh) * z
         SW, SH = max(W, _even(sw * s)), max(H, _even(sh * s))
         x = int((SW - W) / 2 * (1 + ox))
         y = int((SH - H) / 2 * (1 + oy))
+        if follow and keys and SW > W:
+            from .reframe import crop_x_expr
+            k = [(t, (1 - c) if v.mirror else c) for t, c in keys]
+            return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:x='{crop_x_expr(k, seg.src_in, seg.src_out, SW, W)}':y={y}"
         return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:{x}:{y}"
 
     def fit_chain(z: float) -> str:
@@ -158,7 +164,7 @@ def video_chain(tl: Timeline, src: Source, tag: str = "") -> str:
         # fond : version recadrée et floutée ; premier plan : image entière centrée
         s = min(W / sw, H / sh) * zoom
         SW, SH = min(W, _even(sw * s)), min(H, _even(sh * s))
-        geo = (f"{pre}split=2[bg{tag}][fg{tag}];[bg{tag}]{fill_chain(1.0)},boxblur=luma_radius=40:luma_power=2,"
+        geo = (f"{pre}split=2[bg{tag}][fg{tag}];[bg{tag}]{fill_chain(1.0, False)},boxblur=luma_radius=40:luma_power=2,"
                f"eq=brightness=-0.08[bgb{tag}];[fg{tag}]scale={SW}:{SH}:flags=lanczos[fgs{tag}];"
                f"[bgb{tag}][fgs{tag}]overlay={int((W - SW) / 2 * (1 + ox))}:{int((H - SH) / 2 * (1 + oy))}")
     else:
@@ -198,7 +204,7 @@ class GraphBuilder:
             dur = seg.duration
             k = self._input(["-ss", _fmt(seg.src_in), "-t", _fmt(dur), "-i", src.path])
             if video:
-                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i))}[v{i}]")
+                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i), seg)}[v{i}]")
                 vlabels.append(f"[v{i}]")
             if audio:
                 vs = getattr(tl, "voice", None)
@@ -472,7 +478,8 @@ def preview_frame(tl: Timeline, sources: dict[int, Source], t: float, dest: Path
     one = tl.copy()
     step = 1.0 / max(1.0, tl.format.fps)
     start = max(seg.src_in, min(src_t, seg.src_out - step))
-    one.segments = [type(seg)(asset_id=seg.asset_id, src_in=start, src_out=start + step * 2, id=seg.id)]
+    one.segments = [type(seg)(asset_id=seg.asset_id, src_in=start, src_out=start + step * 2, id=seg.id,
+                              reframe=list(getattr(seg, "reframe", []) or []))]
     one.texts = []
     for item in tl.texts:
         if item.start <= t <= item.end:

@@ -93,6 +93,14 @@ def _register_handlers(app: AppContext) -> None:
         tl = Timeline.from_dict(params["timeline"])
         sources, music = app.montage.sources_for(tl)
         dest = Path(params["dest"])
+        if tl.video.auto_reframe and tl.format.fit == "fill":
+            from .edit import reframe
+            todo = [sg for sg in tl.segments if not sg.reframe and (sources[sg.asset_id].width or 0) >
+                    (sources[sg.asset_id].height or 0)]
+            for k, sg in enumerate(todo):
+                res = reframe.analyze(Path(sources[sg.asset_id].path), sg.src_in, sg.src_out, app.paths.models,
+                                      lambda f, m: ctx.progress(0.1 * (k + f) / len(todo), m), lambda: ctx.cancelled)
+                sg.reframe = [list(x) for x in res["keys"]]
 
         def run(cmd, on_line):
             return ctx.run_process(cmd, on_line)
@@ -629,6 +637,20 @@ def _register_handlers(app: AppContext) -> None:
 
     app.jobs.register("write_script", write_script)
     app.jobs.register("create_original", create_original)
+    def reframe_job(ctx: JobContext, params: dict) -> dict:
+        """Recadrage intelligent : trajectoire du cadre qui suit les visages d'un extrait."""
+        from .edit import reframe
+        a = app.library.get(params["asset_id"])
+        if a is None or not Path(a["path"]).exists():
+            raise ValueError("Média introuvable.")
+        if a["kind"] != "video":
+            raise ValueError("Disponible pour les vidéos uniquement.")
+        ctx.progress(0.05, "Détecteur de visages")
+        res = reframe.analyze(Path(a["path"]), float(params["src_in"]), float(params["src_out"]), app.paths.models,
+                              ctx.progress, lambda: ctx.cancelled)
+        return {"segment_id": params.get("segment_id"), **res}
+
+    app.jobs.register("reframe", reframe_job)
     app.jobs.register("detect_text", detect_text)
     app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("connect_account", connect_account)

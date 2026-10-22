@@ -183,6 +183,7 @@ class MontagePanel(QTabWidget):
     optimize_requested = Signal()
     separate_requested = Signal()
     detect_text_requested = Signal()
+    reframe_requested = Signal(bool)          # True : suivre les visages ; False : retirer
     cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
@@ -226,6 +227,7 @@ class MontagePanel(QTabWidget):
             self._load_music_choices()
             self._load_voice_choices()
             self._load_masks()
+            self.reload_reframe()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
             self.apply_concept_btn.setText(f"Appliquer les réglages de « {self.concept_name} »")
@@ -406,6 +408,16 @@ class MontagePanel(QTabWidget):
         f.addRow(b.check("video.mirror", "Effet miroir (horizontal)"))
         f.addRow(b.check("video.flip", "Retourner verticalement"))
         f.addRow(button("Recentrer", on_click=self._recenter))
+        rf = QHBoxLayout()
+        self.reframe_btn = button("Suivre les visages (recadrage auto)", "primary",
+                                  tooltip="Le cadre suit le visage principal, extrait par extrait (format vertical "
+                                          "ou carré à partir d'une vidéo horizontale)",
+                                  on_click=lambda: self.reframe_requested.emit(True))
+        rf.addWidget(self.reframe_btn)
+        rf.addWidget(button("Retirer", "ghost", on_click=lambda: self.reframe_requested.emit(False)))
+        f.addRow(rf)
+        self.reframe_note = label("", "faint", wrap=True)
+        f.addRow(self.reframe_note)
         f.addRow(label("Image", "h2"))
         f.addRow("Luminosité", b.slider("video.brightness", -0.5, 0.5))
         f.addRow("Contraste", b.slider("video.contrast", 0.5, 1.8))
@@ -534,6 +546,20 @@ class MontagePanel(QTabWidget):
         finally:
             self._loading = False
         self.changed.emit("video.masks")
+
+    def reload_reframe(self) -> None:
+        segs = self.tl.segments
+        done = sum(bool(sg.reframe) for sg in segs)
+        if not segs:
+            self.reframe_note.setText("")
+        elif self.tl.format.fit != "fill":
+            self.reframe_note.setText("Le recadrage automatique s'applique en mode « Remplir » (onglet Cadrage).")
+        elif done:
+            self.reframe_note.setText(f"✓ Le cadre suit les visages sur {done}/{len(segs)} extrait(s). Zoom et "
+                                      "position verticale restent réglables ; la position horizontale est automatique.")
+        else:
+            self.reframe_note.setText("Le cadre est fixe. « Suivre les visages » l'oriente automatiquement vers la "
+                                      "personne qui parle ou qui est la plus visible.")
 
     def _aspect(self) -> None:
         if self._loading:

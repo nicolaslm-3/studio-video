@@ -530,3 +530,32 @@ def test_settings_tab_shortcuts(window):
     assert sp.tabs.tabText(sp.tabs.currentIndex()) == "Matériel et moteurs"
     sp.show_about()
     assert sp.tabs.tabText(sp.tabs.currentIndex()) == "À propos"
+
+
+def test_reframe_flow(window, monkeypatch):
+    import time
+
+    from studiovideo.edit import reframe
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Recadrage")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'v.mp4','fr',0,8,1280,720)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    monkeypatch.setattr(reframe, "analyze", lambda *a, **k: {"keys": [(0.0, 0.3), (8.0, 0.7)], "frames": 32,
+                                                             "with_face": 32})
+    w.open_project(pid)
+    st = w.studio
+    st.tl.add_segment(aid, 0, 8)
+    st.tl.format.fit = "blur"
+    st._reframe(True)
+    assert st.tl.format.fit == "fill"
+    jid = max(st._jobs)
+    end = time.time() + 10
+    while ctx.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+        time.sleep(0.05)
+    st.on_job(ctx.jobs.get(jid))
+    assert st.tl.segments[0].reframe == [[0.0, 0.3], [8.0, 0.7]]
+    assert "1/1" in st.panel.reframe_note.text()
+    st._reframe(False)
+    assert st.tl.segments[0].reframe == []
