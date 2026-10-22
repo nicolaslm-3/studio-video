@@ -1,6 +1,6 @@
 """Auto-test de l'application compilée.
 
-    StudioVideo.exe --self-test resultat.json [--models DOSSIER] [--speech FICHIER.wav]
+    StudioVideo.exe --self-test resultat.json [--models DOSSIER] [--speech FICHIER.wav] [--piper DOSSIER]
 
 Vérifie, dans l'exécutable réellement distribué, que les composants embarqués
 fonctionnent : base et migrations, FFmpeg, rendu des textes, export vidéo avec
@@ -155,7 +155,63 @@ def run(argv: list[str]) -> int:
             "cues": len(tl.subtitles.cues), "srt": Path(rep["srt"]).exists()}
     check("export_subtitles", export_with_subs)
 
-    required = ["database", "ffmpeg", "updater", "asr_engine", "export_subtitles"]
+    def pdf_and_original():
+        """Lecture d'un PDF (pypdf embarqué) puis fabrication d'une vidéo « création originale »."""
+        from .edit import original
+        pdf = tmp / "doc.pdf"
+        stream = b"BT /F1 18 Tf 72 720 Td (Le cafe vient d Ethiopie. Il est bu partout.) Tj ET"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+                b"/Resources << /Font << /F1 5 0 R >> >> >>",
+                b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+        data, offs = b"%PDF-1.4\n", []
+        for i, ob in enumerate(objs, 1):
+            offs.append(len(data))
+            data += f"{i} 0 obj\n".encode() + ob + b"\nendobj\n"
+        xref = len(data)
+        data += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+        data += b"".join(f"{x:010d} 00000 n \n".encode() for x in offs)
+        data += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
+        pdf.write_bytes(data)
+        text = original.clean_text(original.read_source(pdf))
+        if "Ethiopie" not in text:
+            raise RuntimeError(f"texte du PDF non lu : {text!r}")
+        scenes = original.script_from_text(text, 6)
+        res = original.build(scenes, 360, 640, 25, tmp / "creation.mp4", tmp / "orig")
+        return {"pdf_text": text, "scenes": len(scenes), "duration": res["duration"]}
+    check("pdf_original", pdf_and_original)
+
+    piper_dir = opt("--piper")
+
+    def piper_voice():
+        if not piper_dir:
+            return "ignoré (pas de moteur Piper fourni)"
+        from .ai.tts import PiperTTS
+        from .ai import piper as pmod
+        os.environ["STUDIOVIDEO_PIPER_EXE"] = str(Path(piper_dir) / "piper" / ("piper.exe" if sys.platform == "win32"
+                                                                               else "piper"))
+        voice = next(Path(piper_dir).glob("*.onnx"))
+        mdir = tmp / "pmodels"
+        (mdir / "piper").mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy(voice, mdir / "piper" / voice.name)
+        shutil.copy(str(voice) + ".json", mdir / "piper" / (voice.name + ".json"))
+        wav = PiperTTS(mdir).synth("Bonjour et bienvenue dans le studio vidéo.", voice.stem, "fr", tmp / "piper.wav")
+        out = {"voice": voice.stem, "bytes": wav.stat().st_size, "engine": str(pmod.exe_path(mdir))}
+        if models:
+            from .transcribe import engines
+            eng = engines.FasterWhisperEngine(Path(models), "tiny")
+            tr = engines.transcribe_file(eng, wav, "fr", lambda f, m: None, lambda: False)
+            out["heard"] = tr.text()
+            if not any(w in tr.text().lower() for w in ("bienvenue", "studio", "bonjour")):
+                raise RuntimeError(f"voix incompréhensible : {tr.text()!r}")
+        return out
+    check("piper_voice", piper_voice)
+
+    required = ["database", "ffmpeg", "updater", "asr_engine", "export_subtitles", "pdf_original"]
+    if piper_dir:
+        required.append("piper_voice")
     if models and speech:
         required.append("asr_transcription")
     report["ok"] = all(checks.get(k, {}).get("ok") for k in required)

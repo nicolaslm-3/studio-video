@@ -145,6 +145,12 @@ jobs:
           New-Item -ItemType Directory -Force selftest\models\separation | Out-Null
           Invoke-WebRequest -Uri "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx" -OutFile selftest\models\separation\Kim_Vocal_2.onnx
           if ((Get-FileHash selftest\models\separation\Kim_Vocal_2.onnx -Algorithm SHA256).Hash -ne "CE74EF3B6A6024CE44211A07BE9CF8BC6D87728CC852A68AB34EB8E58CDE9C8B") { echo "::error title=Auto-test::modèle de séparation corrompu"; throw "modèle" }
+          New-Item -ItemType Directory -Force selftest\piper | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip" -OutFile selftest\piper.zip
+          Expand-Archive selftest\piper.zip -DestinationPath selftest\piper -Force
+          $hf = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx"
+          Invoke-WebRequest -Uri $hf -OutFile selftest\piper\fr_FR-siwis-medium.onnx
+          Invoke-WebRequest -Uri "$hf.json" -OutFile selftest\piper\fr_FR-siwis-medium.onnx.json
           Get-ChildItem -Recurse selftest\models | Select-Object FullName, Length | Format-Table -AutoSize
           Add-Type -AssemblyName System.Speech
           $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
@@ -152,7 +158,7 @@ jobs:
           $tts.SetOutputToWaveFile("$PWD\selftest\speech.wav")
           $tts.Speak("Welcome to the video studio. This video shows automatic subtitles for every speaker.")
           $tts.Dispose()
-          $p = Start-Process -FilePath "dist\StudioVideo\StudioVideo.exe" -ArgumentList "--self-test", "$PWD\selftest\report.json", "--models", "$PWD\selftest\models", "--speech", "$PWD\selftest\speech.wav" -Wait -PassThru
+          $p = Start-Process -FilePath "dist\StudioVideo\StudioVideo.exe" -ArgumentList "--self-test", "$PWD\selftest\report.json", "--models", "$PWD\selftest\models", "--speech", "$PWD\selftest\speech.wav", "--piper", "$PWD\selftest\piper" -Wait -PassThru
           if (-not (Test-Path selftest\report.json)) { echo "::error title=Auto-test::aucun rapport produit (code $($p.ExitCode))"; throw "pas de rapport" }
           Get-Content selftest\report.json
           if ($p.ExitCode -ne 0) {
@@ -172,6 +178,10 @@ jobs:
           $sep = $r.checks.separation.detail
           if (-not $sep.sdr_after) { throw "Séparation non testée : $sep" }
           echo "::notice::Auto-test OK — séparation voix : $($sep.sdr_before) → $($sep.sdr_after) dB en $($sep.seconds) s"
+          $pv = $r.checks.piper_voice.detail
+          if (-not $pv.heard) { throw "Voix hors ligne non vérifiée : $pv" }
+          echo "::notice::Auto-test OK — voix hors ligne (Piper) entendue par Whisper : $($pv.heard)"
+          echo "::notice::Auto-test OK — PDF et création originale : $($r.checks.pdf_original.detail.scenes) scène(s), $($r.checks.pdf_original.detail.duration) s"
 
       - name: Signature Authenticode (facultative)
         if: steps.ctx.outputs.skip != 'true' && env.HAS_CERT == 'true'
