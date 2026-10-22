@@ -192,6 +192,10 @@ class LibraryPage(QWidget):
                 lay.addWidget(row)
         if a["missing"]:
             lay.addWidget(label("Le fichier source est introuvable à cet emplacement.", "error", wrap=True))
+            rl = QHBoxLayout()
+            rl.addWidget(button("Retrouver le fichier…", "primary", on_click=lambda: self._relink(aid)))
+            rl.addWidget(button("Chercher dans un dossier…", on_click=self._relink_folder))
+            lay.addLayout(rl)
         lay.addStretch(1)
         h = QHBoxLayout()
         h.addWidget(button("Retirer le favori" if a["favorite"] else "Favori",
@@ -209,6 +213,42 @@ class LibraryPage(QWidget):
         m.addSeparator()
         m.addAction("Retirer de la bibliothèque", lambda: self._remove(aid))
         m.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _relink(self, aid: int) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        a = self.app.library.get(aid)
+        path, _ = QFileDialog.getOpenFileName(self, f"Où est « {a['file_name']} » ?", str(Path(a["path"]).parent))
+        if not path:
+            return
+        try:
+            self.app.library.relink(aid, path)
+        except ValueError as exc:
+            if "pas identique" in str(exc) and QMessageBox.question(
+                    self, "Retrouver le fichier", f"{exc}\n\nL'utiliser quand même ? Les montages qui l'utilisent "
+                    "pourront ne plus tomber au bon endroit.") == QMessageBox.Yes:
+                try:
+                    self.app.library.relink(aid, path, force=True)
+                except (ValueError, OSError) as exc2:
+                    QMessageBox.warning(self, "Retrouver le fichier", str(exc2))
+                    return
+            else:
+                QMessageBox.warning(self, "Retrouver le fichier", str(exc))
+                return
+        except OSError as exc:
+            QMessageBox.warning(self, "Retrouver le fichier", str(exc))
+            return
+        self.refresh()
+
+    def _relink_folder(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        folder = QFileDialog.getExistingDirectory(self, "Dossier où chercher les fichiers introuvables")
+        if not folder:
+            return
+        found = self.app.library.relink_folder(folder)
+        left = self.app.db.query_one("SELECT COUNT(*) n FROM source_asset WHERE missing = 1")["n"]
+        QMessageBox.information(self, "Fichiers introuvables", f"{len(found)} média(s) retrouvé(s). "
+                                f"{left} toujours introuvable(s).")
+        self.refresh()
 
     def _tags(self, aid: int) -> None:
         from PySide6.QtWidgets import QInputDialog

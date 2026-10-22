@@ -194,6 +194,8 @@ class StudioPage(QWidget):
         bar.addWidget(button("Couper (S)", tooltip="Couper l'extrait à la tête de lecture", on_click=self.split))
         bar.addWidget(button("Supprimer l'extrait", "ghost", tooltip="Suppr", on_click=self._delete_selected))
         bar.addWidget(button("Ajuster", "ghost", tooltip="Afficher toute la timeline", on_click=lambda: self.timeline.fit()))
+        bar.addWidget(button("Retirer les silences…", "ghost", tooltip="Coupe les blancs de parole dans les extraits "
+                             "(annulable avec Ctrl+Z)", on_click=self._remove_silences))
         bar.addStretch(1)
         bar.addWidget(button("Production en série…", tooltip="Exporter plusieurs clips dans plusieurs formats",
                              on_click=self._batch))
@@ -851,6 +853,35 @@ class StudioPage(QWidget):
         st = self.app.stems
         return {"dub": dub, "voice": st.voice(asset_id) if st else None, "music": st.music(asset_id) if st else None}
 
+    def _remove_silences(self) -> None:
+        if not self.tl.segments:
+            QMessageBox.information(self, "Silences", "La timeline est vide.")
+            return
+        choices = ["Blancs longs (1 s et plus)", "Blancs moyens (0,6 s et plus) — conseillé",
+                   "Rythme serré (0,35 s et plus)"]
+        choice, ok = QInputDialog.getItem(self, "Retirer les silences", "Que retirer ?", choices, 1, False)
+        if not ok:
+            return
+        min_len = {0: 1.0, 1: 0.6, 2: 0.35}[choices.index(choice)]
+        segs = [{"id": sg.id, "asset_id": sg.asset_id, "src_in": sg.src_in, "src_out": sg.src_out}
+                for sg in self.tl.segments]
+        jid = self.app.jobs.submit("find_silences", "Recherche des silences", {"segments": segs, "min_len": min_len})
+        self._jobs[jid] = "silences"
+        self.save_lbl.setText("Recherche des silences…")
+
+    def apply_silences(self, silences: dict) -> dict:
+        from ...edit import silence
+        self._snapshot()
+        res = silence.apply(self.tl, {k: [tuple(x) for x in v] for k, v in silences.items()})
+        if self.tl.subtitles.cues:                  # sous-titres recalés sur le nouveau montage
+            from ...edit.subtitles import generate
+            lang = self.tl.subtitles.language
+            trs = {i: self.app.transcripts.for_language(i, lang) for i in {sg.asset_id for sg in self.tl.segments}}
+            self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
+        self._changed(panel=True)
+        self._snapshot()
+        return res
+
     def _export_project(self) -> None:
         if not self.project_id:
             return
@@ -992,6 +1023,14 @@ class StudioPage(QWidget):
                 QMessageBox.information(self, "Optimiser l'audio", msg)
             elif job.status == "failed":
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
+        elif kind == "silences":
+            if job.status == "succeeded":
+                r = self.apply_silences(job.result["silences"])
+                src = " et ".join(k for k, v in job.result["used"].items() if v) or "aucune source"
+                self.save_lbl.setText(f"{r['removed']:.1f} s de silence retirées ({r['cuts']} coupe(s), d'après "
+                                      f"{src}). Ctrl+Z pour annuler.")
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Silences", job.error[:600])
         elif kind == "archive":
             if job.status == "succeeded":
                 self.save_lbl.setText(f"Archive créée : {Path(job.result['path']).name}")

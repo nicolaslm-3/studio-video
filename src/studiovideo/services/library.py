@@ -46,5 +46,64 @@ class LibraryService:
             c.execute("DELETE FROM source_asset WHERE id = ?", (asset_id,))
         self.db.audit("asset.remove", str(asset_id))
 
+    def relink(self, asset_id: int, new_path, force: bool = False) -> dict:
+        """Nouvel emplacement d'un média déplacé. Refuse un fichier différent sauf si force=True.
+
+        Retourne {"same": bool} (même empreinte que le fichier d'origine)."""
+        from pathlib import Path
+
+        from ..media import ffmpeg
+        from ..media.importer import fingerprint
+        new_path = Path(new_path)
+        a = self.get(asset_id)
+        if a is None:
+            raise ValueError("Média introuvable dans la bibliothèque.")
+        if not new_path.is_file():
+            raise FileNotFoundError(f"Fichier introuvable : {new_path}")
+        fp = fingerprint(new_path)
+        orig = a["fingerprint"].removesuffix("-absent")
+        same = fp == orig
+        if not same and not force:
+            raise ValueError("Ce fichier n'est pas identique à l'original (contenu différent).")
+        other = self.db.query_one("SELECT id FROM source_asset WHERE fingerprint = ? AND id != ?", (fp, asset_id))
+        if other:
+            raise ValueError(f"Ce fichier est déjà dans la bibliothèque (média {other['id']}).")
+        updates = {"path": str(new_path), "file_name": new_path.name, "missing": 0, "fingerprint": fp,
+                   "size_bytes": new_path.stat().st_size}
+        if not same or a["duration_s"] is None:
+            info = ffmpeg.probe(new_path)
+            updates.update({"duration_s": info.duration_s, "width": info.width, "height": info.height,
+                            "fps": info.fps, "video_codec": info.video_codec, "audio_codec": info.audio_codec,
+                            "audio_tracks": info.audio_tracks})
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        with self.db.transaction() as c:
+            c.execute(f"UPDATE source_asset SET {sets} WHERE id = ?", (*updates.values(), asset_id))
+        self.db.audit("asset.relink", f"{asset_id}:{new_path}")
+        return {"same": same}
+
+    def relink_folder(self, folder) -> list[int]:
+        """Retrouve les médias introuvables dans un dossier (nom identique puis empreinte identique)."""
+        from pathlib import Path
+
+        from ..media.importer import fingerprint
+        missing = self.db.query("SELECT id, file_name, fingerprint FROM source_asset WHERE missing = 1")
+        if not missing:
+            return []
+        by_name: dict[str, list] = {}
+        for f in Path(folder).rglob("*"):
+            if f.is_file():
+                by_name.setdefault(f.name.lower(), []).append(f)
+        found = []
+        for m in missing:
+            for f in by_name.get(m["file_name"].lower(), []):
+                try:
+                    if fingerprint(f) == m["fingerprint"].removesuffix("-absent"):
+                        self.relink(m["id"], f)
+                        found.append(m["id"])
+                        break
+                except (OSError, ValueError):
+                    continue
+        return found
+
     def counts(self) -> dict[str, int]:
         return {r["kind"]: r["n"] for r in self.db.query("SELECT kind, COUNT(*) n FROM source_asset GROUP BY kind")}

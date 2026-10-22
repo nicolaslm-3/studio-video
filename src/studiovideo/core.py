@@ -879,6 +879,28 @@ def _register_handlers(app: AppContext) -> None:
         from .services import archive
         return archive.import_project(app, Path(params["path"]), Path(params["media_dir"]), None, ctx.progress)
 
+    def find_silences(ctx: JobContext, params: dict) -> dict:
+        """Blancs de chaque extrait : d'après les mots transcrits si possible, sinon d'après le son."""
+        from .edit import silence
+        min_len = float(params.get("min_len") or 0.6)
+        out, used = {}, {"transcription": 0, "son": 0}
+        segs = params["segments"]
+        for k, sg in enumerate(segs):
+            ctx.check()
+            a = app.library.get(sg["asset_id"])
+            if a is None or not a["audio_tracks"]:
+                continue
+            tr = app.transcripts.get(sg["asset_id"])
+            if tr is not None and any(s.words for s in tr.segments):
+                out[sg["id"]] = silence.from_transcript(tr, sg["src_in"], sg["src_out"], min_len)
+                used["transcription"] += 1
+            elif Path(a["path"]).exists():
+                out[sg["id"]] = silence.detect(Path(a["path"]), sg["src_in"], sg["src_out"], -35.0, min_len)
+                used["son"] += 1
+            ctx.progress((k + 1) / len(segs), f"Extrait {k + 1}/{len(segs)}")
+        return {"silences": out, "used": used}
+
+    app.jobs.register("find_silences", find_silences)
     app.jobs.register("export_project", export_project_job)
     app.jobs.register("import_project", import_project_job)
     app.jobs.register("write_copy", write_copy)

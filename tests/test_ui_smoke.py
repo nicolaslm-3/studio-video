@@ -612,3 +612,27 @@ def test_import_project_opens_it(window, tmp_path, monkeypatch):
         time.sleep(0.05)
     w._on_project_imported(ctx.jobs.get(jid))
     assert w.studio.project_id == ctx.jobs.get(jid).result["project_id"] and len(w.studio.tl.segments) == 1
+
+
+def test_remove_silences_regenerates_subtitles(window):
+    from studiovideo.edit.subtitles import Cue
+    from studiovideo.transcribe.model import TSegment, Transcript, Word
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Silences")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s) VALUES (1,?,'video','x','x.mp4','fsil',1,10)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 1, "un", [Word(0.2, 0.8, " un")]),
+                                                    TSegment(6, 7, "deux", [Word(6.2, 6.8, " deux")])], "fr"))
+    w.open_project(pid)
+    st = w.studio
+    seg = st.tl.add_segment(aid, 0, 8)
+    st.tl.subtitles.cues = [Cue(6.2, 6.8, "deux")]
+    st.tl.subtitles.enabled = True
+    res = st.apply_silences({seg.id: [(0.8, 6.2)]})
+    assert res["removed"] > 4 and len(st.tl.segments) == 2
+    deux = next(c for c in st.tl.subtitles.cues if "deux" in c.text)
+    assert deux.start < 2.0                                      # recalé après la coupe
+    st.undo()
+    assert len(st.tl.segments) == 1
