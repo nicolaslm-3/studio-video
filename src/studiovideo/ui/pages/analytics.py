@@ -43,6 +43,53 @@ class BarDelegate(QStyledItemDelegate):
         super().paint(p, opt, idx)
 
 
+class RetentionChart(QWidget):
+    """Courbe de rétention : part des spectateurs encore présents à chaque instant de la vidéo."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(150)
+        self.points: list = []
+        self.title = ""
+
+    def set_curve(self, points: list, title: str) -> None:
+        self.points, self.title = points, title
+        self.update()
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pal = self.palette()
+        fg = pal.color(pal.ColorRole.WindowText)
+        muted = QColor(fg)
+        muted.setAlpha(110)
+        r = self.rect().adjusted(44, 34, -12, -22)
+        p.setPen(fg)
+        p.drawText(self.rect().adjusted(8, 2, -8, 0), Qt.AlignLeft | Qt.AlignTop,
+                   f"Rétention — {self.title}" if self.title else "Rétention")
+        if not self.points:
+            p.setPen(muted)
+            p.drawText(r, Qt.AlignCenter, "Sélectionnez une vidéo. La courbe vient de YouTube Analytics "
+                       "(chaîne connectée, 2 à 3 jours après la publication) ; « — » ailleurs.")
+            return
+        top = max(1.0, max(b for _, b in self.points))
+        p.setPen(muted)
+        for frac, lbl in ((0.0, "0 %"), (0.5, f"{top * 50:.0f} %"), (1.0, f"{top * 100:.0f} %")):
+            y = r.bottom() - frac * r.height()
+            p.drawLine(r.left(), int(y), r.right(), int(y))
+            p.drawText(2, int(y) + 4, lbl)
+        for frac, lbl in ((0.0, "début"), (0.5, "milieu"), (1.0, "fin")):
+            x = r.left() + frac * r.width()
+            p.drawText(int(x) - 16, r.bottom() + 16, lbl)
+        pen = p.pen()
+        pen.setColor(QColor("#5B8DEF"))
+        pen.setWidth(2)
+        p.setPen(pen)
+        pts = [(r.left() + a * r.width(), r.bottom() - (b / top) * r.height()) for a, b in self.points]
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+
+
 class ManualStatsDialog(QDialog):
     def __init__(self, title: str, current: dict, parent=None):
         super().__init__(parent)
@@ -110,12 +157,24 @@ class AnalyticsPage(QWidget):
             self.groups[key] = t
             self.tabs.addTab(t, name)
         self.pubs = self._table(["Titre", "Concept", "Plateforme · compte", "Vues", "J'aime", "Commentaires",
-                                 "Partages", "Source", "Relevé"])
+                                 "Partages", "Durée moy. vue", "% moyen vu", "Source", "Relevé"])
         self.pubs.setItemDelegateForColumn(3, BarDelegate(self.pubs))
         self.pubs.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.pubs.setColumnWidth(3, 200)
+        hh = self.pubs.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Interactive)
+        hh.setStretchLastSection(True)
+        self.pubs.setColumnWidth(0, 240)
+        self.pubs.setColumnWidth(2, 170)
         self.pubs.itemDoubleClicked.connect(self._open_link)
-        self.tabs.addTab(self.pubs, "Par vidéo")
+        vid = QWidget()
+        vl = QVBoxLayout(vid)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.addWidget(self.pubs, 3)
+        self.curve = RetentionChart()
+        vl.addWidget(self.curve, 2)
+        self.pubs.currentCellChanged.connect(lambda r, *_: self._show_curve(r))
+        self.tabs.addTab(vid, "Par vidéo")
         lay.addWidget(self.tabs, 1)
         row = QHBoxLayout()
         row.addWidget(button("Saisir des chiffres…", on_click=self._manual,
@@ -223,15 +282,35 @@ class AnalyticsPage(QWidget):
             t.setItem(i, 3, self._num(m.get("views"), m.get("views", 0) / top, r["color"]))
             for j, k in enumerate(("likes", "comments", "shares"), start=4):
                 t.setItem(i, j, self._num(m.get(k)))
+            av = m.get("avg_view_s")
+            d = QTableWidgetItem(f"{int(av) // 60}:{int(av) % 60:02d}" if av is not None else NA)
+            d.setData(Qt.EditRole, av if av is not None else -1)
+            d.setText(f"{int(av) // 60}:{int(av) % 60:02d}" if av is not None else NA)
+            d.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            if av is None:
+                d.setToolTip("Disponible pour les vidéos d'une chaîne YouTube connectée (2-3 jours de délai)")
+            t.setItem(i, 7, d)
+            pc = m.get("avg_view_pct")
+            e = QTableWidgetItem(f"{pc:.0f} %" if pc is not None else NA)
+            e.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            t.setItem(i, 8, e)
             src = {"api": "API", "manuel": "saisi"}.get(m.get("_source"), NA)
-            t.setItem(i, 7, QTableWidgetItem(src))
-            t.setItem(i, 8, QTableWidgetItem((r["captured_at"] or "")[:16].replace("T", " ") or "jamais"))
+            t.setItem(i, 9, QTableWidgetItem(src))
+            t.setItem(i, 10, QTableWidgetItem((r["captured_at"] or "")[:16].replace("T", " ") or "jamais"))
         t.setSortingEnabled(True)
         if not rows:
             self.status.setText("Aucune vidéo publiée pour l'instant. Les publications confirmées (lien public) ou "
                                 "mises en ligne par le logiciel apparaissent ici.")
         elif not self.job_id:
             self.status.setText("")
+
+    def _show_curve(self, row: int) -> None:
+        if row < 0 or self.pubs.item(row, 0) is None:
+            self.curve.set_curve([], "")
+            return
+        pid = self.pubs.item(row, 0).data(Qt.UserRole)
+        r = next((x for x in self.rows if x["id"] == pid), None)
+        self.curve.set_curve((r or {}).get("metrics", {}).get("retention") or [], (r or {}).get("title") or "")
 
     def _selected_pub(self) -> int | None:
         self.tabs.setCurrentWidget(self.pubs)
@@ -268,7 +347,12 @@ class AnalyticsPage(QWidget):
         self.refresh_btn.setEnabled(True)
         if job.status == "succeeded":
             r = job.result or {}
-            msg = r.get("note") or f"{r.get('updated', 0)} vidéo(s) relevée(s)."
+            msg = f"{r.get('updated', 0)} vidéo(s) relevée(s)"
+            if r.get("detailed"):
+                msg += f", dont {r['detailed']} avec durée de visionnage et rétention"
+            msg += "."
+            if r.get("note"):
+                msg += " " + r["note"]
             if r.get("errors"):
                 msg += " ⚠ " + " ; ".join(r["errors"][:3])
             self.status.setText(msg)

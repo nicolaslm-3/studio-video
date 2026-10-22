@@ -68,7 +68,20 @@ class Stats(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(self.path).query))
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        if u.path == "/v2/reports":
+            assert q["ids"] == "channel==MINE" and q["filters"].startswith("video==")
+            if q.get("dimensions") == "elapsedVideoTimeRatio":
+                rep = {"columnHeaders": [{"name": "elapsedVideoTimeRatio"}, {"name": "audienceWatchRatio"}],
+                       "rows": [[0.01, 1.0], [0.5, 0.62], [1.0, 0.35]]}
+            else:
+                rep = {"columnHeaders": [{"name": n} for n in q["metrics"].split(",")], "rows": [[120.5, 42, 61.3]]}
+            body = json.dumps(rep).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+            return
         items = [{"id": i, "statistics": {"viewCount": "4321", "commentCount": "9"}} for i in q["id"].split(",")
                  if i != "GONE000"]
         body = json.dumps({"items": items}).encode()
@@ -111,7 +124,10 @@ def test_refresh_stats_job(tmp_path, monkeypatch):
         assert j.status == "succeeded", j.error
         assert j.result["updated"] == 1 and "GONE000" in j.result["errors"][0]
         latest = {r["id"]: r["metrics"] for r in app.analytics.latest()}
-        assert latest[p1] == {"views": 4321, "comments": 9, "_source": "api"}       # j'aime masqués : absents
+        assert latest[p1]["views"] == 4321 and "likes" not in latest[p1]              # j'aime masqués : absents
+        assert latest[p1]["avg_view_s"] == 42 and latest[p1]["avg_view_pct"] == 61.3
+        assert latest[p1]["retention"] == [[0.01, 1.0], [0.5, 0.62], [1.0, 0.35]]
+        assert j.result["detailed"] == 1
     finally:
         app.close()
         srv.shutdown()

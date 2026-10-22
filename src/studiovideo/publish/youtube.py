@@ -31,7 +31,9 @@ from typing import Callable
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_URL = "https://www.googleapis.com"
-SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+SCOPES = ("https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly "
+          "https://www.googleapis.com/auth/yt-analytics.readonly")
+ANALYTICS_URL = "https://youtubeanalytics.googleapis.com"
 CHUNK = 8 * 1024 * 1024
 
 
@@ -44,11 +46,12 @@ class Endpoints:
     auth: str = AUTH_URL
     token: str = TOKEN_URL
     api: str = API_URL
+    analytics: str = ANALYTICS_URL
 
     @classmethod
     def from_env(cls) -> "Endpoints":
         base = os.environ.get("STUDIOVIDEO_YOUTUBE_TEST_URL")     # serveur simulé (tests)
-        return cls(base + "/auth", base + "/token", base) if base else cls()
+        return cls(base + "/auth", base + "/token", base, base) if base else cls()
 
 
 def _post_form(url: str, data: dict, timeout: float = 30) -> dict:
@@ -277,4 +280,48 @@ def video_stats(token: str, ids: list[str], ep: Endpoints | None = None) -> dict
                 if src in st:
                     m[dst] = int(st[src])
             out[it["id"]] = m
+    return out
+
+
+class ScopeMissing(YouTubeError):
+    pass
+
+
+def _report(token: str, params: dict, ep: Endpoints) -> dict:
+    url = ep.analytics + "/v2/reports?" + urllib.parse.urlencode(params)
+    try:
+        with _api("GET", url, token) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as exc:
+        body = exc.read()[:400].decode("utf-8", "replace")
+        if exc.code == 403 and ("scope" in body.lower() or "insufficient" in body.lower()):
+            raise ScopeMissing("Statistiques détaillées non autorisées : reconnectez le compte YouTube "
+                               "(Paramètres → Comptes) pour accepter la nouvelle autorisation.") from exc
+        raise YouTubeError(f"YouTube Analytics a répondu {exc.code} : {body}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise YouTubeError(f"YouTube Analytics injoignable : {exc}") from exc
+
+
+def video_analytics(token: str, video_id: str, start: str, end: str, ep: Endpoints | None = None) -> dict:
+    """Durée de visionnage, durée moyenne, % moyen vu, et courbe de rétention d'une vidéo de la chaîne.
+
+    start / end : « AAAA-MM-JJ ». Les données YouTube Analytics arrivent avec 2 à 3 jours de décalage."""
+    ep = ep or Endpoints.from_env()
+    base = {"ids": "channel==MINE", "startDate": start, "endDate": end, "filters": f"video=={video_id}"}
+    out: dict = {}
+    rep = _report(token, {**base, "metrics": "estimatedMinutesWatched,averageViewDuration,averageViewPercentage"}, ep)
+    rows = rep.get("rows") or []
+    if rows:
+        names = [h["name"] for h in rep.get("columnHeaders", [])]
+        row = dict(zip(names, rows[0]))
+        if row.get("estimatedMinutesWatched") is not None:
+            out["watch_minutes"] = float(row["estimatedMinutesWatched"])
+        if row.get("averageViewDuration") is not None:
+            out["avg_view_s"] = float(row["averageViewDuration"])
+        if row.get("averageViewPercentage") is not None:
+            out["avg_view_pct"] = float(row["averageViewPercentage"])
+    rep = _report(token, {**base, "dimensions": "elapsedVideoTimeRatio", "metrics": "audienceWatchRatio"}, ep)
+    curve = [(float(r[0]), float(r[1])) for r in (rep.get("rows") or [])]
+    if curve:
+        out["retention"] = sorted(curve)
     return out

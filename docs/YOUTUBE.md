@@ -41,6 +41,14 @@ utilise **son propre identifiant d'application** : c'est gratuit et se fait une 
   l'heure prévue si le logiciel est ouvert.
 - L'envoi reprend tout seul après une coupure réseau. Une vidéo déjà envoyée ne l'est jamais deux fois.
 
+## Statistiques détaillées
+
+Analytiques → « Relever les statistiques YouTube » lit aussi, pour les vidéos de **votre** chaîne connectée,
+la durée moyenne vue, le pourcentage moyen vu et la courbe de rétention (YouTube Analytics, données
+disponibles 2 à 3 jours après la publication). Un compte connecté avant la version 0.15.0 doit être
+**reconnecté** une fois pour accepter cette autorisation supplémentaire (lecture seule) ; le logiciel
+l'indique. Dans le projet Google, activez aussi « YouTube Analytics API ».
+
 ## Limites imposées par Google
 
 - **Quota** : les envois ont leur propre réserve, 100 vidéos par jour et par projet (vérifié en

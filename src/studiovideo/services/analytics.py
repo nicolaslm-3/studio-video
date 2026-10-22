@@ -11,7 +11,9 @@ import re
 from ..db.database import Database
 
 METRICS = ("views", "likes", "comments", "shares")
-LABELS = {"views": "Vues", "likes": "J'aime", "comments": "Commentaires", "shares": "Partages"}
+DETAILS = ("watch_minutes", "avg_view_s", "avg_view_pct")      # YouTube Analytics (chaîne connectée)
+LABELS = {"views": "Vues", "likes": "J'aime", "comments": "Commentaires", "shares": "Partages",
+          "watch_minutes": "Minutes vues", "avg_view_s": "Durée moyenne vue", "avg_view_pct": "% moyen vu"}
 
 
 class AnalyticsService:
@@ -19,7 +21,10 @@ class AnalyticsService:
         self.db = db
 
     def record(self, publication_id: int, metrics: dict, source: str = "api") -> None:
-        clean = {k: int(v) for k, v in metrics.items() if k in METRICS and v is not None and int(v) >= 0}
+        clean: dict = {k: int(v) for k, v in metrics.items() if k in METRICS and v is not None and int(v) >= 0}
+        clean.update({k: round(float(v), 2) for k, v in metrics.items() if k in DETAILS and v is not None})
+        if metrics.get("retention"):
+            clean["retention"] = [[round(float(a), 3), round(float(b), 4)] for a, b in metrics["retention"]]
         clean["_source"] = source
         with self.db.transaction() as c:
             c.execute("INSERT INTO analytics_snapshot(publication_id, metrics_json) VALUES (?, ?)",

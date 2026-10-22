@@ -416,14 +416,35 @@ def _register_handlers(app: AppContext) -> None:
                              "les statistiques." + (" " + "; ".join(errors) if errors else ""))
         ctx.progress(0.3, "Lecture des statistiques YouTube")
         stats = youtube.video_stats(token, list(dict.fromkeys(v for _, v in items)))
-        done = 0
-        for pid, vid in items:
-            if vid in stats:
-                app.analytics.record(pid, stats[vid], "api")
-                done += 1
-            else:
+        from datetime import date, timedelta
+        done, detailed, scope_note = 0, 0, ""
+        end = date.today().isoformat()
+        for k, (pid, vid) in enumerate(items):
+            ctx.check()
+            if vid not in stats:
                 errors.append(f"Vidéo {vid} introuvable (supprimée ou privée).")
-        return {"updated": done, "errors": errors}
+                continue
+            m = dict(stats[vid])
+            if not scope_note:
+                pub = app.db.query_one("SELECT last_attempt_at FROM publication WHERE id = ?", (pid,))
+                start = ((pub["last_attempt_at"] or "")[:10] if pub else "") or (date.today() - timedelta(days=90)).isoformat()
+                try:
+                    start = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+                    det = youtube.video_analytics(token, vid, start, end)
+                    m.update(det)
+                    detailed += bool(det)
+                except youtube.ScopeMissing as exc:
+                    scope_note = str(exc)
+                except youtube.YouTubeError as exc:
+                    if "403" not in str(exc):          # vidéo d'une autre chaîne : pas de détail, c'est normal
+                        errors.append(f"Détail {vid} : {exc}")
+            app.analytics.record(pid, m, "api")
+            done += 1
+            ctx.progress(0.3 + 0.7 * (k + 1) / len(items), f"{done} vidéo(s) relevée(s)")
+        res = {"updated": done, "detailed": detailed, "errors": errors}
+        if scope_note:
+            res["note"] = scope_note
+        return res
 
     def detect_text(ctx: JobContext, params: dict) -> dict:
         """Zones de texte incrusté / logo proposées pour un média (à vérifier par l'utilisateur)."""

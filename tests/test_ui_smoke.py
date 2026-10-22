@@ -297,7 +297,7 @@ def test_analytics_page(window):
     w.go(4)
     pg = w.analytics
     assert pg.pubs.rowCount() == 2
-    texts = {pg.pubs.item(i, 2).text(): (pg.pubs.item(i, 3).text(), pg.pubs.item(i, 7).text())
+    texts = {pg.pubs.item(i, 2).text(): (pg.pubs.item(i, 3).text(), pg.pubs.item(i, 9).text())
              for i in range(2)}
     assert texts["YouTube · A"] == ("500", "API") and texts["TikTok · B"] == ("—", "—")
     plat = {pg.groups["platform"].item(i, 0).text(): pg.groups["platform"].item(i, 2).text() for i in range(2)}
