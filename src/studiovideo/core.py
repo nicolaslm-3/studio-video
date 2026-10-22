@@ -857,6 +857,8 @@ def _register_handlers(app: AppContext) -> None:
         text = " ".join(texts).strip()
         if not text:
             raise ValueError("Pas de transcription pour cette vidéo : transcrivez le média dans le Studio d'abord.")
+        sents = copywriter.sentences_on_output(tl, app.transcripts.get) if tl else []
+        total = tl.duration if tl else 0.0
         llm = app.settings.get("llm", None) or {}
         if llm.get("kind") in ("ollama", "openai") and llm.get("model") and params.get("use_llm", True):
             from .ai.highlights import LLMEngine
@@ -865,9 +867,16 @@ def _register_handlers(app: AppContext) -> None:
             ctx.progress(0.3, "Rédaction par le modèle de langage")
             out = copywriter.with_llm(eng, text, row["concept"], lang, params.get("platforms"))
             out["engine"] = "llm"
+            try:
+                ctx.progress(0.7, "Chapitres")
+                chs = copywriter.chapters_llm(eng, sents, total, lang)
+            except ValueError:
+                chs = copywriter.chapters_heuristic(sents, total)
         else:
             out = copywriter.heuristic(text, row["concept"])
             out["engine"] = "local"
+            chs = copywriter.chapters_heuristic(sents, total)
+        out["chapters"] = copywriter.chapters_text(chs)
         return out
 
     def export_project_job(ctx: JobContext, params: dict) -> dict:

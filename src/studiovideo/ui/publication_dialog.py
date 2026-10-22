@@ -393,7 +393,11 @@ class PublicationDialog(QDialog):
             return
         r = j.result
         self.title.setText(r["title"])
-        self.desc.setPlainText(r["description"])
+        desc = r["description"]
+        if r.get("chapters") and any(x["check"].isChecked() and x["account"].platform.value == "youtube"
+                                     for x in self.rows):
+            desc += "\n\nChapitres :\n" + r["chapters"]          # YouTube les reconnaît dans la description
+        self.desc.setPlainText(desc)
         self.tags.setText(r["hashtags"])
         self.warn.setText(("Proposition du modèle de langage" if r["engine"] == "llm" else
                            "Proposition simple (sans modèle de langage)") + " : relisez avant de publier.")

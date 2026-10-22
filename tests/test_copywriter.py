@@ -57,5 +57,6 @@ def test_write_copy_job(tmp_path):
         assert j.status == "succeeded", j.error
         assert j.result["engine"] == "local" and "Hors de" not in j.result["description"]
         assert "#Citron" in j.result["hashtags"]
+        assert j.result["chapters"] == ""                # 17 s : trop court pour des chapitres
     finally:
         app.close()
