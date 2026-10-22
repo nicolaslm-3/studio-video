@@ -9,7 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLineEdit,
-                               QMenu, QMessageBox, QSplitter, QStackedWidget, QTableView, QVBoxLayout, QWidget)
+                               QListWidget, QListWidgetItem, QMenu, QMessageBox, QSplitter, QStackedWidget, QTableView,
+                               QVBoxLayout, QWidget)
 
 from ...core import AppContext
 from ...media.ffmpeg import fmt_timecode
@@ -54,10 +55,14 @@ class LibraryPage(QWidget):
         self.concept.currentIndexChanged.connect(self.refresh)
         self.fav = QCheckBox("Favoris")
         self.fav.toggled.connect(self.refresh)
+        self.in_speech = QCheckBox("Dans les paroles")
+        self.in_speech.setToolTip("Chercher le texte dans les transcriptions de tous les médias")
+        self.in_speech.toggled.connect(self.refresh)
         bar.addWidget(self.search, 1)
         bar.addWidget(self.kind)
         bar.addWidget(self.concept)
         bar.addWidget(self.fav)
+        bar.addWidget(self.in_speech)
         lay.addLayout(bar)
 
         self.stack = QStackedWidget()
@@ -100,6 +105,16 @@ class LibraryPage(QWidget):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
         self.stack.addWidget(split)
+        sp = QWidget()
+        spl = QVBoxLayout(sp)
+        spl.setContentsMargins(0, 0, 0, 0)
+        self.speech_info = label("", "muted", wrap=True)
+        spl.addWidget(self.speech_info)
+        self.speech = QListWidget()
+        self.speech.setWordWrap(True)
+        self.speech.itemActivated.connect(self._open_hit)
+        spl.addWidget(self.speech, 1)
+        self.stack.addWidget(sp)
         lay.addWidget(self.stack, 1)
         self.setAcceptDrops(True)
         self._fill_concepts()
@@ -124,7 +139,33 @@ class LibraryPage(QWidget):
         self.concept.setCurrentIndex(max(0, self.concept.findData(cur)))
         self.concept.blockSignals(False)
 
+    def _speech_results(self, q: str) -> None:
+        self.stack.setCurrentIndex(2)
+        self.speech.clear()
+        if len(q) < 2:
+            self.speech_info.setText("Tapez au moins deux lettres : les phrases prononcées qui les contiennent "
+                                     "s'affichent ici (médias transcrits uniquement). Double-clic pour y aller.")
+            return
+        hits = self.app.transcripts.search_all(q, limit=300)
+        n_tr = self.app.db.query_one("SELECT COUNT(DISTINCT source_asset_id) n FROM transcript")["n"]
+        self.speech_info.setText(f"{len(hits)}{'+' if len(hits) >= 300 else ''} passage(s) dans "
+                                 f"{len({h[0] for h in hits})} média(s) — {n_tr} média(s) transcrit(s) au total. "
+                                 "Double-clic pour ouvrir au bon moment.")
+        for aid, name, _i, start, text in hits:
+            it = QListWidgetItem(f"{name}  ·  {fmt_timecode(start)}\n{text.strip()}")
+            it.setData(Qt.UserRole, (aid, start))
+            self.speech.addItem(it)
+
+    def _open_hit(self, item) -> None:
+        aid, t = item.data(Qt.UserRole)
+        win = self.window()
+        if hasattr(win, "open_media_at"):
+            win.open_media_at(aid, t)
+
     def refresh(self, *_):
+        if getattr(self, "in_speech", None) is not None and self.in_speech.isChecked():
+            self._speech_results(self.search.text().strip())
+            return
         self._fill_concepts()
         rows = self.app.library.search(self.search.text().strip(), self.kind.currentData(),
                                        self.concept.currentData(), self.fav.isChecked())

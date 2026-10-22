@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -110,6 +111,7 @@ class MainWindow(QMainWindow):
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
         self.dashboard.open_calendar.connect(lambda: self.go(3))
         self.dashboard.import_project.connect(self.import_project)
+        self.dashboard.all_projects.connect(self.show_projects)
         self.dashboard.open_settings.connect(lambda tab: (self.go(5), self.settings_page.show_tab(tab)))
         self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(lambda m: theme.apply(QApplication.instance(), m))
@@ -194,6 +196,32 @@ class MainWindow(QMainWindow):
         for f in files:
             self.app.jobs.submit("import_file", f"Import (dossier surveillé) · {f.name}", {"path": str(f)})
         return len(files)
+
+    def open_media_at(self, asset_id: int, t: float) -> bool:
+        """Ouvre un média dans le Studio (son projet, ou un nouveau projet) et place la lecture à t."""
+        a = self.app.library.get(asset_id)
+        if a is None:
+            return False
+        pid = a["project_id"]
+        if pid is None or self.app.projects.get(pid) is None:
+            if QMessageBox.question(self, "Ouvrir", f"« {a['file_name']} » n'appartient à aucun projet.\n\n"
+                                    "Créer un projet pour ce média ?") != QMessageBox.Yes:
+                return False
+            concepts = self.app.concepts.list_concepts()
+            pid = self.app.projects.create(concepts[0].id, Path(a["file_name"]).stem[:60] or "Projet")
+            self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (pid, asset_id))
+        self.open_project(pid)
+        self.studio._select_asset(asset_id)
+        self.studio._seek_source(t)
+        return True
+
+    def show_projects(self) -> None:
+        from .projects_dialog import ProjectsDialog
+        dlg = ProjectsDialog(self.app, self, self.studio.project_id)
+        dlg.open_project.connect(self.open_project)
+        dlg.exec()
+        self.dashboard.refresh() if hasattr(self.dashboard, "refresh") else None
+        self.studio.refresh()
 
     def show_shortcuts(self) -> None:
         from .shortcuts import ShortcutsDialog

@@ -768,3 +768,65 @@ def test_segment_fades_in_panel_and_preview(window):
     assert st.mplayer.view.fader.opacity() == pytest.approx(0.5, abs=0.05)
     st.mplayer.seek(2.0)
     assert st.mplayer.view.fader.opacity() == pytest.approx(0.0, abs=0.01)
+
+
+def test_search_in_speech_and_open(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from studiovideo.transcribe.model import TSegment, Transcript
+    w, ctx = window
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, kind, path, file_name, fingerprint, audio_tracks, duration_s) "
+                "VALUES (1,'video','x','interview.mp4','fspeech',1,60)")
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 4, "Bonjour à tous."),
+                                                    TSegment(30, 34, "Parlons de l'élection municipale.")], "fr"))
+    lib = w.library
+    lib.in_speech.setChecked(True)
+    lib.search.setText("election")                               # sans accent : trouvé quand même
+    assert lib.stack.currentIndex() == 2 and lib.speech.count() == 1
+    assert "0:30" in lib.speech.item(0).text()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    seeks = []
+    monkeypatch.setattr(w.studio, "_seek_source", lambda t: seeks.append(t))
+    lib._open_hit(lib.speech.item(0))
+    pid = ctx.library.get(aid)["project_id"]
+    assert pid and w.studio.project_id == pid and seeks == [30.0]
+    lib.in_speech.setChecked(False)
+    assert lib.stack.currentIndex() == 1
+
+
+def test_projects_dialog(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    from studiovideo.ui.projects_dialog import ProjectsDialog
+    w, ctx = window
+    cid = ctx.concepts.list_concepts()[0].id
+    a = ctx.projects.create(cid, "Alpha")
+    b = ctx.projects.create(cid, "Beta")
+    w.open_project(a)
+    d = ProjectsDialog(ctx, w, current_id=a)
+
+    def select(pid):
+        for i in range(d.table.rowCount()):
+            if d.table.item(i, 0).data(0x0100) == pid:
+                d.table.selectRow(i)
+                return
+        raise AssertionError(pid)
+    select(b)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a_, **k: ("Gamma", True))
+    d._rename()
+    assert ctx.projects.get(b)["name"] == "Gamma"
+    d._archive()
+    assert ctx.projects.get(b)["status"] == "archived" and d.b_arch.text() == "Désarchiver"
+    d._duplicate()
+    dup = d.selected()
+    assert dup not in (a, b) and ctx.projects.get(dup)["name"] == "Gamma (copie)"
+    monkeypatch.setattr(QMessageBox, "question", lambda *a_, **k: QMessageBox.Yes)
+    d._delete()
+    assert ctx.projects.get(dup) is None
+    select(a)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a_, **k: None)
+    d._delete()                                                  # projet ouvert : refusé
+    assert ctx.projects.get(a) is not None
+    w.studio.refresh()

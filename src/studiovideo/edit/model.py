@@ -129,6 +129,7 @@ class VideoSettings:
     saturation: float = 1.0     # 0..3
     temperature: int = 6500     # kelvins, 6500 = neutre
     sharpen: float = 0.0        # 0..1
+    lut: str = ""               # look colorimétrique : fichier .cube (copié dans les données du logiciel)
     # zones masquées (texte incrusté, logo) en proportions de l'image source :
     # {"x", "y", "w", "h" (0..1), "mode": "blur" | "delogo" | "box"}
     masks: list = field(default_factory=list)

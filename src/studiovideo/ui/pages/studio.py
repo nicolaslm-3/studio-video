@@ -233,6 +233,13 @@ class StudioPage(QWidget):
         for r in self.app.projects.recent(200):
             self.project_combo.addItem(f"{r['name']}  ·  {r['concept_name']}", r["id"])
         if self.project_id:
+            if self.project_combo.findData(self.project_id) < 0:          # projet archivé ouvert
+                cur = self.app.projects.get(self.project_id)
+                if cur is None:                                            # projet supprimé
+                    self.project_id = None
+                else:
+                    self.project_combo.addItem(f"{cur['name']}  ·  archivé", self.project_id)
+        if self.project_id:
             self.project_combo.setCurrentIndex(max(0, self.project_combo.findData(self.project_id)))
         self.project_combo.setVisible(self.project_combo.count() > 0)
         self.project_combo.blockSignals(False)
@@ -509,8 +516,8 @@ class StudioPage(QWidget):
         for a in list(rows) + [e for e in extra if e]:
             self.assets[a["id"]] = dict(a)
             self.assets[a["id"]]["preview_path"] = proxy.preview_path(self.app.paths.proxies, a)
-            if a["project_id"] != self.project_id:
-                continue
+            if a["project_id"] != self.project_id and a["id"] not in {s.asset_id for s in self.tl.segments}:
+                continue                                  # musique d'un autre projet : pas dans la liste
             it = QListWidgetItem(f"{a['file_name']}\n{fmt_timecode(a['duration_s']) if a['duration_s'] else a['kind']}"
                                  + ("  · introuvable" if a["missing"] else ""))
             it.setData(Qt.UserRole, a["id"])

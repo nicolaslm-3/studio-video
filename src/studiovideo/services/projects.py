@@ -29,7 +29,77 @@ class ProjectService:
     def recent(self, limit: int = 10) -> list[sqlite3.Row]:
         return self.db.query(
             "SELECT p.*, c.name concept_name, c.color concept_color FROM project p "
-            "JOIN concept c ON c.id = p.concept_id ORDER BY p.updated_at DESC, p.id DESC LIMIT ?", (limit,))
+            "JOIN concept c ON c.id = p.concept_id WHERE p.status != 'archived' "
+            "ORDER BY p.updated_at DESC, p.id DESC LIMIT ?", (limit,))
+
+    def all(self, include_archived: bool = True) -> list[sqlite3.Row]:
+        return self.db.query(
+            "SELECT p.*, c.name concept_name, c.color concept_color, "
+            "(SELECT COUNT(*) FROM source_asset a WHERE a.project_id = p.id) n_media, "
+            "(SELECT COUNT(*) FROM video_variant v JOIN clip cl ON cl.id = v.clip_id WHERE cl.project_id = p.id) n_videos "
+            "FROM project p JOIN concept c ON c.id = p.concept_id "
+            + ("" if include_archived else "WHERE p.status != 'archived' ")
+            + "ORDER BY p.status = 'archived', p.updated_at DESC, p.id DESC")
+
+    # -- gestion ----------------------------------------------------------------------
+    def _unique_name(self, name: str, exclude: int | None = None) -> str:
+        names = {r["name"] for r in self.db.query("SELECT name FROM project WHERE id != ?", (exclude or -1,))}
+        if name not in names:
+            return name
+        k = 2
+        while f"{name} ({k})" in names:
+            k += 1
+        return f"{name} ({k})"
+
+    def rename(self, project_id: int, name: str) -> str:
+        name = name.strip()
+        if not name:
+            raise ValueError("Le nom du projet est obligatoire.")
+        name = self._unique_name(name, project_id)
+        with self.db.transaction() as c:
+            c.execute("UPDATE project SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+                      (name, project_id))
+        self.db.audit("project.rename", f"{project_id}:{name}")
+        return name
+
+    def set_concept(self, project_id: int, concept_id: int) -> None:
+        with self.db.transaction() as c:
+            c.execute("UPDATE project SET concept_id = ? WHERE id = ?", (concept_id, project_id))
+
+    def set_archived(self, project_id: int, archived: bool) -> None:
+        with self.db.transaction() as c:
+            c.execute("UPDATE project SET status = ? WHERE id = ?", ("archived" if archived else "active", project_id))
+        self.db.audit("project.archive" if archived else "project.unarchive", str(project_id))
+
+    def duplicate(self, project_id: int, name: str | None = None) -> int:
+        """Copie du montage et des clips (les médias sont partagés, rien n'est copié sur le disque)."""
+        p = self.get(project_id)
+        if p is None:
+            raise ValueError("Projet introuvable.")
+        new_name = self._unique_name((name or f"{p['name']} (copie)").strip())
+        with self.db.transaction() as c:
+            pid = c.execute("INSERT INTO project(concept_id, name, mode, data_json) VALUES (?,?,?,?)",
+                            (p["concept_id"], new_name, p["mode"], p["data_json"])).lastrowid
+            c.execute("INSERT INTO clip(project_id, source_asset_id, candidate_id, name, start_s, end_s, edit_json) "
+                      "SELECT ?, source_asset_id, NULL, name, start_s, end_s, edit_json FROM clip "
+                      "WHERE project_id = ? AND name != 'Montage'", (pid, project_id))
+        self.db.audit("project.duplicate", f"{project_id} -> {pid}")
+        return pid
+
+    def published_count(self, project_id: int) -> int:
+        return self.db.query_one(
+            "SELECT COUNT(*) n FROM publication pu JOIN video_variant v ON v.id = pu.variant_id "
+            "JOIN clip cl ON cl.id = v.clip_id WHERE cl.project_id = ?", (project_id,))["n"]
+
+    def delete(self, project_id: int) -> None:
+        """Supprime le projet (montage, clips, historique d'export). Les fichiers ne sont jamais effacés ;
+        les médias restent dans la bibliothèque. Refusé si des publications en dépendent : archivez-le."""
+        if self.published_count(project_id):
+            raise ValueError("Des publications utilisent les vidéos de ce projet : archivez-le plutôt que de le "
+                             "supprimer, pour garder leur historique.")
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM project WHERE id = ?", (project_id,))
+        self.db.audit("project.delete", str(project_id))
 
     def save_data(self, project_id: int, data: dict) -> None:
         """Sauvegarde automatique de l'état du projet."""

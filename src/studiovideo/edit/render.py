@@ -73,6 +73,13 @@ def _escape_path(p: str) -> str:
     return p.replace("\\", "/")
 
 
+def _filter_path(p: str) -> str:
+    """Chemin utilisable comme option de filtre (« C:/… », apostrophes, virgules) : double échappement FFmpeg."""
+    def esc(text: str, chars: str) -> str:
+        return "".join("\\" + c if c in chars else c for c in text)
+    return esc(esc(_escape_path(p), "\\':"), "\\'[],;")
+
+
 # -- vidéo -----------------------------------------------------------------------
 MASK_MODES = ("blur", "delogo", "box")
 
@@ -171,6 +178,9 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None) -> str:
         geo = pre + fill_chain(zoom)
 
     look = []
+    lut = getattr(v, "lut", "") or ""
+    if lut and Path(lut).is_file():
+        look.append(f"lut3d=file={_filter_path(lut)}")
     if v.brightness or v.contrast != 1.0 or v.saturation != 1.0:
         look.append(f"eq=brightness={_fmt(v.brightness)}:contrast={_fmt(v.contrast)}:saturation={_fmt(v.saturation)}")
     if int(v.temperature) != 6500:

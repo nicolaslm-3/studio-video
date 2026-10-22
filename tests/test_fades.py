@@ -8,6 +8,12 @@ from studiovideo.edit.model import Segment, Timeline
 from studiovideo.media import ffmpeg
 
 
+def _gray_mean(path):
+    raw = subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "gray",
+                          "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).astype(float).mean()
+
+
 def test_fade_level_and_split():
     s = Segment(asset_id=1, src_in=10, src_out=14, fade_in=1.0, fade_out=3.0)
     assert s.fades() == (1.0, 2.0)                                   # borné à la moitié
@@ -51,8 +57,6 @@ def test_fade_rendered(tmp_path):
 
 @pytest.mark.skipif(not ffmpeg.available(), reason="FFmpeg absent")
 def test_preview_frame_shows_fade_and_zoom(tmp_path):
-    from PIL import Image
-
     from studiovideo.edit import render
     src = tmp_path / "s.mp4"
     subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "color=white:s=160x160:d=4:r=25",
@@ -65,15 +69,13 @@ def test_preview_frame_shows_fade_and_zoom(tmp_path):
     levels = []
     for t in (0.5, 2.0):
         out = render.preview_frame(tl, sources, t, tmp_path / f"p{t}.png")
-        levels.append(np.asarray(Image.open(out).convert("L"), float).mean())
+        levels.append(_gray_mean(out))
     assert 100 < levels[0] < 160 and levels[1] > 230
 
 
 @pytest.mark.skipif(not ffmpeg.available(), reason="FFmpeg absent")
 def test_export_still_job_full_resolution(tmp_path):
     import time
-
-    from PIL import Image
 
     from studiovideo.core import build_context
     app = build_context(tmp_path / "d")
@@ -91,6 +93,8 @@ def test_export_still_job_full_resolution(tmp_path):
         while app.jobs.get(jid).status in ("pending", "running") and time.time() < end:
             time.sleep(0.05)
         assert app.jobs.get(jid).status == "succeeded", app.jobs.get(jid).error
-        assert Image.open(dest).size == (1080, 1920)
+        from PySide6.QtGui import QImage
+        img = QImage(str(dest))
+        assert (img.width(), img.height()) == (1080, 1920)
     finally:
         app.close()

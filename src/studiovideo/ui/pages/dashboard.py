@@ -15,6 +15,7 @@ class DashboardPage(QWidget):
     show_jobs = Signal()
     open_calendar = Signal()
     import_project = Signal()
+    all_projects = Signal()
     open_settings = Signal(str)       # nom de l'onglet des paramètres
 
     def __init__(self, app: AppContext, parent=None):
@@ -185,7 +186,11 @@ class DashboardPage(QWidget):
 
     def _recent_projects(self) -> Card:
         card = Card()
-        card.lay.addWidget(label("Projets récents", "h2"))
+        hh = QHBoxLayout()
+        hh.addWidget(label("Projets récents", "h2"))
+        hh.addStretch(1)
+        hh.addWidget(button("Tous les projets…", "ghost", on_click=self.all_projects.emit))
+        card.lay.addLayout(hh)
         rows = self.app.projects.recent(6)
         if not rows:
             card.lay.addWidget(label("Aucun projet pour l'instant.", "faint"))
