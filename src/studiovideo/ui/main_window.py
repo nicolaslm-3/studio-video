@@ -152,10 +152,11 @@ class MainWindow(QMainWindow):
         manual = []
         for r in due:
             acc = self.app.concepts.get_account(r["account_id"])
-            if auto and r["platform"] == "youtube" and acc.connection_status == "connected" and r["output_path"]:
+            if auto and r["platform"] in ("youtube", "tiktok") and acc.connection_status == "connected" \
+                    and r["output_path"]:
                 from ..domain.models import PublicationStatus
                 self.app.publications.set_status(r["id"], PublicationStatus.UPLOADING)
-                self.app.jobs.submit("publish_upload", f"YouTube · {r['title'] or 'sans titre'}",
+                self.app.jobs.submit("publish_upload", f"{acc.platform.label} · {r['title'] or 'sans titre'}",
                                      {"publication_id": r["id"]}, critical=True)
             else:
                 self.app.publications.mark_manual(r["id"], "Heure de publication atteinte : à publier.")

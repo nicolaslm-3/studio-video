@@ -139,7 +139,7 @@ class AnalyticsPage(QWidget):
         for w in (self.concept, self.platform):
             w.currentIndexChanged.connect(self.refresh)
             hdr.add_action(w)
-        self.refresh_btn = button("Relever les statistiques YouTube", "primary", on_click=self._refresh_stats)
+        self.refresh_btn = button("Relever les statistiques (YouTube, TikTok)", "primary", on_click=self._refresh_stats)
         hdr.add_action(self.refresh_btn)
         lay.addWidget(hdr)
         self.status = label("", "muted", wrap=True)
@@ -336,7 +336,7 @@ class AnalyticsPage(QWidget):
             QDesktopServices.openUrl(QUrl(url))
 
     def _refresh_stats(self) -> None:
-        self.job_id = self.app.jobs.submit("refresh_stats", "Statistiques YouTube", {})
+        self.job_id = self.app.jobs.submit("refresh_stats", "Statistiques", {})
         self.refresh_btn.setEnabled(False)
         self.status.setText("Relevé des statistiques en cours…")
 

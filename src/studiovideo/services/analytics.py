@@ -79,6 +79,10 @@ class AnalyticsService:
                 g["engagement"] = inter / g["views"]
         return sorted(out, key=lambda g: -g.get("views", 0))
 
+    def tiktok_ids(self) -> dict[int, list[tuple[int, str]]]:
+        """{compte: [(publication, id de la vidéo TikTok)]} pour les vidéos publiées (API ou lien confirmé)."""
+        return _tiktok_rows(self.db)
+
     def youtube_ids(self) -> list[tuple[int, str]]:
         """[(publication, id vidéo)] pour les publications YouTube : envoyées par l'API ou confirmées par lien."""
         out = []
@@ -90,6 +94,17 @@ class AnalyticsService:
             if vid:
                 out.append((r["id"], vid))
         return out
+
+
+def _tiktok_rows(db) -> dict:
+    out: dict = {}
+    for r in db.query("SELECT p.id, p.remote_id, p.public_url, p.social_account_id FROM publication p "
+                      "JOIN social_account a ON a.id = p.social_account_id WHERE a.platform = 'tiktok' "
+                      "AND p.status = 'published'"):
+        m = re.search(r"/video/(\d+)", r["public_url"] or "") or re.fullmatch(r"(\d{10,})", r["remote_id"] or "")
+        if m:
+            out.setdefault(r["social_account_id"], []).append((r["id"], m.group(1)))
+    return out
 
 
 _YT = re.compile(r"(?:youtu\.be/|[?&]v=|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{6,20})")

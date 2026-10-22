@@ -521,3 +521,12 @@ def test_original_creation_flow(window):
     assert len(st.tl.segments) == 1 and [t.text for t in st.tl.texts] == ["Le café"]
     assert st.tl.subtitles.enabled and any("tasses" in c.text for c in st.tl.subtitles.cues)
     assert st.guide.next_step().key == "export"
+
+
+def test_settings_tab_shortcuts(window):
+    w, _ = window
+    sp = w.settings_page
+    sp.show_models()
+    assert sp.tabs.tabText(sp.tabs.currentIndex()) == "Matériel et moteurs"
+    sp.show_about()
+    assert sp.tabs.tabText(sp.tabs.currentIndex()) == "À propos"

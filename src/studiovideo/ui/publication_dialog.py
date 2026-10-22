@@ -258,6 +258,9 @@ class PublicationDialog(QDialog):
                     up = menu.addAction("Mettre en ligne sur YouTube" + (" (à l'heure prévue)" if pub.scheduled_at
                                                                          else " maintenant"),
                                         lambda p=pub.id: self._upload(p))
+                elif acc.platform.value == "tiktok":
+                    up = menu.addAction("Publier sur TikTok maintenant", lambda p=pub.id: self._upload(p, now=True))
+                if acc.platform.value in ("youtube", "tiktok"):
                     up.setEnabled(not done and acc.connection_status == "connected"
                                   and pub.status != PublicationStatus.SCHEDULED_PLATFORM)
                     if acc.connection_status != "connected":
@@ -352,17 +355,18 @@ class PublicationDialog(QDialog):
                 ps.schedule(p.id, when)
         self.accept()
 
-    def _upload(self, pid: int) -> None:
+    def _upload(self, pid: int, now: bool = False) -> None:
         r = self.app.publications.get(pid)
         if not r["output_path"] or not Path(r["output_path"]).exists():
             QMessageBox.warning(self, "YouTube", "Choisissez d'abord une vidéo existante pour cette publication.")
             return
-        problems = rules.check("youtube", r["title"] or "", r["description"] or "", r["hashtags"] or "")
+        label_ = rules.RULES[r["platform"]].label
+        problems = rules.check(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
         if problems:
-            QMessageBox.warning(self, "YouTube", "\n".join(problems))
+            QMessageBox.warning(self, label_, "\n".join(problems))
             return
-        self.app.jobs.submit("publish_upload", f"YouTube · {r['title'] or 'sans titre'}", {"publication_id": pid},
-                             critical=True)
+        self.app.jobs.submit("publish_upload", f"{label_} · {r['title'] or 'sans titre'}",
+                             {"publication_id": pid, "now": now}, critical=True)
         self.warn.setText("Mise en ligne lancée (suivi dans les tâches).")
 
     def _assisted(self, pid: int) -> None:

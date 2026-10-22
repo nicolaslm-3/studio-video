@@ -42,6 +42,7 @@ class SettingsPage(QWidget):
         lay.addWidget(PageHeader("Paramètres"))
         self.tabs = QTabWidget()
         self.tabs.addTab(self._concepts_tab(), "Concepts et comptes")
+        self.tabs.addTab(self._publishing_tab(), "Publication")
         self.tabs.addTab(self._general_tab(), "Général")
         self.tabs.addTab(self._storage_tab(), "Stockage et sauvegardes")
         from PySide6.QtWidgets import QScrollArea
@@ -54,7 +55,7 @@ class SettingsPage(QWidget):
         lay.addWidget(self.tabs, 1)
 
     def show_about(self) -> None:
-        self.tabs.setCurrentIndex(4)
+        self.show_tab("À propos")
 
     # -- concepts et comptes ------------------------------------------------
     def _concepts_tab(self) -> QWidget:
@@ -77,7 +78,7 @@ class SettingsPage(QWidget):
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
         right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Connecter un compte permet la "
-                                  "mise en ligne automatique (YouTube pour l'instant) ; sinon la publication est "
+                                  "mise en ligne automatique (YouTube, TikTok) ; sinon la publication est "
                                   "assistée.", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)
         self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
@@ -97,8 +98,40 @@ class SettingsPage(QWidget):
         right.lay.addLayout(rb)
         self.acc_status = label("", "muted", wrap=True)
         right.lay.addWidget(self.acc_status)
-        right.lay.addWidget(label("YouTube — projet Google Cloud", "h2"))
-        right.lay.addWidget(label(
+
+        h.addWidget(right, 2)
+        self.refresh()
+        return w
+
+    def refresh(self) -> None:
+        self.concept_list.clear()
+        for c in self.app.concepts.list_concepts():
+            n = len(self.app.concepts.concept_accounts(c.id))
+            it = QListWidgetItem(f"{c.name}   ·  {n} compte(s)")
+            it.setData(Qt.UserRole, c.id)
+            self.concept_list.addItem(it)
+        accounts = self.app.concepts.list_accounts()
+        self.acc_table.setRowCount(len(accounts))
+        for i, a in enumerate(accounts):
+            concepts = ", ".join(c.name for c in self.app.concepts.concepts_of_account(a.id)) or "—"
+            for j, v in enumerate((a.platform.label, a.name, a.language.upper(),
+                                   CONNECTION_LABELS.get(a.connection_status, a.connection_status), concepts)):
+                item = QTableWidgetItem(v)
+                item.setData(Qt.UserRole, a.id)
+                self.acc_table.setItem(i, j, item)
+
+    def _publishing_tab(self) -> QWidget:
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(0, 16, 0, 0)
+        card = Card()
+        self._plat_lay = card.lay
+        card.lay.addWidget(label("Mise en ligne automatique", "h2"))
+        card.lay.addWidget(label("Chaque plateforme exige votre propre application développeur. Une fois les "
+                                 "réglages enregistrés, sélectionnez le compte dans « Concepts et comptes » puis "
+                                 "« Connecter ».", "muted", wrap=True))
+        self._plat_lay.addWidget(label("YouTube — projet Google Cloud", "h2"))
+        self._plat_lay.addWidget(label(
             "Pour la mise en ligne automatique, Google exige votre propre identifiant d'application : "
             "console.cloud.google.com → nouveau projet → activer « YouTube Data API v3 » → écran de consentement "
             "(type Externe, ajoutez votre adresse comme utilisateur test) → Identifiants → « ID client OAuth », "
@@ -121,29 +154,39 @@ class SettingsPage(QWidget):
         yf.addRow("ID client", self.yt_id)
         yf.addRow("Code secret", self.yt_secret)
         yf.addRow("Visibilité", self.yt_privacy)
-        right.lay.addLayout(yf)
-        right.lay.addWidget(self.yt_auto)
-        right.lay.addWidget(button("Enregistrer les réglages YouTube", on_click=self._save_youtube))
-        h.addWidget(right, 2)
-        self.refresh()
+        self._plat_lay.addLayout(yf)
+        self._plat_lay.addWidget(self.yt_auto)
+        self._plat_lay.addWidget(button("Enregistrer les réglages YouTube", on_click=self._save_youtube))
+        self._plat_lay.addWidget(label("TikTok — application développeur", "h2"))
+        self._plat_lay.addWidget(label(
+            "developers.tiktok.com → créez une application (type ordinateur), ajoutez « Login Kit » avec l'adresse "
+            "de retour http://127.0.0.1:*/callback/ et « Content Posting API » (Direct Post), puis collez la clé "
+            "et le code secret. Tant que TikTok n'a pas audité l'application, les vidéos sont publiées en privé "
+            "(le logiciel le signale). Guide : docs/TIKTOK.md.", "faint", wrap=True))
+        tf = QFormLayout()
+        self.tk_key = QLineEdit(self.app.settings.get("tiktok_client_key", "") or "")
+        self.tk_secret = QLineEdit()
+        self.tk_secret.setEchoMode(QLineEdit.Password)
+        self.tk_secret.setEnabled(secrets.available())
+        self.tk_secret.setPlaceholderText("Enregistré" if secrets.get_secret("tiktok_client_secret") else "Code secret")
+        self.tk_privacy = QComboBox()
+        for k, n in (("PUBLIC_TO_EVERYONE", "Tout le monde"), ("MUTUAL_FOLLOW_FRIENDS", "Amis"),
+                     ("FOLLOWER_OF_CREATOR", "Abonnés"), ("SELF_ONLY", "Moi uniquement")):
+            self.tk_privacy.addItem(n, k)
+        self.tk_privacy.setCurrentIndex(max(0, self.tk_privacy.findData(
+            self.app.settings.get("tiktok_privacy", "PUBLIC_TO_EVERYONE"))))
+        tf.addRow("Clé client", self.tk_key)
+        tf.addRow("Code secret", self.tk_secret)
+        tf.addRow("Visibilité", self.tk_privacy)
+        self._plat_lay.addLayout(tf)
+        self._plat_lay.addWidget(button("Enregistrer les réglages TikTok", on_click=self._save_tiktok))
+        from PySide6.QtWidgets import QScrollArea
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QScrollArea.NoFrame)
+        sc.setWidget(card)
+        outer.addWidget(sc)
         return w
-
-    def refresh(self) -> None:
-        self.concept_list.clear()
-        for c in self.app.concepts.list_concepts():
-            n = len(self.app.concepts.concept_accounts(c.id))
-            it = QListWidgetItem(f"{c.name}   ·  {n} compte(s)")
-            it.setData(Qt.UserRole, c.id)
-            self.concept_list.addItem(it)
-        accounts = self.app.concepts.list_accounts()
-        self.acc_table.setRowCount(len(accounts))
-        for i, a in enumerate(accounts):
-            concepts = ", ".join(c.name for c in self.app.concepts.concepts_of_account(a.id)) or "—"
-            for j, v in enumerate((a.platform.label, a.name, a.language.upper(),
-                                   CONNECTION_LABELS.get(a.connection_status, a.connection_status), concepts)):
-                item = QTableWidgetItem(v)
-                item.setData(Qt.UserRole, a.id)
-                self.acc_table.setItem(i, j, item)
 
     def _save_youtube(self) -> None:
         self.app.settings.set("youtube_client_id", self.yt_id.text().strip())
@@ -159,6 +202,19 @@ class SettingsPage(QWidget):
             self.yt_secret.setPlaceholderText("Enregistré")
         self.acc_status.setText("Réglages YouTube enregistrés.")
 
+    def _save_tiktok(self) -> None:
+        self.app.settings.set("tiktok_client_key", self.tk_key.text().strip())
+        self.app.settings.set("tiktok_privacy", self.tk_privacy.currentData())
+        if self.tk_secret.text().strip():
+            try:
+                secrets.set_secret("tiktok_client_secret", self.tk_secret.text().strip())
+            except secrets.SecretStoreUnavailable as exc:
+                QMessageBox.warning(self, "TikTok", str(exc))
+                return
+            self.tk_secret.clear()
+            self.tk_secret.setPlaceholderText("Enregistré")
+        self.acc_status.setText("Réglages TikTok enregistrés.")
+
     def _selected_account(self):
         row = self.acc_table.currentRow()
         if row < 0:
@@ -169,6 +225,15 @@ class SettingsPage(QWidget):
     def _connect_account(self) -> None:
         acc = self._selected_account()
         if acc is None:
+            return
+        if acc.platform.value == "tiktok":
+            if not (self.app.settings.get("tiktok_client_key", "") and secrets.get_secret("tiktok_client_secret")):
+                QMessageBox.information(self, "Connexion", "Renseignez d'abord la clé et le code secret de votre "
+                                        "application TikTok, puis « Enregistrer les réglages TikTok ».")
+                return
+            self._connect_job = self.app.jobs.submit("connect_account", f"Connexion · {acc.display}",
+                                                     {"account_id": acc.id})
+            self.acc_status.setText("Autorisez l'accès dans la page TikTok ouverte dans votre navigateur…")
             return
         if acc.platform.value != "youtube":
             QMessageBox.information(self, "Connexion", f"La connexion {acc.platform.label} n'est pas encore "
@@ -186,10 +251,11 @@ class SettingsPage(QWidget):
         acc = self._selected_account()
         if acc is None:
             return
-        try:
-            secrets.delete_secret(f"youtube_refresh_{acc.id}")
-        except Exception:
-            pass
+        for name in (f"youtube_refresh_{acc.id}", f"tiktok_refresh_{acc.id}"):
+            try:
+                secrets.delete_secret(name)
+            except Exception:
+                pass
         with self.app.db.transaction() as c:
             c.execute("UPDATE social_account SET connection_status = 'disconnected', remote_id = '' WHERE id = ?",
                       (acc.id,))
@@ -651,8 +717,14 @@ class SettingsPage(QWidget):
                 engines.delete_model(self.app.paths.models, key)
             self._fill_models()
 
+    def show_tab(self, name: str) -> None:
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == name:
+                self.tabs.setCurrentIndex(i)
+                return
+
     def show_models(self) -> None:
-        self.tabs.setCurrentIndex(3)
+        self.show_tab("Matériel et moteurs")
 
     def on_job(self, job) -> None:
         if job.kind == "connect_account" and job.status in ("succeeded", "failed", "cancelled"):

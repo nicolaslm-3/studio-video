@@ -343,6 +343,23 @@ def _register_handlers(app: AppContext) -> None:
         from .publish import youtube
         from .services import secrets
         acc = app.concepts.get_account(params["account_id"])
+        if acc.platform.value == "tiktok":
+            from .publish import tiktok
+            ck = app.settings.get("tiktok_client_key", "") or ""
+            cs = secrets.get_secret("tiktok_client_secret") or ""
+            ctx.progress(0.1, "Autorisation dans le navigateur…")
+            tok = tiktok.connect(ck, cs, webbrowser.open, is_cancelled=lambda: ctx.cancelled)
+            secrets.set_secret(f"tiktok_refresh_{acc.id}", tok["refresh_token"])
+            info = tiktok.creator_info(tok["access_token"])
+            user = info.get("creator_username") or ""
+            with app.db.transaction() as c:
+                c.execute("UPDATE social_account SET connection_status = 'connected', remote_id = ?, scopes = ?, "
+                          "public_url = CASE WHEN public_url = '' AND ? != '' THEN ? ELSE public_url END WHERE id = ?",
+                          (tok.get("open_id", ""), tok.get("scope", tiktok.SCOPES), user,
+                           f"https://www.tiktok.com/@{user}", acc.id))
+            app.db.audit("account.connect", f"account={acc.id} tiktok={tok.get('open_id', '')}")
+            return {"account_id": acc.id, "channel": "@" + user if user else (info.get("creator_nickname") or "TikTok"),
+                    "channel_id": tok.get("open_id", "")}
         if acc.platform.value != "youtube":
             raise ValueError(f"La connexion automatique {acc.platform.label} n'est pas encore disponible.")
         cid = app.settings.get("youtube_client_id", "") or ""
@@ -373,9 +390,11 @@ def _register_handlers(app: AppContext) -> None:
         def fail(msg: str):
             ps.set_status(r["id"], PublicationStatus.FAILED, error=msg)
             raise ValueError(msg)
-        if r["platform"] != "youtube":
-            fail("Mise en ligne automatique disponible pour YouTube uniquement.")
+        if r["platform"] not in ("youtube", "tiktok"):
+            fail("Mise en ligne automatique disponible pour YouTube et TikTok uniquement.")
         acc = app.concepts.get_account(r["account_id"])
+        if r["platform"] == "tiktok":
+            return _publish_tiktok(ctx, r, acc, params, fail)
         refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
         if acc.connection_status != "connected" or not refresh:
             fail("Compte YouTube non connecté (Paramètres → Comptes).")
@@ -414,14 +433,87 @@ def _register_handlers(app: AppContext) -> None:
             state = "publiée"
         return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state}
 
+    def _publish_tiktok(ctx: JobContext, r, acc, params: dict, fail) -> dict:
+        from datetime import datetime
+
+        from .domain.models import PublicationStatus
+        from .publish import rules, tiktok
+        from .services import secrets
+        ps = app.publications
+        refresh_tok = secrets.get_secret(f"tiktok_refresh_{acc.id}")
+        if acc.connection_status != "connected" or not refresh_tok:
+            fail("Compte TikTok non connecté (Paramètres → Comptes).")
+        if r["at"] and r["at"] > datetime.now().strftime("%Y-%m-%dT%H:%M") and not params.get("now"):
+            raise ValueError("TikTok ne permet pas la programmation par son API : la vidéo partira "
+                             "automatiquement à l'heure prévue si Studio Vidéo est ouvert.")
+        if not r["output_path"] or not Path(r["output_path"]).exists():
+            fail("La vidéo de cette publication est introuvable.")
+        desired = app.settings.get("tiktok_privacy", "PUBLIC_TO_EVERYONE") or "PUBLIC_TO_EVERYONE"
+        try:
+            ps.set_status(r["id"], PublicationStatus.UPLOADING)
+            tok = tiktok.refresh(app.settings.get("tiktok_client_key", "") or "",
+                                 secrets.get_secret("tiktok_client_secret") or "", refresh_tok)
+            if tok.get("refresh_token") and tok["refresh_token"] != refresh_tok:
+                secrets.set_secret(f"tiktok_refresh_{acc.id}", tok["refresh_token"])
+            text = rules.compose("tiktok", r["title"] or "", r["description"] or "", r["hashtags"] or "")["text"]
+            res = tiktok.upload(Path(r["output_path"]), text, desired, tok["access_token"], ctx.progress,
+                                lambda: ctx.cancelled)
+        except Exception as exc:
+            if "révoquée" in str(exc):
+                with app.db.transaction() as c:
+                    c.execute("UPDATE social_account SET connection_status = 'expired' WHERE id = ?", (acc.id,))
+            ps.set_status(r["id"], PublicationStatus.FAILED, error=str(exc)[:300])
+            raise
+        base = (acc.public_url or "https://www.tiktok.com").rstrip("/")
+        if res["post_ids"] and res["privacy"] == desired:
+            url = f"{base}/video/{res['post_ids'][0]}"
+            ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=res["post_ids"][0], public_url=url)
+            state = "publiée"
+        else:
+            why = ("publiée en privé : l'application TikTok n'est pas encore auditée" if res["privacy"] != desired
+                   else "en cours de vérification par TikTok")
+            ps.set_status(r["id"], PublicationStatus.MANUAL_ACTION, remote_id=res["publish_id"],
+                          error=f"Envoyée sur TikTok, {why}. Vérifiez dans l'application TikTok.")
+            url, state = "", f"envoyée ({res['privacy']})"
+        return {"publication_id": r["id"], "video_id": res["publish_id"], "url": url, "state": state}
+
+    def _tiktok_stats() -> tuple[int, list[str]]:
+        """Statistiques des vidéos TikTok publiques, compte par compte (chaque compte ne voit que les siennes)."""
+        from .publish import tiktok
+        from .services import secrets
+        done, errors = 0, []
+        for acc_id, items in app.analytics.tiktok_ids().items():
+            acc = app.concepts.get_account(acc_id)
+            refresh_tok = secrets.get_secret(f"tiktok_refresh_{acc_id}")
+            if acc.connection_status != "connected" or not refresh_tok:
+                errors.append(f"{acc.display} : compte non connecté (chiffres à saisir à la main)")
+                continue
+            try:
+                tok = tiktok.refresh(app.settings.get("tiktok_client_key", "") or "",
+                                     secrets.get_secret("tiktok_client_secret") or "", refresh_tok)
+                if tok.get("refresh_token") and tok["refresh_token"] != refresh_tok:
+                    secrets.set_secret(f"tiktok_refresh_{acc_id}", tok["refresh_token"])
+                stats = tiktok.video_stats(tok["access_token"], [v for _, v in items])
+            except tiktok.TikTokError as exc:
+                errors.append(f"{acc.display} : {exc}")
+                continue
+            for pid, vid in items:
+                if vid in stats:
+                    app.analytics.record(pid, stats[vid], "api")
+                    done += 1
+        return done, errors
+
     def refresh_stats(ctx: JobContext, params: dict) -> dict:
         """Relevé des statistiques publiques des vidéos YouTube (V4), via un compte YouTube connecté."""
         from .publish import youtube
         from .services import secrets
+        tk_done, tk_errors = _tiktok_stats()
         items = app.analytics.youtube_ids()
         if not items:
-            return {"updated": 0, "errors": [], "note": "Aucune vidéo YouTube publiée à relever."}
-        token, errors = None, []
+            if tk_done or tk_errors:
+                return {"updated": tk_done, "errors": tk_errors}
+            return {"updated": 0, "errors": [], "note": "Aucune vidéo YouTube ou TikTok publiée à relever."}
+        token, errors = None, list(tk_errors)
         for acc in app.concepts.list_accounts():
             refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
             if acc.platform.value == "youtube" and acc.connection_status == "connected" and refresh:
@@ -432,6 +524,8 @@ def _register_handlers(app: AppContext) -> None:
                 except youtube.YouTubeError as exc:
                     errors.append(f"{acc.display} : {exc}")
         if token is None:
+            if tk_done:
+                return {"updated": tk_done, "errors": errors + ["YouTube : aucun compte connecté."]}
             raise ValueError("Aucun compte YouTube connecté : connectez-en un (Paramètres → Comptes) pour relever "
                              "les statistiques." + (" " + "; ".join(errors) if errors else ""))
         ctx.progress(0.3, "Lecture des statistiques YouTube")
@@ -461,7 +555,7 @@ def _register_handlers(app: AppContext) -> None:
             app.analytics.record(pid, m, "api")
             done += 1
             ctx.progress(0.3 + 0.7 * (k + 1) / len(items), f"{done} vidéo(s) relevée(s)")
-        res = {"updated": done, "detailed": detailed, "errors": errors}
+        res = {"updated": done + tk_done, "detailed": detailed, "errors": errors}
         if scope_note:
             res["note"] = scope_note
         return res
