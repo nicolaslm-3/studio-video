@@ -95,7 +95,16 @@ jobs:
         if: steps.ctx.outputs.skip != 'true'
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q -rfE --tb=short > pytest.txt 2>&1
+          rc=$?
+          cat pytest.txt
+          grep -E "^(FAILED|ERROR) " pytest.txt | head -20 | while read -r line; do
+            echo "::error title=Test::$(echo "$line" | cut -c1-900 | sed 's/%/%25/g')"
+          done
+          exit $rc
 
       - name: Injection de la version et de la clé publique
         if: steps.ctx.outputs.skip != 'true'
@@ -225,11 +234,18 @@ jobs:
           ASSETS=("dist/StudioVideo-${V}-Setup.exe" "dist/StudioVideo-${V}-portable.zip" dist/SHA256SUMS.txt)
           # La release peut déjà exister si elle a été créée depuis le site GitHub.
           TAG="${{ steps.ctx.outputs.tag }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${ASSETS[@]}" --clobber
-          else
-            gh release create "$TAG" --target "${GITHUB_SHA}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}"
-          fi
+          # jusqu'à 4 tentatives : les envois de gros fichiers vers GitHub échouent parfois sans raison
+          for attempt in 1 2 3 4; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" "${ASSETS[@]}" --clobber && exit 0
+            else
+              gh release create "$TAG" --target "${GITHUB_SHA}" $PRE --title "Studio Vidéo ${V}" --notes-file "$NOTES" "${ASSETS[@]}" && exit 0
+            fi
+            echo "::warning title=Publication::tentative ${attempt} échouée, nouvel essai"
+            sleep $((attempt * 20))
+          done
+          echo "::error title=Publication::la release ${TAG} n'a pas pu être publiée sur GitHub"
+          exit 1
 
       - name: Mise à jour du flux appcast (gh-pages)
         if: steps.ctx.outputs.skip != 'true'

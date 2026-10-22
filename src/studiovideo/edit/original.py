@@ -72,7 +72,8 @@ def read_source(path: Path) -> str:
 
 
 def clean_text(text: str) -> str:
-    text = re.sub(r"-\n(\w)", r"\1", text or "")            # coupures de mots en fin de ligne (PDF)
+    text = (text or "").replace("\u2019", "'").replace("\u2018", "'").replace("\u00a0", " ")
+    text = re.sub(r"-\n(\w)", r"\1", text)                  # coupures de mots en fin de ligne (PDF)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{2,}", "\n\n", text)
     return text.strip()

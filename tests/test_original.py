@@ -33,7 +33,10 @@ def _pdf(path, text):
 def test_read_sources(tmp_path):
     (tmp_path / "a.txt").write_text("Bonjour le monde.", encoding="utf-8")
     assert o.read_source(tmp_path / "a.txt") == "Bonjour le monde."
-    assert "Le cafe vient d'Ethiopie" in o.read_source(_pdf(tmp_path / "a.pdf", "Le cafe vient d'Ethiopie."))
+    # selon la version de pypdf, l'apostrophe sort droite ou typographique : clean_text les unifie
+    assert "Le cafe vient d'Ethiopie" in o.clean_text(o.read_source(_pdf(tmp_path / "a.pdf",
+                                                                           "Le cafe vient d'Ethiopie.")))
+    assert o.clean_text("d\u2019Ethiopie\u00a0!") == "d'Ethiopie !"
     with zipfile.ZipFile(tmp_path / "a.docx", "w") as z:
         z.writestr("word/document.xml", "<w:document><w:body><w:p><w:r><w:t>Premier</w:t></w:r></w:p>"
                                         "<w:p><w:r><w:t>Second</w:t></w:r></w:p></w:body></w:document>")
