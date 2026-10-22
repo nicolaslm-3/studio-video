@@ -4,6 +4,22 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.15.0</title>
+      <pubDate>Thu, 22 Oct 2026 04:15:57 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.15.0 — Durée de visionnage et rétention&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Analytiques → Par vidéo : durée moyenne vue et % moyen vu, et sous le tableau la **courbe de rétention**&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;de la vidéo sélectionnée (part des spectateurs encore là à chaque instant)&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Données YouTube Analytics des vidéos de votre chaîne connectée (2 à 3 jours de délai)&lt;/li&gt;
+&lt;li&gt;Comptes connectés avant cette version : reconnectez-les une fois (nouvelle autorisation en lecture seule) et&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;activez « YouTube Analytics API » dans votre projet Google — voir docs/YOUTUBE.md&lt;/p&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.15.0/StudioVideo-0.15.0-Setup.exe" sparkle:version="0.15.0" sparkle:shortVersionString="0.15.0" sparkle:os="windows-x64" length="193692887" type="application/octet-stream" sparkle:edSignature="1hDFIeLVt3PlRtDLNKqwc7Hx1MfvZt0wxWEbdiPKes0L7ZKn8Sg9NAao+0c1ArRIQ2HxkDR3DjK3PJIYbwxgAQ==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.14.0</title>
       <pubDate>Thu, 22 Oct 2026 04:07:08 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.14.0 — Doublage audible dans l&amp;#x27;aperçu&lt;/h2&gt;
@@ -291,21 +307,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.2.0/StudioVideo-0.2.0-Setup.exe" sparkle:version="0.2.0" sparkle:shortVersionString="0.2.0" sparkle:os="windows-x64" length="137959745" type="application/octet-stream" sparkle:edSignature="yjgPe9Joept+BVrV6750LP+1DiwSKJ2J1S9qIrBUrI6iPkBYty3GprNYA7LhaRlp9OsB7FAOtrvvGwicdbbMBw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.1.2</title>
-      <pubDate>Wed, 21 Oct 2026 19:14:37 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.1.2&lt;/h2&gt;
-&lt;p&gt;Première version complète du socle, avec mises à jour automatiques actives.&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Concepts éditoriaux et comptes sociaux, associations libres&lt;/li&gt;
-&lt;li&gt;Projets, import local et par URL, bibliothèque&lt;/li&gt;
-&lt;li&gt;Lecteur avec points d&amp;#x27;entrée et de sortie, création de clips&lt;/li&gt;
-&lt;li&gt;Gestionnaire de tâches, sauvegardes automatiques&lt;/li&gt;
-&lt;li&gt;Mises à jour automatiques signées et retour à la version précédente&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.1.2/StudioVideo-0.1.2-Setup.exe" sparkle:version="0.1.2" sparkle:shortVersionString="0.1.2" sparkle:os="windows-x64" length="137864651" type="application/octet-stream" sparkle:edSignature="0hN95vRQfjfejzhzgLF5iU79IzOq73P6mj8qsxYOXjnR6YFL9/RPOMaSRLF60cu4Sw/ddQI4LzED8nGa6ax5Cw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
