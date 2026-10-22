@@ -21,6 +21,28 @@ class ProjectService:
         self.db.audit("project.create", name)
         return pid
 
+    def quick_create(self, concepts, mode: ProjectMode | str, name: str = "", aspect: str = "9:16",
+                     concept_id: int | None = None) -> int:
+        """Projet prêt à monter, sans formalité : concept « Brouillons » si aucun n'est choisi, format donné."""
+        from ..edit.model import Timeline
+        cid = concept_id or concepts.drafts_concept().id
+        label_ = ProjectMode(mode).label
+        base = name.strip() or f"{label_} {self._next_number(label_)}"
+        pid = self.create(cid, self._unique_name(base), mode)
+        tl = Timeline()
+        tl.set_aspect(aspect)
+        self.save_data(pid, {"timeline": tl.to_dict()})
+        return pid
+
+    def _next_number(self, prefix: str) -> int:
+        n = self.db.query_one("SELECT COUNT(*) n FROM project WHERE name LIKE ?", (prefix + " %",))["n"]
+        return n + 1
+
+    def by_mode(self, mode: str, limit: int = 6) -> list[sqlite3.Row]:
+        return self.db.query(
+            "SELECT p.*, c.name concept_name, c.color concept_color FROM project p JOIN concept c ON c.id = p.concept_id "
+            "WHERE p.mode = ? AND p.status != 'archived' ORDER BY p.updated_at DESC, p.id DESC LIMIT ?", (mode, limit))
+
     def get(self, project_id: int) -> sqlite3.Row | None:
         return self.db.query_one(
             "SELECT p.*, c.name concept_name, c.color concept_color FROM project p "

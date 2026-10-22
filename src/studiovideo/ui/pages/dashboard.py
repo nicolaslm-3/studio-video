@@ -2,10 +2,25 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QScrollArea,
+                               QVBoxLayout, QWidget)
 
 from ...core import AppContext
-from ..widgets import (PLATFORM_COLORS, STATUS_LABELS, Card, EmptyState, PageHeader, button, color_dot, label)
+from .. import theme
+from ..widgets import (DimOnHover, PLATFORM_COLORS, STATUS_LABELS, Card, EmptyState, PageHeader, button, color_dot, label)
+
+
+def _ring(size: int, col: str) -> QPixmap:
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(col), 1.6))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return pm
 
 
 class DashboardPage(QWidget):
@@ -30,7 +45,7 @@ class DashboardPage(QWidget):
         self.body = QWidget()
         scroll.setWidget(self.body)
         self.lay = QVBoxLayout(self.body)
-        self.lay.setContentsMargins(32, 28, 32, 28)
+        self.lay.setContentsMargins(36, 30, 36, 20)
         self.lay.setSpacing(22)
         self.refresh()
 
@@ -46,49 +61,44 @@ class DashboardPage(QWidget):
 
     def refresh(self) -> None:
         self._clear()
-        head = PageHeader("Tableau de bord", "Vos concepts, projets et tâches en un coup d'œil")
-        head.add_action(button("Importer un projet…", "ghost", "Ouvrir une archive .studioproj",
-                               self.import_project.emit))
-        head.add_action(button("Nouveau projet", "primary", "Ctrl+N", lambda: self.new_project.emit(None)))
+        head = PageHeader("Accueil")
+        head.add_action(button("Importer un projet", "ghost", "Ouvrir une archive .studioproj",
+                               self.import_project.emit, icon="upload"))
         self.lay.addWidget(head)
-
-        concepts = self.app.concepts.list_concepts()
-        if not concepts:
-            self.lay.addWidget(EmptyState(
-                "Commencez par créer un concept",
-                "Un concept regroupe une chaîne ou un univers (ex. Poussey Pass, Pokémon) et les comptes "
-                "sociaux sur lesquels il publie. Chaque vidéo appartient à un concept.",
-                "Créer un concept", lambda: self.edit_concept.emit(None)), 1)
-            return
-
         self.lay.addLayout(self._alerts())
         start = self._getting_started()
         if start is not None:
             self.lay.addWidget(start)
-        # Concepts
+
+        # Le reste est discret : il s'éclaire au survol (seuls les premiers pas ressortent)
+        rest = DimOnHover(0.38 if start is not None else 1.0)
+        rl = QVBoxLayout(rest)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(18)
+        concepts = self.app.concepts.list_concepts()
         row = QHBoxLayout()
         row.addWidget(label("Concepts éditoriaux", "h2"))
         row.addStretch(1)
-        row.addWidget(button("+ Concept", "ghost", on_click=lambda: self.edit_concept.emit(None)))
-        self.lay.addLayout(row)
+        row.addWidget(button("Concept", "ghost", on_click=lambda: self.edit_concept.emit(None), icon="plus"))
+        rl.addLayout(row)
         grid = QGridLayout()
         grid.setSpacing(12)
         for i, c in enumerate(concepts):
             grid.addWidget(self._concept_card(c), i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
-        self.lay.addLayout(grid)
-
+        rl.addLayout(grid)
         cols = QHBoxLayout()
         cols.setSpacing(16)
         cols.addWidget(self._recent_projects(), 1)
         cols.addWidget(self._jobs_card(), 1)
-        self.lay.addLayout(cols)
+        rl.addLayout(cols)
         cols2 = QHBoxLayout()
         cols2.setSpacing(16)
         cols2.addWidget(self._exports_card(), 1)
         cols2.addWidget(self._publications_card(), 1)
-        self.lay.addLayout(cols2)
+        rl.addLayout(cols2)
+        self.lay.addWidget(rest)
         self.lay.addStretch(1)
 
     def setup_items(self) -> list[tuple[str, bool, str, str]]:
@@ -118,18 +128,32 @@ class DashboardPage(QWidget):
         items = self.setup_items()
         if all(done for _, done, _, _ in items):
             return None
-        card = Card(padding=12, spacing=4)
+        card = Card(padding=20, spacing=6)
+        done_n = sum(d for _, d, _, _ in items)
         head = QHBoxLayout()
-        head.addWidget(label(f"Premiers pas · {sum(d for _, d, _, _ in items)}/{len(items)}", "h2"))
+        head.addWidget(label("Premiers pas", "h1"))
+        head.addSpacing(8)
+        head.addWidget(label(f"{done_n}/{len(items)}", "badge"))
         head.addStretch(1)
         head.addWidget(button("Masquer", "ghost", on_click=self._hide_start))
         card.lay.addLayout(head)
+        bar = QProgressBar()
+        bar.setRange(0, len(items))
+        bar.setValue(done_n)
+        card.lay.addWidget(bar)
+        card.lay.addSpacing(6)
         for text, done, action, tab in items:
             row = QHBoxLayout()
-            row.addWidget(label(("✓ " if done else "○ ") + text, "muted" if done else None))
+            row.setSpacing(10)
+            ic = QLabel()
+            col = theme.color("accent") if done else theme.color("faint")
+            ic.setPixmap(theme.icon("check" if done else "circle-help", col, 18).pixmap(18, 18)) if done else \
+                ic.setPixmap(_ring(18, col))
+            row.addWidget(ic)
+            row.addWidget(label(text, "muted" if done else None))
             row.addStretch(1)
             if not done:
-                row.addWidget(button(action, "ghost", on_click=lambda _=False, t=tab: self.open_settings.emit(t)))
+                row.addWidget(button(action, "soft", on_click=lambda _=False, t=tab: self.open_settings.emit(t)))
             card.lay.addLayout(row)
         return card
 

@@ -529,7 +529,7 @@ def test_settings_tab_shortcuts(window):
     sp.show_models()
     assert sp.tabs.tabText(sp.tabs.currentIndex()) == "Matériel et moteurs"
     sp.show_about()
-    assert sp.tabs.tabText(sp.tabs.currentIndex()) == "À propos"
+    assert sp.tabs.tabText(sp.tabs.currentIndex()) == "Général"                 # « À propos » est dans Général
 
 
 def test_reframe_flow(window, monkeypatch):
@@ -830,3 +830,101 @@ def test_projects_dialog(window, monkeypatch):
     d._delete()                                                  # projet ouvert : refusé
     assert ctx.projects.get(a) is not None
     w.studio.refresh()
+
+
+def test_dock_parcours_and_drafts(window):
+    from studiovideo.ui import theme
+    w, ctx = window
+    assert set(w.dock.buttons) == set(theme.PARCOURS)
+    w.start_parcours("translation")
+    sheet = w._sheet
+    sheet.formats.button(1).setChecked(True)                  # 16:9
+    assert sheet.aspect() == "16:9"
+    sheet._create()
+    pid = w.studio.project_id
+    p = ctx.projects.get(pid)
+    assert p["mode"] == "translation" and p["concept_name"] == "Brouillons"
+    assert w.studio.tl.format.aspect == "16:9"
+    assert w.dock.buttons["translation"].isChecked()
+    assert theme.current["accent"].lower() == theme.PARCOURS["translation"][2].lower()
+    w.go(0)                                                     # hors Studio : plus de parcours actif
+    assert not w.dock.buttons["translation"].isChecked()
+    w.drawer.navigate.emit(6)
+    assert w.pages.currentWidget() is w.concepts_page
+
+
+def test_drop_video_creates_draft_with_auto_clips(window, tmp_path):
+    import subprocess
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    from studiovideo.media import ffmpeg
+    if not ffmpeg.available():
+        pytest.skip("FFmpeg absent")
+    w, ctx = window
+    v = tmp_path / "Mon interview.mp4"
+    subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:d=2:r=25",
+                    "-f", "lavfi", "-i", "sine=f=300:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(v)], check=True)
+    w.go(0)
+    pid = w.drop_files([str(v)])
+    p = ctx.projects.get(pid)
+    assert p["name"] == "Mon interview" and p["mode"] == "smart_clipping"
+    end = time.time() + 30
+    job = None
+    while time.time() < end:
+        QApplication.processEvents()
+        job = next((j for j in ctx.jobs.list(limit=20) if j.kind == "auto_clips"), None)
+        if job and job.status in ("succeeded", "failed"):
+            break
+        time.sleep(0.05)
+    assert job is not None and job.status == "succeeded", job and job.error
+    from studiovideo.transcribe import engines
+    if not (engines.available() and engines.installed_models(ctx.paths.models)):
+        assert "modèle de transcription" in job.result["skipped"]          # signalé, jamais simulé
+
+
+def test_separated_music_goes_to_music_track(window, tmp_path):
+    import shutil
+    import subprocess
+
+    from studiovideo.media import ffmpeg
+    if not ffmpeg.available():
+        pytest.skip("FFmpeg absent")
+    w, ctx = window
+    v = tmp_path / "clip.mp4"
+    subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:d=3:r=25",
+                    "-f", "lavfi", "-i", "sine=f=300:d=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    "-shortest", str(v)], check=True)
+    pid = ctx.projects.quick_create(ctx.concepts, "free_edit")
+    aid = ctx.importer().import_file(v, project_id=pid).asset_id
+    w.open_project(pid)
+    st = w.studio
+    st.tl.add_segment(aid, 1.0, 3.0)
+    st._changed(panel=True)
+    d = ctx.stems.directory(aid)
+    d.mkdir(parents=True)
+    for name, f in (("voice.wav", 300), ("music.wav", 600)):
+        subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=f={f}:d=3",
+                        str(d / name)], check=True)
+    ctx.stems.mark_done(aid, "kim_vocal_2")
+    assert st.apply_stems(aid)
+    m = st.tl.music
+    assert m.asset_id and m.src_offset == 1.0 and not m.duck and st.tl.voice.isolate
+    assert ctx.library.get(m.asset_id)["file_name"] == "Musique · clip.wav"
+    st.undo()
+    assert not st.tl.music.asset_id
+
+
+def test_font_picker_and_speakers_menu(window):
+    from studiovideo.ui.montage_panel import FontPicker
+    w, _ = window
+    fp = FontPicker()
+    got = []
+    fp.fontChanged.connect(got.append)
+    assert fp.count() > 0
+    fp.setCurrentIndex(fp.count() - 1)
+    assert got and got[-1] == fp.currentData()
+    fp.set_family("Police Inventée")                        # police absente : ajoutée et choisie
+    assert fp.currentData() == "Police Inventée"

@@ -7,7 +7,7 @@ from typing import Any
 from ..db.database import Database
 
 DEFAULTS: dict[str, Any] = {
-    "theme": "dark",
+    "theme": "light",
     "update_channel": "stable",
     "max_workers": 2,
 }

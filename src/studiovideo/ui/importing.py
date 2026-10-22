@@ -38,7 +38,7 @@ def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id:
             continue
         if dup:
             r = QMessageBox.question(parent, "Média déjà importé",
-                                     f"« {path.name} » est déjà dans la bibliothèque.\nL'importer une seconde fois ?",
+                                     f"« {path.name} » est déjà dans Extraits.\nL'importer une seconde fois ?",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 continue

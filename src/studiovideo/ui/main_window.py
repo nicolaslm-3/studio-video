@@ -6,8 +6,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QMainWindow, QMessageBox,
-                               QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout,
+                               QWidget)
 
 from .. import __version__
 from ..core import AppContext
@@ -16,9 +16,11 @@ from . import theme
 from .dialogs import ConceptDialog, NewProjectDialog
 from .importing import pick_and_import
 from .jobs_panel import JobsPanel
+from .shell import Dock, Drawer, ParcoursSheet, Popover, Toast
 from .pages.dashboard import DashboardPage
 from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
+from .pages.concepts import ConceptsPage
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
@@ -26,8 +28,10 @@ from .widgets import JobBridge, button, label
 
 log = logging.getLogger(__name__)
 
-NAV = [("Tableau de bord", "Ctrl+1"), ("Studio", "Ctrl+2"), ("Bibliothèque", "Ctrl+3"),
-       ("Calendrier", "Ctrl+4"), ("Analytiques", "Ctrl+5"), ("Paramètres", "Ctrl+6")]
+# (index de page, nom, icône, raccourci)
+NAV = [(0, "Accueil", "house", "Ctrl+1"), (1, "Studio", "clapperboard", "Ctrl+2"), (2, "Extraits", "film", "Ctrl+3"),
+       (3, "Calendrier", "calendar-days", "Ctrl+4"), (4, "Analytics", "chart-no-axes-column", "Ctrl+5"),
+       (6, "Concepts et projets", "folder-kanban", "Ctrl+6"), (5, "Paramètres", "settings", "Ctrl+7")]
 
 
 class MainWindow(QMainWindow):
@@ -49,38 +53,12 @@ class MainWindow(QMainWindow):
                                                    self._shutdown_requested.emit)
 
         central = QWidget()
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.setCentralWidget(central)
 
-        # navigation latérale
-        side = QFrame()
-        side.setProperty("role", "sidebar")
-        side.setFixedWidth(208)
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(12, 18, 12, 12)
-        sl.setSpacing(2)
-        brand = label("Studio Vidéo", "h2")
-        brand.setContentsMargins(10, 0, 0, 14)
-        sl.addWidget(brand)
-        self.nav_group = QButtonGroup(self)
-        self.nav_group.setExclusive(True)
-        for i, (name, key) in enumerate(NAV):
-            b = button(name, "nav", f"{name} ({key})")
-            b.setCheckable(True)
-            self.nav_group.addButton(b, i)
-            sl.addWidget(b)
-            QShortcut(QKeySequence(key), self, activated=lambda i=i: self.go(i))
-        self.nav_group.idClicked.connect(self.go)
-        sl.addStretch(1)
-        self.jobs_btn = button("Aucune tâche", "nav", "Afficher les tâches (Ctrl+J)", self.toggle_jobs)
-        sl.addWidget(self.jobs_btn)
-        sl.addWidget(label(f"v{__version__}", "faint"))
-        root.addWidget(side)
-
-        # pages + panneau des tâches
-        self.vsplit = QSplitter(Qt.Vertical)
+        # pages
         self.pages = QStackedWidget()
         self.dashboard = DashboardPage(app)
         self.studio = StudioPage(app)
@@ -88,23 +66,43 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
         self.calendar = CalendarPage(app)
         self.analytics = AnalyticsPage(app)
-        for p in (self.dashboard, self.studio, self.library, self.calendar, self.analytics, self.settings_page):
+        self.concepts_page = ConceptsPage(app, self.settings_page)
+        for p in (self.dashboard, self.studio, self.library, self.calendar, self.analytics, self.settings_page,
+                  self.concepts_page):
             self.pages.addWidget(p)
-        self.vsplit.addWidget(self.pages)
-        self.jobs_panel = JobsPanel(app)
-        self.vsplit.addWidget(self.jobs_panel)
-        self.vsplit.setStretchFactor(0, 4)
-        self.vsplit.setStretchFactor(1, 1)
-        self.jobs_panel.hide()
-        root.addWidget(self.vsplit, 1)
+        root.addWidget(self.pages, 1)
 
-        self.statusBar().showMessage(f"Données : {app.paths.root}")
+        # dock centré en bas (parcours) + tiroir de navigation + tâches
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 4, 0, 12)
+        bottom.addStretch(1)
+        self.dock = Dock()
+        bottom.addWidget(self.dock)
+        bottom.addStretch(1)
+        root.addLayout(bottom)
+        self.drawer = Drawer([(i, name, ic) for i, name, ic, _k in NAV], __version__, self)
+        self.nav_group = self.drawer.group
+        for i, name, _ic, key in NAV:
+            QShortcut(QKeySequence(key), self, activated=lambda i=i: self.go(i))
+        self.drawer.navigate.connect(self.go)
+        self.dock.menu_clicked.connect(lambda: self.drawer.show_above(self.dock.menu_btn, "left"))
+        self.dock.parcours_clicked.connect(self.start_parcours)
+        self.jobs_pop = Popover(self)
+        self.jobs_pop.frame.setFixedSize(720, 380)
+        self.jobs_panel = JobsPanel(app)
+        self.jobs_pop.lay.setContentsMargins(4, 4, 4, 4)
+        self.jobs_pop.lay.addWidget(self.jobs_panel)
+        self.dock.jobs_clicked.connect(lambda: self.toggle_jobs(True))
+        self.toast = Toast(self.dock)
+        self.statusBar().hide()
 
         # signaux
         for page in (self.dashboard, self.studio):
             page.new_project.connect(self.new_project)
         self.studio.open_models.connect(lambda: (self.go(5), self.settings_page.show_models()))
         self.studio.open_ai_settings.connect(lambda: (self.go(5), self.settings_page.show_models()))
+        self.concepts_page.edit_concept.connect(self.edit_concept)
+        self.concepts_page.open_project.connect(self.open_project)
         self.settings_page.llm_changed.connect(self.studio.highlights.refresh_engines)
         self.dashboard.open_project.connect(self.open_project)
         self.dashboard.edit_concept.connect(self.edit_concept)
@@ -112,9 +110,10 @@ class MainWindow(QMainWindow):
         self.dashboard.open_calendar.connect(lambda: self.go(3))
         self.dashboard.import_project.connect(self.import_project)
         self.dashboard.all_projects.connect(self.show_projects)
-        self.dashboard.open_settings.connect(lambda tab: (self.go(5), self.settings_page.show_tab(tab)))
+        self.dashboard.open_settings.connect(
+            lambda tab: self.go(6) if tab == "Concepts et comptes" else (self.go(5), self.settings_page.show_tab(tab)))
         self.settings_page.edit_concept.connect(self.edit_concept)
-        self.settings_page.theme_changed.connect(lambda m: theme.apply(QApplication.instance(), m))
+        self.settings_page.theme_changed.connect(self.set_theme)
         self.settings_page.check_updates.connect(self.updater.check_now)
 
         self.bridge = JobBridge()
@@ -130,13 +129,14 @@ class MainWindow(QMainWindow):
         self._watch_timer = QTimer(self, interval=15000, timeout=self.check_watch_folder)
         self._watch_timer.start()
 
+        self.setAcceptDrops(True)
         self._restore_layout()
         self.go(0)
         self._update_jobs_btn()
         app.importer().refresh_missing()
         resumed = app.jobs.resume_pending()
         if resumed:
-            self.statusBar().showMessage(f"{resumed} tâche(s) en attente reprise(s).", 6000)
+            self.notify(f"{resumed} tâche(s) en attente reprise(s).", 6000)
         if startup_message:
             QTimer.singleShot(400, lambda: QMessageBox.information(self, "Studio Vidéo", startup_message))
         QTimer.singleShot(1500, self._start_updater)
@@ -149,8 +149,11 @@ class MainWindow(QMainWindow):
 
     # -- navigation ---------------------------------------------------------
     def go(self, index: int) -> None:
-        self.nav_group.button(index).setChecked(True)
+        b = self.nav_group.button(index)
+        if b is not None:
+            b.setChecked(True)
         self.pages.setCurrentIndex(index)
+        self._sync_dock()
         page = self.pages.currentWidget()
         if hasattr(page, "refresh"):
             page.refresh()
@@ -174,11 +177,13 @@ class MainWindow(QMainWindow):
         due = manual
         n = self.calendar.pending_count()
         self.nav_group.button(3).setText("Calendrier" + (f"  ● {n}" if n else ""))
+        self.dock.menu_btn.badge = f"{n} à publier" if n else ""
+        self.dock.menu_btn.update()
         if due:
             from ..publish.rules import RULES
             names = ", ".join(f"{RULES[r['platform']].label} {r['account']} ({r['title'] or 'sans titre'})"
                               for r in due[:3])
-            self.statusBar().showMessage(f"À publier maintenant : {names}" + (" …" if len(due) > 3 else ""), 60_000)
+            self.notify(f"À publier maintenant : {names}" + (" …" if len(due) > 3 else ""), 60_000)
             if self.pages.currentWidget() is self.calendar:
                 self.calendar.refresh()
             QApplication.alert(self)
@@ -228,10 +233,81 @@ class MainWindow(QMainWindow):
         ShortcutsDialog(self).exec()
 
     def toggle_jobs(self, force: bool | None = None) -> None:
-        show = (not self.jobs_panel.isVisible()) if force is None or not isinstance(force, bool) else force
-        self.jobs_panel.setVisible(show)
+        show = (not self.jobs_pop.isVisible()) if force is None or not isinstance(force, bool) else force
         if show:
             self.jobs_panel.refresh()
+            self.jobs_pop.show_above(self.dock.jobs_btn, "right")
+        else:
+            self.jobs_pop.hide()
+
+    # -- glisser-déposer n'importe où ----------------------------------------
+    def dragEnterEvent(self, e) -> None:
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e) -> None:
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            self.drop_files(paths)
+
+    def drop_files(self, paths: list[str]) -> int | None:
+        """Studio ouvert : ajout au projet. Ailleurs : projet « Brouillon » créé, extraits cherchés d'office."""
+        from ..media.importer import VIDEO_EXT
+        if self.pages.currentWidget() is self.studio and self.studio.project_id:
+            from .importing import import_paths
+            import_paths(self.app, self, paths, self.studio.project_id)
+            return self.studio.project_id
+        vids = [Path(p) for p in paths if Path(p).suffix.lower() in VIDEO_EXT and Path(p).is_file()]
+        if not vids:
+            from .importing import import_paths
+            import_paths(self.app, self, paths)
+            self.notify("Ajouté à Extraits.")
+            return None
+        pid = self.app.projects.quick_create(self.app.concepts, "smart_clipping", vids[0].stem[:60], "9:16")
+        for v in vids:
+            self.app.jobs.submit("import_file", f"Import · {v.name}",
+                                 {"path": str(v), "project_id": pid, "auto_clips": True})
+        self.open_project(pid)
+        self.notify("Projet brouillon créé : transcription et recherche des moments forts en cours…", 7000)
+        return pid
+
+    def notify(self, text: str, ms: int = 5000) -> None:
+        self.toast.show_message(text, ms)
+
+    # -- parcours (dock) ------------------------------------------------------
+    def start_parcours(self, mode: str) -> None:
+        """Clic sur un parcours : reprendre un projet ou en commencer un (format seulement)."""
+        cur = self.app.projects.get(self.studio.project_id) if self.studio.project_id else None
+        sheet = ParcoursSheet(mode, self.app.projects.by_mode(mode), self)
+        sheet.open_project.connect(self.open_project)
+        sheet.create.connect(self.create_project)
+        self._sheet = sheet
+        self._sync_dock()
+        sheet.show_above(self.dock.buttons[mode])
+        if cur is not None and cur["mode"] == mode and self.pages.currentWidget() is not self.studio:
+            pass
+
+    def create_project(self, mode: str, aspect: str, name: str = "") -> int:
+        pid = self.app.projects.quick_create(self.app.concepts, mode, name, aspect)
+        self.open_project(pid)
+        return pid
+
+    def _sync_dock(self) -> None:
+        mode = None
+        if self.pages.currentWidget() is self.studio and self.studio.project_id:
+            p = self.app.projects.get(self.studio.project_id)
+            mode = p["mode"] if p else None
+        self.dock.set_active(mode)
+        col = theme.PARCOURS[mode][2] if mode in theme.PARCOURS else None
+        theme.set_accent(self, col)
+        self.studio.panel._tab_title(self.studio.panel.currentIndex())
+
+    def set_theme(self, mode: str) -> None:
+        theme.apply(QApplication.instance(), mode)
+        self.setStyleSheet("")
+        self.dock.restyle()
+        self.drawer.restyle()
+        self._sync_dock()
 
     # -- actions ------------------------------------------------------------
     def new_project(self, concept_id=None) -> None:
@@ -245,8 +321,8 @@ class MainWindow(QMainWindow):
             self.open_project(dlg.project_id)
 
     def open_project(self, project_id: int) -> None:
-        self.go(1)
         self.studio.open_project(project_id)
+        self.go(1)
         p = self.app.projects.get(project_id)
         if p and p["mode"] == "smart_clipping":
             self.studio.left_tabs.setCurrentIndex(2 if self.app.transcripts.has(self.studio.asset_id or 0) else 1)
@@ -261,7 +337,7 @@ class MainWindow(QMainWindow):
             return
         self._import_job = self.app.jobs.submit("import_project", "Import du projet", {
             "path": path, "media_dir": str(default_export_dir() / "Projets importés")})
-        self.statusBar().showMessage("Import du projet en cours…", 10000)
+        self.notify("Import du projet en cours…", 10000)
 
     def _on_project_imported(self, j) -> None:
         if j.status == "succeeded":
@@ -282,7 +358,7 @@ class MainWindow(QMainWindow):
 
     def _on_job(self, job_id: int) -> None:
         self._update_jobs_btn()
-        if self.jobs_panel.isVisible():
+        if self.jobs_pop.isVisible():
             self.jobs_panel.schedule_refresh()
         j = self.app.jobs.get(job_id)
         if j:
@@ -297,10 +373,18 @@ class MainWindow(QMainWindow):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
                 self._import_refresh.timeout.connect(self._refresh_after_import)
             self._import_refresh.start()
+        if j and j.kind == "auto_clips" and j.status in ("succeeded", "failed"):
+            r = j.result or {}
+            if j.status == "failed":
+                self.notify(f"Extraits automatiques : {j.error.splitlines()[-1][:200] if j.error else 'échec'}", 10000)
+            elif r.get("skipped"):
+                self.notify(r["skipped"], 12000)
+            else:
+                self.notify(f"{r.get('count', 0)} moment(s) fort(s) proposé(s).", 8000)
         elif j and j.status == "succeeded" and isinstance(j.result, dict) and j.result.get("warning"):
-            self.statusBar().showMessage(f"{j.label} : {j.result['warning']}", 15000)
+            self.notify(f"{j.label} : {j.result['warning']}", 15000)
         elif j and j.status == "failed" and j.kind != "preview_frame":
-            self.statusBar().showMessage(f"Échec : {j.label} — {j.error.splitlines()[0] if j.error else ''}", 10000)
+            self.notify(f"Échec : {j.label} — {j.error.splitlines()[0] if j.error else ''}", 10000)
 
     def _refresh_after_import(self) -> None:
         page = self.pages.currentWidget()
@@ -313,10 +397,7 @@ class MainWindow(QMainWindow):
         n = self.app.jobs.active_count()
         failed = self.app.db.query_one("SELECT COUNT(*) n FROM job WHERE status='failed' AND "
                                        "finished_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 hour')")["n"]
-        txt = f"Tâches · {n} en cours" if n else "Tâches"
-        if failed:
-            txt += f" · {failed} échec"
-        self.jobs_btn.setText(txt)
+        self.dock.set_jobs(n, failed)
 
     # -- mises à jour -------------------------------------------------------
     def _start_updater(self) -> None:
@@ -342,9 +423,6 @@ class MainWindow(QMainWindow):
         geo = s.value("geometry")
         if isinstance(geo, QByteArray):
             self.restoreGeometry(geo)
-        sp = s.value("vsplit")
-        if isinstance(sp, QByteArray):
-            self.vsplit.restoreState(sp)
 
     def closeEvent(self, e) -> None:
         if not self._closing_for_update:
@@ -358,7 +436,6 @@ class MainWindow(QMainWindow):
         self.studio.flush()
         s = QSettings(str(self.app.paths.root / "ui.ini"), QSettings.IniFormat)
         s.setValue("geometry", self.saveGeometry())
-        s.setValue("vsplit", self.vsplit.saveState())
         self.studio.player.unload()
         self.studio.mplayer.stop()
         self.updater.stop()

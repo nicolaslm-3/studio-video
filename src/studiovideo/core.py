@@ -76,7 +76,12 @@ def _register_handlers(app: AppContext) -> None:
             params["path"], project_id=params.get("project_id"),
             allow_duplicate=params.get("allow_duplicate", False), progress=ctx.progress)
         _maybe_proxy(res.asset_id)
-        return {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings}
+        out = {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings}
+        if params.get("auto_clips") and res.kind == "video" and params.get("project_id"):
+            app.jobs.submit("auto_clips", f"Extraits automatiques · {Path(params['path']).name}",
+                            {"asset_id": res.asset_id, "project_id": params["project_id"]})
+            out["auto_clips"] = True
+        return out
 
     def _maybe_proxy(asset_id: int) -> None:
         from .media import proxy
@@ -262,6 +267,37 @@ def _register_handlers(app: AppContext) -> None:
         ctx.check()
         ids = app.candidates.replace_proposals(pid, aid, cands, req)
         return {"count": len(ids), "asset_id": aid, "engine": getattr(engine, "name", "local")}
+
+    def auto_clips(ctx: JobContext, params: dict) -> dict:
+        """Vidéo glissée sans projet : transcription (si un modèle est installé) puis moments forts, d'office."""
+        from .transcribe import engines
+        aid, pid = params["asset_id"], params["project_id"]
+        a = app.library.get(aid)
+        if a is None:
+            raise ValueError("Média introuvable.")
+        transcribed = False
+        if not app.transcripts.has(aid):
+            have = engines.installed_models(app.paths.models) if engines.available() else []
+            if not have:
+                return {"asset_id": aid, "project_id": pid, "count": 0,
+                        "skipped": "Aucun modèle de transcription installé : téléchargez-en un dans Paramètres "
+                                   "→ Matériel et moteurs, puis lancez « Moments forts »."}
+            pref = ["small", "base", "medium", "large-v3-turbo", "tiny"]
+            model = next((m for m in pref if m in have), have[0])
+            ctx.progress(0.01, "Transcription")
+            transcribe(ctx, {"asset_id": aid, "model": model})
+            transcribed = True
+        dur = float(a["duration_s"] or 0)
+        req = {"count": 8}
+        if dur and dur < 180:                          # vidéo courte : extraits plus courts
+            req.update(min_duration=max(4.0, dur * 0.12), max_duration=max(8.0, dur * 0.45),
+                       target_duration=max(6.0, dur * 0.25), count=max(2, min(6, int(dur // 15))))
+        llm = app.settings.get("llm", None) or {}
+        eng = ({"kind": llm["kind"], "model": llm.get("model", ""), "base_url": llm.get("base_url", "")}
+               if llm.get("kind") in ("ollama", "openai") and llm.get("model") else {"kind": "local"})
+        ctx.progress(0.5, "Recherche des moments forts")
+        res = find_highlights(ctx, {"asset_id": aid, "project_id": pid, "request": req, "engine": eng})
+        return {**res, "project_id": pid, "transcribed": transcribed}
 
     def optimize_audio(ctx: JobContext, params: dict) -> dict:
         from .edit import audiofix
@@ -963,6 +999,7 @@ def _register_handlers(app: AppContext) -> None:
     app.jobs.register("translate", translate)
     app.jobs.register("optimize_audio", optimize_audio)
     app.jobs.register("find_highlights", find_highlights)
+    app.jobs.register("auto_clips", auto_clips)
     app.jobs.register("transcribe", transcribe)
     app.jobs.register("download_model", download_model)
     app.jobs.register("import_file", import_file)

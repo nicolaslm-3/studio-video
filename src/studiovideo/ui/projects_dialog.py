@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QHBoxLayout, QHeaderView, QInputDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QWidget, QHBoxLayout, QHeaderView, QInputDialog,
                                QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from ..core import AppContext
@@ -11,19 +11,18 @@ from .widgets import button, label
 COLS = ["Projet", "Concept", "Médias", "Vidéos", "Modifié", "État"]
 
 
-class ProjectsDialog(QDialog):
+class ProjectsPanel(QWidget):
     open_project = Signal(int)
 
-    def __init__(self, app: AppContext, parent=None, current_id: int | None = None):
+    def __init__(self, app: AppContext, parent=None, current_id: int | None = None, closable: bool = False):
         super().__init__(parent)
         self.app, self.current_id = app, current_id
-        self.setWindowTitle("Tous les projets")
-        self.resize(820, 520)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
-        top.addWidget(label("Les fichiers ne sont jamais effacés : supprimer un projet retire seulement son montage "
-                            "et ses clips ; ses médias restent dans la bibliothèque.", "muted", wrap=True), 1)
-        self.show_archived = QCheckBox("Afficher les projets archivés")
+        top.addWidget(label("Projets", "h2"))
+        top.addStretch(1)
+        self.show_archived = QCheckBox("Archivés")
         self.show_archived.setChecked(True)
         self.show_archived.toggled.connect(self.refresh)
         top.addWidget(self.show_archived)
@@ -35,23 +34,31 @@ class ProjectsDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for j in range(1, len(COLS)):
+            self.table.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.itemDoubleClicked.connect(lambda _i: self._open())
         self.table.itemSelectionChanged.connect(self._sel_changed)
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
         self.b_open = button("Ouvrir", "primary", on_click=self._open)
-        self.b_rename = button("Renommer…", on_click=self._rename)
-        self.b_dup = button("Dupliquer", on_click=self._duplicate)
-        self.b_concept = button("Changer de concept…", on_click=self._concept)
-        self.b_arch = button("Archiver", on_click=self._archive)
-        self.b_del = button("Supprimer…", "danger", on_click=self._delete)
+        self.b_rename = button("Renommer", "ghost", on_click=self._rename)
+        self.b_dup = button("Dupliquer", "ghost", on_click=self._duplicate)
+        self.b_concept = button("Concept…", "ghost", tooltip="Ranger dans un autre concept", on_click=self._concept)
+        self.b_arch = button("Archiver", "ghost", on_click=self._archive)
+        self.b_del = button("Supprimer", "danger", tooltip="Les fichiers ne sont jamais effacés : le montage et les "
+                            "clips sont retirés, les médias restent dans Extraits.", on_click=self._delete)
         for b in (self.b_open, self.b_rename, self.b_dup, self.b_concept, self.b_arch):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(self.b_del)
-        row.addWidget(button("Fermer", "ghost", on_click=self.reject))
+        self.closable = closable
         lay.addLayout(row)
         self.refresh()
+
+    def accept(self) -> None:          # remplacé par la fenêtre qui contient le panneau
+        pass
 
     def refresh(self, *_):
         keep = self.selected()
@@ -127,7 +134,7 @@ class ProjectsDialog(QDialog):
             return
         if QMessageBox.question(self, "Supprimer", f"Supprimer le projet « {p['name']} » ?\n\nSon montage, ses clips "
                                 "et l'historique de ses exports sont retirés. Les fichiers vidéo (sources et "
-                                "exports) restent sur le disque et les médias dans la bibliothèque.") != QMessageBox.Yes:
+                                "exports) restent sur le disque et les médias dans Extraits.") != QMessageBox.Yes:
             return
         try:
             self.app.projects.delete(pid)
@@ -135,3 +142,24 @@ class ProjectsDialog(QDialog):
             QMessageBox.information(self, "Supprimer", str(exc))
             return
         self.refresh()
+
+
+class ProjectsDialog(QDialog):
+    """Fenêtre « Tous les projets » (le panneau est aussi dans la page Concepts et projets)."""
+    open_project = Signal(int)
+
+    def __init__(self, app: AppContext, parent=None, current_id: int | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Tous les projets")
+        self.resize(820, 520)
+        lay = QVBoxLayout(self)
+        self.panel = ProjectsPanel(app, self, current_id)
+        self.panel.accept = self.accept
+        self.panel.open_project.connect(self.open_project.emit)
+        lay.addWidget(self.panel)
+
+    def __getattr__(self, name):
+        panel = self.__dict__.get("panel") if "panel" in self.__dict__ else None
+        if panel is None:
+            raise AttributeError(name)
+        return getattr(panel, name)

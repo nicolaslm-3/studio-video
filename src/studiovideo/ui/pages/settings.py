@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QHeaderView,
+from PySide6.QtGui import QColor, QIcon
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QTableWidget, QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget)
 
@@ -20,10 +21,28 @@ from ...services.concepts import ConceptError
 from ...transcribe import engines as asr
 from ...update import rollback
 from ..dialogs import AccountDialog
-from ..widgets import Card, PageHeader, button, label
+from .. import theme
+from ..widgets import Card, PageHeader, button, hint_icon, label
 
 CONNECTION_LABELS = {"disconnected": "Non connecté", "connected": "Connecté", "expired": "Expiré",
                      "revoked": "Révoqué", "error": "Erreur"}
+
+
+def _cell(w: QWidget) -> QWidget:
+    """Bouton centré dans une cellule de tableau (sans être étiré)."""
+    box = QWidget()
+    h = QHBoxLayout(box)
+    h.setContentsMargins(4, 3, 8, 3)
+    h.addStretch(1)
+    h.addWidget(w)
+    return box
+
+
+def _fit_height(t: QTableWidget) -> None:
+    """Le tableau prend la hauteur de ses lignes : pas de barre de défilement interne."""
+    h = t.horizontalHeader().height() + sum(t.rowHeight(i) for i in range(t.rowCount())) + 4
+    t.setFixedHeight(max(80, h))
+    t.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
 
 class SettingsPage(QWidget):
@@ -37,21 +56,35 @@ class SettingsPage(QWidget):
         self.app = app
         self.updater_status = updater_status
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(32, 28, 32, 28)
-        lay.setSpacing(14)
+        lay.setContentsMargins(36, 30, 36, 8)
+        lay.setSpacing(12)
         lay.addWidget(PageHeader("Paramètres"))
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._concepts_tab(), "Concepts et comptes")
-        self.tabs.addTab(self._publishing_tab(), "Publication")
-        self.tabs.addTab(self._general_tab(), "Général")
-        self.tabs.addTab(self._storage_tab(), "Stockage et sauvegardes")
         from PySide6.QtWidgets import QScrollArea
-        hw = QScrollArea()
-        hw.setWidgetResizable(True)
-        hw.setFrameShape(QScrollArea.NoFrame)
-        hw.setWidget(self._hardware_tab())
-        self.tabs.addTab(hw, "Matériel et moteurs")
-        self.tabs.addTab(self._about_tab(), "À propos")
+
+        def column(*widgets, width=860):
+            body = QWidget()
+            col = QVBoxLayout(body)
+            col.setContentsMargins(0, 8, 0, 16)
+            col.setSpacing(14)
+            for x in widgets:
+                col.addWidget(x)
+            col.addStretch(1)
+            body.setMaximumWidth(width)
+            box = QWidget()
+            bl = QHBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.addWidget(body, 1)
+            bl.addStretch(0)
+            sc = QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setFrameShape(QScrollArea.NoFrame)
+            sc.setWidget(box)
+            return sc
+
+        self.tabs.addTab(column(self._general_tab(), self._storage_tab(), self._about_tab()), "Général")
+        self.tabs.addTab(self._publishing_tab(), "Publication")
+        self.tabs.addTab(column(self._hardware_tab(), width=820), "Matériel et moteurs")
         lay.addWidget(self.tabs, 1)
 
     def show_about(self) -> None:
@@ -69,9 +102,10 @@ class SettingsPage(QWidget):
         self.concept_list.itemDoubleClicked.connect(lambda it: self.edit_concept.emit(it.data(Qt.UserRole)))
         left.lay.addWidget(self.concept_list, 1)
         lb = QHBoxLayout()
-        lb.addWidget(button("Nouveau", on_click=lambda: self.edit_concept.emit(None)))
-        lb.addWidget(button("Modifier", on_click=self._edit_selected_concept))
-        lb.addWidget(button("Archiver", on_click=self._archive_concept))
+        lb.addWidget(button("Nouveau", "soft", on_click=lambda: self.edit_concept.emit(None), icon="plus"))
+        lb.addWidget(button("Modifier", "ghost", on_click=self._edit_selected_concept))
+        lb.addWidget(button("Archiver", "ghost", on_click=self._archive_concept))
+        lb.addStretch(1)
         left.lay.addLayout(lb)
         h.addWidget(left, 1)
 
@@ -89,12 +123,12 @@ class SettingsPage(QWidget):
         self.acc_table.setShowGrid(False)
         right.lay.addWidget(self.acc_table, 1)
         rb = QHBoxLayout()
-        rb.addWidget(button("Nouveau compte", on_click=self._new_account))
-        rb.addWidget(button("Supprimer", "danger", on_click=self._delete_account))
+        rb.addWidget(button("Nouveau compte", "soft", on_click=self._new_account, icon="plus"))
+        rb.addWidget(button("Supprimer", "ghost", on_click=self._delete_account))
         rb.addStretch(1)
-        self.connect_btn = button("Connecter", "primary", on_click=self._connect_account)
+        rb.addWidget(button("Déconnecter", "ghost", on_click=self._disconnect_account, icon="unplug"))
+        self.connect_btn = button("Connecter", "primary", on_click=self._connect_account, icon="plug-zap")
         rb.addWidget(self.connect_btn)
-        rb.addWidget(button("Déconnecter", "ghost", on_click=self._disconnect_account))
         right.lay.addLayout(rb)
         self.acc_status = label("", "muted", wrap=True)
         right.lay.addWidget(self.acc_status)
@@ -108,6 +142,8 @@ class SettingsPage(QWidget):
         for c in self.app.concepts.list_concepts():
             n = len(self.app.concepts.concept_accounts(c.id))
             it = QListWidgetItem(f"{c.name}   ·  {n} compte(s)")
+            from ..widgets import color_dot
+            it.setIcon(QIcon(color_dot(c.color, 12).pixmap()))
             it.setData(Qt.UserRole, c.id)
             self.concept_list.addItem(it)
         accounts = self.app.concepts.list_accounts()
@@ -118,28 +154,53 @@ class SettingsPage(QWidget):
                                    CONNECTION_LABELS.get(a.connection_status, a.connection_status), concepts)):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, a.id)
+                if j == 0:
+                    item.setIcon(theme.platform_icon(a.platform.value, 18))
+                if j == 3:
+                    from PySide6.QtGui import QColor
+                    item.setForeground(QColor(theme.color("ok") if a.connection_status == "connected" else
+                                              theme.color("danger") if a.connection_status in ("expired", "revoked",
+                                                                                                "error")
+                                              else theme.color("muted")))
                 self.acc_table.setItem(i, j, item)
 
+    def _platform_card(self, platform: str, title: str, guide: str, fields: list, on_save, configured: bool):
+        """Carte compacte d'une plateforme : logo, état, champs, enregistrement ; le mode d'emploi en infobulle."""
+        card = Card(padding=16, spacing=8)
+        head = QHBoxLayout()
+        ic = QLabel()
+        ic.setPixmap(theme.platform_icon(platform, 22).pixmap(22, 22))
+        head.addWidget(ic)
+        head.addWidget(label(title, "h2"))
+        head.addWidget(hint_icon(guide))
+        head.addStretch(1)
+        st = label("Configuré" if configured else "À configurer", "badge")
+        if not configured:
+            st.setStyleSheet(f"color:{theme.color('muted')}; background:{theme.color('hover')};")
+        head.addWidget(st)
+        card.lay.addLayout(head)
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(8)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        for name, w in fields:
+            w.setMaximumWidth(340)
+            form.addRow(label(name, "muted"), w)
+        card.lay.addLayout(form)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button("Enregistrer", "soft", on_click=on_save, icon="save"))
+        card.lay.addLayout(row)
+        return card
+
     def _publishing_tab(self) -> QWidget:
-        w = QWidget()
-        outer = QVBoxLayout(w)
-        outer.setContentsMargins(0, 16, 0, 0)
-        card = Card()
-        self._plat_lay = card.lay
-        card.lay.addWidget(label("Mise en ligne automatique", "h2"))
-        card.lay.addWidget(label("Chaque plateforme exige votre propre application développeur. Une fois les "
-                                 "réglages enregistrés, sélectionnez le compte dans « Concepts et comptes » puis "
-                                 "« Connecter ».", "muted", wrap=True))
-        self._plat_lay.addWidget(label("YouTube — projet Google Cloud", "h2"))
-        self._plat_lay.addWidget(label(
-            "Pour la mise en ligne automatique, Google exige votre propre identifiant d'application : "
-            "console.cloud.google.com → nouveau projet → activer « YouTube Data API v3 » → écran de consentement "
-            "(type Externe, ajoutez votre adresse comme utilisateur test) → Identifiants → « ID client OAuth », "
-            "type « Application de bureau ». Collez ci-dessous l'ID et le code secret. Guide détaillé : "
-            "docs/YOUTUBE.md sur la page GitHub du logiciel.", "faint", wrap=True))
-        yf = QFormLayout()
+        from PySide6.QtWidgets import QGridLayout, QScrollArea
+        body = QWidget()
+        outer = QVBoxLayout(body)
+        outer.setContentsMargins(0, 12, 0, 12)
+        outer.setSpacing(14)
         self.yt_id = QLineEdit(self.app.settings.get("youtube_client_id", "") or "")
-        self.yt_id.setPlaceholderText("xxxxxxxx.apps.googleusercontent.com")
+        self.yt_id.setPlaceholderText("xxxx.apps.googleusercontent.com")
         self.yt_secret = QLineEdit()
         self.yt_secret.setEchoMode(QLineEdit.Password)
         self.yt_secret.setEnabled(secrets.available())
@@ -149,21 +210,16 @@ class SettingsPage(QWidget):
             self.yt_privacy.addItem(n, k)
         self.yt_privacy.setCurrentIndex(max(0, self.yt_privacy.findData(self.app.settings.get("youtube_privacy",
                                                                                                "public"))))
-        self.yt_auto = QCheckBox("Mettre en ligne automatiquement les publications programmées des comptes connectés")
+        self.yt_auto = QCheckBox("Mettre en ligne automatiquement à l'heure prévue (comptes connectés)")
         self.yt_auto.setChecked(bool(self.app.settings.get("auto_upload", True)))
-        yf.addRow("ID client", self.yt_id)
-        yf.addRow("Code secret", self.yt_secret)
-        yf.addRow("Visibilité", self.yt_privacy)
-        self._plat_lay.addLayout(yf)
-        self._plat_lay.addWidget(self.yt_auto)
-        self._plat_lay.addWidget(button("Enregistrer les réglages YouTube", on_click=self._save_youtube))
-        self._plat_lay.addWidget(label("TikTok — application développeur", "h2"))
-        self._plat_lay.addWidget(label(
-            "developers.tiktok.com → créez une application (type ordinateur), ajoutez « Login Kit » avec l'adresse "
-            "de retour http://127.0.0.1:*/callback/ et « Content Posting API » (Direct Post), puis collez la clé "
-            "et le code secret. Tant que TikTok n'a pas audité l'application, les vidéos sont publiées en privé "
-            "(le logiciel le signale). Guide : docs/TIKTOK.md.", "faint", wrap=True))
-        tf = QFormLayout()
+        self.yt_auto.toggled.connect(lambda v: self.app.settings.set("auto_upload", bool(v)))
+        top = QHBoxLayout()
+        top.addWidget(self.yt_auto)
+        top.addStretch(1)
+        top.addWidget(hint_icon("Chaque plateforme exige votre propre application développeur (gratuite). Une fois "
+                                "ses réglages enregistrés, connectez le compte dans Concepts et projets."))
+        outer.addLayout(top)
+
         self.tk_key = QLineEdit(self.app.settings.get("tiktok_client_key", "") or "")
         self.tk_secret = QLineEdit()
         self.tk_secret.setEchoMode(QLineEdit.Password)
@@ -175,51 +231,66 @@ class SettingsPage(QWidget):
             self.tk_privacy.addItem(n, k)
         self.tk_privacy.setCurrentIndex(max(0, self.tk_privacy.findData(
             self.app.settings.get("tiktok_privacy", "PUBLIC_TO_EVERYONE"))))
-        tf.addRow("Clé client", self.tk_key)
-        tf.addRow("Code secret", self.tk_secret)
-        tf.addRow("Visibilité", self.tk_privacy)
-        self._plat_lay.addLayout(tf)
-        self._plat_lay.addWidget(button("Enregistrer les réglages TikTok", on_click=self._save_tiktok))
-        self._plat_lay.addWidget(label("Instagram et Facebook — application Meta", "h2"))
-        self._plat_lay.addWidget(label(
-            "developers.facebook.com → créez une application (type Entreprise), ajoutez « Facebook Login for "
-            "Business » avec l'adresse de redirection http://localhost:8767/callback/ et le produit Instagram. Le "
-            "compte Instagram doit être professionnel et relié à une Page Facebook. Collez l'identifiant et la clé "
-            "secrète. Guide : docs/META.md.", "faint", wrap=True))
-        mf = QFormLayout()
         self.meta_id = QLineEdit(self.app.settings.get("meta_app_id", "") or "")
         self.meta_secret = QLineEdit()
         self.meta_secret.setEchoMode(QLineEdit.Password)
         self.meta_secret.setEnabled(secrets.available())
         self.meta_secret.setPlaceholderText("Enregistrée" if secrets.get_secret("meta_app_secret") else "Clé secrète")
-        mf.addRow("Identifiant de l'app", self.meta_id)
-        mf.addRow("Clé secrète", self.meta_secret)
-        self._plat_lay.addLayout(mf)
-        self._plat_lay.addWidget(button("Enregistrer les réglages Meta", on_click=self._save_meta))
-        self._plat_lay.addWidget(label("X — application développeur", "h2"))
-        self._plat_lay.addWidget(label(
-            "developer.x.com → projet et application, « User authentication settings » : OAuth 2.0, type « Web "
-            "App » ou « Native App », lecture et écriture, adresse de rappel http://127.0.0.1:8768/callback. "
-            "L'écriture par l'API dépend de votre offre X (éventuellement payante). Guide : docs/X.md.",
-            "faint", wrap=True))
-        xf = QFormLayout()
         self.x_id = QLineEdit(self.app.settings.get("x_client_id", "") or "")
         self.x_secret = QLineEdit()
         self.x_secret.setEchoMode(QLineEdit.Password)
         self.x_secret.setEnabled(secrets.available())
         self.x_secret.setPlaceholderText("Enregistré" if secrets.get_secret("x_client_secret") else
-                                         "Code secret (vide pour une « Native App »)")
-        xf.addRow("Client ID", self.x_id)
-        xf.addRow("Code secret", self.x_secret)
-        self._plat_lay.addLayout(xf)
-        self._plat_lay.addWidget(button("Enregistrer les réglages X", on_click=self._save_x))
-        from PySide6.QtWidgets import QScrollArea
+                                         "Facultatif (Native App)")
+        cards = [
+            self._platform_card("youtube", "YouTube", (
+                "console.cloud.google.com → nouveau projet → activer « YouTube Data API v3 » → écran de consentement "
+                "(Externe, votre adresse en utilisateur test) → Identifiants → « ID client OAuth », type « Application "
+                "de bureau ». Guide : docs/YOUTUBE.md."),
+                [("ID client", self.yt_id), ("Code secret", self.yt_secret), ("Visibilité", self.yt_privacy)],
+                self._save_youtube, bool(self.yt_id.text() and secrets.get_secret("youtube_client_secret"))),
+            self._platform_card("tiktok", "TikTok", (
+                "developers.tiktok.com → application (ordinateur), « Login Kit » avec l'adresse de retour "
+                "http://127.0.0.1:*/callback/ et « Content Posting API » (Direct Post). Tant que TikTok n'a pas audité "
+                "l'application, les vidéos sont publiées en privé. Guide : docs/TIKTOK.md."),
+                [("Clé client", self.tk_key), ("Code secret", self.tk_secret), ("Visibilité", self.tk_privacy)],
+                self._save_tiktok, bool(self.tk_key.text() and secrets.get_secret("tiktok_client_secret"))),
+            self._platform_card("instagram", "Instagram et Facebook", (
+                "developers.facebook.com → application (Entreprise), « Facebook Login for Business » avec la "
+                "redirection http://localhost:8767/callback/ et le produit Instagram. Le compte Instagram doit être "
+                "professionnel et relié à une Page Facebook. Guide : docs/META.md."),
+                [("Identifiant", self.meta_id), ("Clé secrète", self.meta_secret)],
+                self._save_meta, bool(self.meta_id.text() and secrets.get_secret("meta_app_secret"))),
+            self._platform_card("x", "X", (
+                "developer.x.com → projet et application, OAuth 2.0 (Web App ou Native App), lecture et écriture, "
+                "rappel http://127.0.0.1:8768/callback. L'écriture dépend de votre offre X. Guide : docs/X.md."),
+                [("Client ID", self.x_id), ("Code secret", self.x_secret)],
+                self._save_x, bool(self.x_id.text())),
+        ]
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        for i, c in enumerate(cards):
+            grid.addWidget(c, i // 2, i % 2)
+        outer.addLayout(grid)
+        outer.addStretch(1)
+        box = QWidget()
+        bl = QHBoxLayout(box)
+        bl.setContentsMargins(0, 0, 0, 0)
+        body.setMaximumWidth(980)
+        bl.addWidget(body, 1)
+        bl.addStretch(0)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QScrollArea.NoFrame)
-        sc.setWidget(card)
-        outer.addWidget(sc)
-        return w
+        sc.setWidget(box)
+        return sc
+
+    def _saved(self, what: str) -> None:
+        msg = f"Réglages {what} enregistrés."
+        self.acc_status.setText(msg) if hasattr(self, "acc_status") else None
+        win = self.window()
+        if hasattr(win, "notify"):
+            win.notify(msg, 3000)
 
     def _save_youtube(self) -> None:
         self.app.settings.set("youtube_client_id", self.yt_id.text().strip())
@@ -233,7 +304,7 @@ class SettingsPage(QWidget):
                 return
             self.yt_secret.clear()
             self.yt_secret.setPlaceholderText("Enregistré")
-        self.acc_status.setText("Réglages YouTube enregistrés.")
+        self._saved("YouTube")
 
     def _save_x(self) -> None:
         self.app.settings.set("x_client_id", self.x_id.text().strip())
@@ -245,7 +316,7 @@ class SettingsPage(QWidget):
                 return
             self.x_secret.clear()
             self.x_secret.setPlaceholderText("Enregistré")
-        self.acc_status.setText("Réglages X enregistrés.")
+        self._saved("X")
 
     def _save_meta(self) -> None:
         self.app.settings.set("meta_app_id", self.meta_id.text().strip())
@@ -257,7 +328,7 @@ class SettingsPage(QWidget):
                 return
             self.meta_secret.clear()
             self.meta_secret.setPlaceholderText("Enregistrée")
-        self.acc_status.setText("Réglages Meta enregistrés.")
+        self._saved("Meta")
 
     def _save_tiktok(self) -> None:
         self.app.settings.set("tiktok_client_key", self.tk_key.text().strip())
@@ -270,7 +341,7 @@ class SettingsPage(QWidget):
                 return
             self.tk_secret.clear()
             self.tk_secret.setPlaceholderText("Enregistré")
-        self.acc_status.setText("Réglages TikTok enregistrés.")
+        self._saved("TikTok")
 
     def _selected_account(self):
         row = self.acc_table.currentRow()
@@ -372,12 +443,12 @@ class SettingsPage(QWidget):
     def _general_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 16, 0, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         card = Card()
         form = QFormLayout()
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Sombre", "dark")
         self.theme_combo.addItem("Clair", "light")
+        self.theme_combo.addItem("Sombre", "dark")
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(self.app.settings.get("theme")))
         self.theme_combo.currentIndexChanged.connect(self._theme)
         form.addRow("Thème", self.theme_combo)
@@ -408,7 +479,7 @@ class SettingsPage(QWidget):
     def _storage_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 16, 0, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         p = self.app.paths
         info = Card()
         info.lay.addWidget(label("Emplacement des données", "h2"))
@@ -429,7 +500,7 @@ class SettingsPage(QWidget):
         wf = Card()
         wf.lay.addWidget(label("Dossier surveillé", "h2"))
         wf.lay.addWidget(label("Les vidéos, sons et images déposés dans ce dossier (ou un de ses sous-dossiers "
-                               "directs) sont importés automatiquement dans la bibliothèque, une fois la copie "
+                               "directs) sont importés automatiquement dans Extraits, une fois la copie "
                                "terminée. Les doublons sont ignorés ; les fichiers ne sont ni déplacés ni modifiés.",
                                "muted", wrap=True))
         self.watch_lbl = label("", wrap=True)
@@ -449,6 +520,7 @@ class SettingsPage(QWidget):
                                "sont gardées), ainsi qu'avant chaque migration et chaque mise à jour (les 20 plus "
                                "récentes).", "muted", wrap=True))
         self.backup_list = QListWidget()
+        self.backup_list.setMaximumHeight(170)
         bk.lay.addWidget(self.backup_list, 1)
         hb2 = QHBoxLayout()
         hb2.addWidget(button("Sauvegarder maintenant", on_click=self._backup_now))
@@ -509,9 +581,11 @@ class SettingsPage(QWidget):
     def _hardware_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 16, 0, 0)
-        card = Card()
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(14)
+        card = Card(padding=14, spacing=4)
         form = QFormLayout()
+        form.setVerticalSpacing(3)
         ram = _total_ram_gb()
         rows = [("Système", f"{platform.system()} {platform.release()} ({platform.machine()})"),
                 ("Processeur", platform.processor() or platform.machine()),
@@ -525,11 +599,16 @@ class SettingsPage(QWidget):
                 ("Calcul de la transcription", "Processeur (CPU, int8). L'accélération par carte graphique "
                                                "n'est pas encore prise en charge.")]
         for k, v in rows:
-            lb = label(v, wrap=True)
+            lb = label(v, "muted", wrap=True, hint=False)
             lb.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            form.addRow(label(k, "muted"), lb)
+            form.addRow(label(k, "faint"), lb)
         card.lay.addLayout(form)
-        lay.addWidget(card)
+        from ..widgets import DimOnHover
+        dim = DimOnHover(0.45)
+        dl = QVBoxLayout(dim)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.addWidget(card)
+        lay.addWidget(dim)
         lay.addWidget(self._models_card(ram))
         lay.addWidget(self._voices_card())
         lay.addWidget(self._llm_card())
@@ -549,7 +628,7 @@ class SettingsPage(QWidget):
         self.models_table.setShowGrid(False)
         self.models_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.models_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.models_table.setMinimumHeight(230)
+        self.models_table.verticalHeader().setDefaultSectionSize(40)
         card.lay.addWidget(self.models_table)
         self._model_jobs: dict[int, str] = {}
         self._rec_model = rec
@@ -568,7 +647,7 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         self.piper_state = label("", "muted")
         row.addWidget(self.piper_state, 1)
-        self.piper_btn = button("Installer le moteur", on_click=lambda: self._piper_job("bin"))
+        self.piper_btn = button("Installer le moteur", "soft", on_click=lambda: self._piper_job("bin"), icon="download")
         row.addWidget(self.piper_btn)
         card.lay.addLayout(row)
         row2 = QHBoxLayout()
@@ -587,7 +666,9 @@ class SettingsPage(QWidget):
         self.voices_table.setShowGrid(False)
         self.voices_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.voices_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.voices_table.setMinimumHeight(160)
+        self.voices_table.verticalHeader().setDefaultSectionSize(40)
+        self.voices_table.setMinimumHeight(200)
+        self.voices_table.setMaximumHeight(320)
         card.lay.addWidget(self.voices_table)
         self._fill_voices()
         return card
@@ -630,8 +711,9 @@ class SettingsPage(QWidget):
             elif v.key in inst:
                 b = button("Supprimer", "ghost", on_click=lambda _=False, k=v.key: self._delete_voice(k))
             else:
-                b = button("Télécharger", on_click=lambda _=False, k=v.key: self._piper_job(k))
-            t.setCellWidget(i, 3, b)
+                b = button("Télécharger", "soft", on_click=lambda _=False, k=v.key: self._piper_job(k),
+                           icon="download")
+            t.setCellWidget(i, 3, _cell(b))
         if not cat:
             t.setRowCount(1)
             t.setItem(0, 0, QTableWidgetItem("Aucune voix Piper pour cette langue."))
@@ -800,11 +882,15 @@ class SettingsPage(QWidget):
             elif inst:
                 b = button("Supprimer", "ghost", on_click=lambda _=False, k=key: self._delete_model(k))
             else:
-                b = button("Télécharger", on_click=lambda _=False, k=key: self._download_model(k))
+                b = button("Télécharger", "soft", on_click=lambda _=False, k=key: self._download_model(k),
+                           icon="download")
                 b.setEnabled(avail)
-            t.setCellWidget(i, 3, b)
+            st = t.item(i, 2)
+            st.setForeground(QColor(theme.color("ok") if inst else theme.color("muted")))
+            t.setCellWidget(i, 3, _cell(b))
         t.resizeColumnsToContents()
         t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        _fit_height(t)
 
     def _download_model(self, key: str) -> None:
         jid = self.app.jobs.submit("download_model", f"Téléchargement du modèle {key}", {"model": key})
@@ -831,6 +917,7 @@ class SettingsPage(QWidget):
             self._fill_models()
 
     def show_tab(self, name: str) -> None:
+        name = {"À propos": "Général", "Stockage et sauvegardes": "Général"}.get(name, name)
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == name:
                 self.tabs.setCurrentIndex(i)
@@ -864,7 +951,7 @@ class SettingsPage(QWidget):
     def _about_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 16, 0, 0)
+        lay.setContentsMargins(0, 0, 0, 0)
         card = Card()
         card.lay.addWidget(label("Studio Vidéo", "h1"))
         card.lay.addWidget(label(f"Version {__version__}", "muted"))

@@ -6,16 +6,47 @@ from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
 
-def label(text: str = "", role: str | None = None, wrap: bool = False) -> QLabel:
+HINT_MIN_CHARS = 60
+
+
+def label(text: str = "", role: str | None = None, wrap: bool = False, hint: bool | None = None) -> QLabel:
+    """Texte. Les longues phrases d'explication grises (muted/faint) sont masquées : interface minimale.
+
+    Leur texte reste disponible en infobulle de la zone (voir `hint_icon`) ; hint=False force l'affichage."""
     lb = QLabel(text)
     if role:
         lb.setProperty("role", role)
     lb.setWordWrap(wrap)
+    if hint is None:
+        hint = role in ("muted", "faint") and len(text) >= HINT_MIN_CHARS
+    if hint:
+        lb.setProperty("hint", True)
+        lb.setToolTip(text)
+        lb.setVisible(False)
     return lb
 
 
-def button(text: str, kind: str | None = None, tooltip: str = "", on_click=None) -> QPushButton:
+def hint_icon(text: str, size: int = 15) -> QLabel:
+    """Petit « i » discret : l'explication s'affiche au survol."""
+    from . import theme
+    lb = QLabel()
+    lb.setPixmap(theme.icon("info", theme.color("faint"), size).pixmap(size, size))
+    lb.setToolTip(text)
+    lb.setFixedSize(size + 4, size + 4)
+    return lb
+
+
+def button(text: str, kind: str | None = None, tooltip: str = "", on_click=None, icon: str | None = None,
+           icon_color: str | None = None) -> QPushButton:
     b = QPushButton(text)
+    if icon:
+        from PySide6.QtCore import QSize
+
+        from . import theme
+        col = icon_color or (theme.color("accent_text") if kind == "primary" else theme.color("accent") if kind == "soft"
+                             else theme.color("muted"))
+        b.setIcon(theme.icon(icon, col, 16))
+        b.setIconSize(QSize(16, 16))
     if kind:
         b.setProperty("kind", kind)
     if tooltip:
@@ -24,6 +55,58 @@ def button(text: str, kind: str | None = None, tooltip: str = "", on_click=None)
         b.clicked.connect(on_click)
     b.setCursor(Qt.PointingHandCursor)
     return b
+
+
+def tool(icon: str, tooltip: str = "", on_click=None, size: int = 34, icon_px: int = 18,
+         color: str | None = None, checkable: bool = False):
+    """Bouton-icône discret (l'action est nommée dans l'infobulle)."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QToolButton
+
+    from . import theme
+    b = QToolButton()
+    b.setIcon(theme.icon(icon, color or theme.color("muted"), icon_px))
+    b.setIconSize(QSize(icon_px, icon_px))
+    b.setFixedSize(size, size)
+    b.setCursor(Qt.PointingHandCursor)
+    b.setCheckable(checkable)
+    b.icon_name = icon
+    if tooltip:
+        b.setToolTip(tooltip)
+        b.setAccessibleName(tooltip.split(" (")[0])
+    if on_click:
+        b.clicked.connect(on_click)
+    return b
+
+
+class PlayButton(QPushButton):
+    """Lecture / pause rond, couleur d'accent ; setText("❚❚") bascule l'icône (compatibilité)."""
+
+    def __init__(self, tooltip: str = "", on_click=None):
+        super().__init__()
+        from PySide6.QtCore import QSize
+        self.setFixedSize(40, 40)
+        self.setIconSize(QSize(18, 18))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setProperty("kind", "primary")
+        self.setStyleSheet("QPushButton { border-radius: 20px; padding: 0; }")
+        if tooltip:
+            self.setToolTip(tooltip)
+        if on_click:
+            self.clicked.connect(on_click)
+        self._playing = False
+        self._apply()
+
+    def _apply(self) -> None:
+        from . import theme
+        self.setIcon(theme.icon("pause" if self._playing else "play", theme.color("accent_text"), 18))
+
+    def setText(self, text: str) -> None:            # noqa: N802 — API Qt
+        self._playing = "❚" in text
+        self._apply()
+
+    def text(self) -> str:
+        return "❚❚" if self._playing else "▶"
 
 
 class Card(QFrame):
@@ -61,6 +144,7 @@ class EmptyState(QWidget):
         d.setMaximumWidth(460)
         lay.addWidget(t, 0, Qt.AlignCenter)
         lay.addWidget(d, 0, Qt.AlignCenter)
+        t.setToolTip(text)
         if action_text:
             b = button(action_text, "primary", on_click=on_action)
             lay.addSpacing(6)
@@ -83,9 +167,10 @@ class PageHeader(QWidget):
         self.lay.setContentsMargins(0, 0, 0, 0)
         col = QVBoxLayout()
         col.setSpacing(2)
-        col.addWidget(label(title, "h1"))
+        t = label(title, "h1")
         if subtitle:
-            col.addWidget(label(subtitle, "muted"))
+            t.setToolTip(subtitle)            # plus de sous-titre affiché : interface minimale
+        col.addWidget(t)
         self.lay.addLayout(col)
         self.lay.addStretch(1)
 
@@ -112,6 +197,27 @@ def hspacer() -> QWidget:
     w = QWidget()
     w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     return w
+
+
+class DimOnHover(QWidget):
+    """Zone atténuée qui s'éclaire quand la souris passe dessus."""
+
+    def __init__(self, dim: float = 0.4, parent=None):
+        super().__init__(parent)
+        self.dim = dim
+        self.eff = __import__('PySide6.QtWidgets', fromlist=['x']).QGraphicsOpacityEffect(self)
+        self.eff.setOpacity(dim)
+        self.setGraphicsEffect(self.eff)
+        if dim >= 1.0:
+            self.eff.setEnabled(False)
+
+    def enterEvent(self, e):
+        self.eff.setOpacity(1.0)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.eff.setOpacity(self.dim)
+        super().leaveEvent(e)
 
 
 class JobBridge(QObject):

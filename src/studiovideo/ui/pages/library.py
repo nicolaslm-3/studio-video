@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QHBoxLay
 from ...core import AppContext
 from ...media.ffmpeg import fmt_timecode
 from ..importing import KIND_LABELS, DropZone, import_paths, import_url, pick_and_import
+from .. import theme
 from ..widgets import Card, EmptyState, PageHeader, button, label
 
 COLS = ["", "Nom", "Type", "Durée", "Résolution", "Concept", "Importé le"]
@@ -33,17 +34,19 @@ class LibraryPage(QWidget):
         super().__init__(parent)
         self.app = app
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setContentsMargins(36, 30, 36, 8)
         lay.setSpacing(14)
-        head = PageHeader("Bibliothèque", "Tous vos médias sources. Les fichiers d'origine ne sont jamais modifiés.")
-        head.add_action(button("Importer depuis une URL", on_click=lambda: import_url(self.app, self)))
-        head.add_action(button("Importer des fichiers", "primary", "Ctrl+I",
-                               on_click=lambda: pick_and_import(self.app, self)))
+        head = PageHeader("Extraits")
+        head.add_action(button("URL", "ghost", "Importer depuis une adresse web", on_click=lambda: import_url(self.app, self),
+                               icon="link"))
+        head.add_action(button("Importer", "primary", "Importer des fichiers (Ctrl+I)",
+                               on_click=lambda: pick_and_import(self.app, self), icon="upload"))
         lay.addWidget(head)
 
         bar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Rechercher par nom, tag ou URL…")
+        self.search.setPlaceholderText("Rechercher…")
+        self.search.addAction(theme.icon("search", theme.color("faint"), 16), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.refresh)
         self.kind = QComboBox()
@@ -69,7 +72,7 @@ class LibraryPage(QWidget):
         empty = QWidget()
         el = QVBoxLayout(empty)
         el.addStretch(1)
-        el.addWidget(EmptyState("Votre bibliothèque est vide",
+        el.addWidget(EmptyState("Aucun média pour l'instant",
                                 "Importez des vidéos, audios, images ou documents. Ils restent à leur "
                                 "emplacement d'origine ; seules leurs informations sont enregistrées."))
         dz = DropZone()
@@ -252,7 +255,7 @@ class LibraryPage(QWidget):
         m.addAction("Afficher dans l'explorateur", lambda: reveal(self.app.library.get(aid)["path"]))
         m.addAction("Modifier les tags…", lambda: self._tags(aid))
         m.addSeparator()
-        m.addAction("Retirer de la bibliothèque", lambda: self._remove(aid))
+        m.addAction("Retirer d'Extraits", lambda: self._remove(aid))
         m.exec(self.table.viewport().mapToGlobal(pos))
 
     def _relink(self, aid: int) -> None:
@@ -300,7 +303,7 @@ class LibraryPage(QWidget):
             self.refresh()
 
     def _remove(self, aid: int) -> None:
-        if QMessageBox.question(self, "Retirer", "Retirer ce média de la bibliothèque ?\n"
+        if QMessageBox.question(self, "Retirer", "Retirer ce média d'Extraits ?\n"
                                 "Le fichier sur le disque ne sera pas supprimé.") == QMessageBox.Yes:
             self.app.library.remove(aid)
             self.refresh()

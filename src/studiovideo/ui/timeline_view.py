@@ -10,9 +10,9 @@ from ..media.ffmpeg import fmt_timecode
 from . import theme
 from .widgets import label
 
-RULER_H = 22
-TRACK_H = 40
-TRACK_GAP = 6
+RULER_H = 20
+TRACK_H = 32
+TRACK_GAP = 4
 LABEL_W = 70
 TRACKS = ("Vidéo", "Textes", "Musique", "Sous-titres")
 
@@ -340,7 +340,6 @@ class TimelineView(QWidget):
         self.info = label("", "faint")
         head.addWidget(self.info)
         head.addStretch(1)
-        head.addWidget(label("Zoom", "faint"))
         self.zoom = QSlider(Qt.Horizontal)
         self.zoom.setRange(2, 300)
         self.zoom.setValue(40)

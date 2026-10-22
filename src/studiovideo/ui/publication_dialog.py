@@ -29,8 +29,31 @@ def _when(ed: QDateTimeEdit) -> str | None:
     return None if ed.dateTime() <= NO_DATE else ed.dateTime().toString(FMT)
 
 
+class _DateEdit(QDateTimeEdit):
+    """« Non programmée » tant qu'on n'y touche pas ; au premier clic, propose aujourd'hui (heure suivante)."""
+
+    def _wake(self) -> None:
+        if self.dateTime() <= NO_DATE:
+            now = QDateTime.currentDateTime()
+            t = now.time()
+            nxt = now.addSecs(3600 - t.minute() * 60 - t.second())
+            self.setDateTime(nxt)
+
+    def mousePressEvent(self, e):
+        self._wake()
+        super().mousePressEvent(e)
+
+    def keyPressEvent(self, e):
+        from PySide6.QtCore import Qt
+        if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.currentSection() == self.sectionAt(0):
+            self.setDateTime(NO_DATE)            # retour à « Non programmée »
+            return
+        self._wake()
+        super().keyPressEvent(e)
+
+
 def _date_edit(value: str | None) -> QDateTimeEdit:
-    ed = QDateTimeEdit()
+    ed = _DateEdit()
     ed.setCalendarPopup(True)
     ed.setDisplayFormat("dd/MM/yyyy HH:mm")
     ed.setMinimumDateTime(NO_DATE)

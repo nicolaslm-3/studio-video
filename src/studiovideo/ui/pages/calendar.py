@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLis
 
 from ...core import AppContext
 from ..publication_dialog import PLATFORM_SHORT, STATUS, AssistedPublishDialog, PublicationDialog
-from ..widgets import PageHeader, button, label
+from ..widgets import PageHeader, button, label, tool
 
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
           "novembre", "décembre"]
@@ -70,20 +70,20 @@ class CalendarPage(QWidget):
         self.year, self.month = t.year, t.month
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 16)
-        hdr = PageHeader("Calendrier", "Toutes les publications, tous concepts et comptes confondus")
+        hdr = PageHeader("Calendrier")
         self.concept = QComboBox()
         self.concept.currentIndexChanged.connect(self.refresh)
         hdr.add_action(self.concept)
-        hdr.add_action(button("Nouvelle publication", "primary", on_click=lambda: self.new_publication()))
+        hdr.add_action(button("Nouvelle publication", "primary", on_click=lambda: self.new_publication(), icon="plus"))
         lay.addWidget(hdr)
         nav = QHBoxLayout()
-        nav.addWidget(button("◀", "ghost", "Mois précédent", lambda: self._shift(-1)))
+        nav.addWidget(tool("chevron-left", "Mois précédent", lambda: self._shift(-1)))
         self.title = label("", "h2")
+        self.title.setToolTip("Double-clic sur un jour : nouvelle publication ce jour-là")
         nav.addWidget(self.title)
-        nav.addWidget(button("▶", "ghost", "Mois suivant", lambda: self._shift(1)))
+        nav.addWidget(tool("chevron-right", "Mois suivant", lambda: self._shift(1)))
         nav.addWidget(button("Aujourd'hui", "ghost", on_click=self._today))
         nav.addStretch(1)
-        nav.addWidget(label("Double-clic sur un jour : nouvelle publication ce jour-là.", "faint"))
         lay.addLayout(nav)
         split = QSplitter(Qt.Horizontal)
         gridw = QWidget()
@@ -109,19 +109,19 @@ class CalendarPage(QWidget):
         side = QWidget()
         sl = QVBoxLayout(side)
         sl.setContentsMargins(8, 0, 0, 0)
-        sl.addWidget(label("À faire maintenant", "h2"))
+        self.todo_lbl = label("À faire maintenant", "h2")
+        sl.addWidget(self.todo_lbl)
         self.todo = QListWidget()
         self.todo.itemActivated.connect(self._todo_open)
         self.todo.itemDoubleClicked.connect(self._todo_open)
         sl.addWidget(self.todo, 1)
-        sl.addWidget(label("Sans date", "h2"))
+        self.undated_lbl = label("Sans date", "h2")
+        sl.addWidget(self.undated_lbl)
         self.undated = QListWidget()
         self.undated.itemDoubleClicked.connect(lambda it: self.open_master(it.data(Qt.UserRole)))
         sl.addWidget(self.undated, 1)
-        sl.addWidget(label("Les comptes ne sont pas encore connectés aux plateformes : à l'heure prévue, "
-                           "Studio Vidéo vous le rappelle et vous guide pour publier à la main (texte copié, "
-                           "vidéo prête, lien de confirmation). La mise en ligne automatique viendra avec la "
-                           "connexion des comptes.", "faint", wrap=True))
+        sl.addStretch(0)
+        self.side = side
         split.addWidget(side)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
@@ -171,10 +171,7 @@ class CalendarPage(QWidget):
             it.setToolTip(r["last_error"] or STATUS.get(r["status"], ""))
             it.setData(Qt.UserRole, r["id"])
             self.todo.addItem(it)
-        if not self.todo.count():
-            it = QListWidgetItem("Rien à faire pour l'instant.")
-            it.setFlags(Qt.NoItemFlags)
-            self.todo.addItem(it)
+        has_todo = self.todo.count() > 0
         self.undated.clear()
         seen = set()
         for r in self.app.publications.undated(cid):
@@ -184,6 +181,11 @@ class CalendarPage(QWidget):
             it = QListWidgetItem(f"{r['concept']} · {r['title'] or 'Sans titre'}")
             it.setData(Qt.UserRole, r["master_id"])
             self.undated.addItem(it)
+        has_undated = self.undated.count() > 0
+        for w, on in ((self.todo_lbl, has_todo), (self.todo, has_todo), (self.undated_lbl, has_undated),
+                      (self.undated, has_undated)):
+            w.setVisible(on)
+        self.side.setVisible(has_todo or has_undated)           # colonne masquée quand il n'y a rien
 
     def pending_count(self) -> int:
         return self.app.db.query_one("SELECT COUNT(*) n FROM publication WHERE status = 'manual_action'")["n"]
@@ -192,7 +194,7 @@ class CalendarPage(QWidget):
     def new_publication(self, variant_id: int | None = None, day: str | None = None) -> None:
         if not self.app.concepts.list_concepts():
             from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Publication", "Créez d'abord un concept et associez-lui des comptes.")
+            QMessageBox.information(self, "Publication", "Ajoutez d'abord un compte dans Concepts et projets.")
             return
         if PublicationDialog(self.app, variant_id=variant_id, day=day, parent=self).exec():
             self.refresh()

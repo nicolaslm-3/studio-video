@@ -6,7 +6,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 from ..media.ffmpeg import fmt_timecode
-from .widgets import button, label
+from .widgets import PlayButton, button, label, tool
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -37,14 +37,14 @@ class PlayerWidget(QWidget):
             box = QLabel("Aperçu vidéo indisponible dans cet environnement." if MULTIMEDIA
                          else "Module multimédia Qt indisponible.")
             box.setAlignment(Qt.AlignCenter)
-            box.setMinimumHeight(240)
+            box.setMinimumHeight(150)
             box.setStyleSheet("background:#000; color:#8E9198; border-radius:8px;")
             lay.addWidget(box, 1)
             self.player, self.audio = _NullPlayer(), _NullAudio()
             self._build_controls(lay, self.player)
             return
         self.video = QVideoWidget()
-        self.video.setMinimumHeight(240)
+        self.video.setMinimumHeight(150)
         self.video.setStyleSheet("background:#000; border-radius:8px;")
         lay.addWidget(self.video, 1)
         self.player = QMediaPlayer(self)
@@ -64,13 +64,14 @@ class PlayerWidget(QWidget):
         lay.addWidget(self.slider)
 
         ctr = QHBoxLayout()
-        self.play_btn = button("▶", tooltip="Lecture / pause (Espace)", on_click=self.toggle)
-        self.play_btn.setFixedWidth(44)
-        ctr.addWidget(button("◀|", tooltip="Image précédente (←)", on_click=lambda: self.step(-1)))
+        ctr.setSpacing(4)
+        self.play_btn = PlayButton("Lecture / pause (Espace)", self.toggle)
+        ctr.addWidget(tool("step-back", "Image précédente (←)", lambda: self.step(-1)))
         ctr.addWidget(self.play_btn)
-        ctr.addWidget(button("|▶", tooltip="Image suivante (→)", on_click=lambda: self.step(1)))
+        ctr.addWidget(tool("step-forward", "Image suivante (→)", lambda: self.step(1)))
         self.tc = label("0:00.000 / 0:00", "muted")
-        self.tc.setMinimumWidth(150)
+        self.tc.setMinimumWidth(118)
+        ctr.addSpacing(6)
         ctr.addWidget(self.tc)
         ctr.addStretch(1)
         self.speed = QComboBox()
@@ -78,31 +79,31 @@ class PlayerWidget(QWidget):
             self.speed.addItem(f"×{s:g}", s)
         self.speed.setCurrentIndex(2)
         self.speed.setToolTip("Vitesse de lecture")
+        self.speed.setFixedWidth(72)
         self.speed.currentIndexChanged.connect(lambda: self.player.setPlaybackRate(self.speed.currentData()))
         ctr.addWidget(self.speed)
         self.vol = QSlider(Qt.Horizontal)
         self.vol.setRange(0, 100)
         self.vol.setValue(80)
-        self.vol.setFixedWidth(90)
+        self.vol.setFixedWidth(70)
         self.vol.setToolTip("Volume")
         self.vol.valueChanged.connect(lambda v: self.audio.setVolume(v / 100))
         self.audio.setVolume(0.8)
         ctr.addWidget(self.vol)
         lay.addLayout(ctr)
-
-        io = QHBoxLayout()
-        io.addWidget(button("Début ici", tooltip="Définir le point d'entrée (I)", on_click=self.mark_in))
-        io.addWidget(button("Fin ici", tooltip="Définir le point de sortie (O)", on_click=self.mark_out))
-        self.io_lbl = label("Entrée — · Sortie — · Durée —", "faint")
-        io.addWidget(self.io_lbl)
-        io.addStretch(1)
-        lay.addLayout(io)
         io2 = QHBoxLayout()
-        io2.addWidget(button("▶ Extrait", tooltip="Lire de l'entrée à la sortie (P)", on_click=self.preview_range))
+        io2.setSpacing(4)
+        io2.addWidget(tool("arrow-right-to-line", "Début de la sélection ici (I)", self.mark_in))
+        io2.addWidget(tool("arrow-left-to-line", "Fin de la sélection ici (O)", self.mark_out))
+        io2.addWidget(tool("square-play", "Lire la sélection (P)", self.preview_range))
+        self.io_lbl = label("—", "faint")
+        self.io_lbl.setToolTip("Entrée · Sortie · Durée de la sélection")
+        io2.addWidget(self.io_lbl)
         io2.addStretch(1)
-        self.clip_btn = button("Créer un clip", tooltip="Créer un clip à partir de la sélection (C)",
-                               on_click=self._emit_clip)
+        self.clip_btn = button("Clip", "soft", tooltip="Créer un clip à partir de la sélection (C)",
+                               on_click=self._emit_clip, icon="scissors")
         io2.addWidget(self.clip_btn)
+        self.actions_row = io2
         lay.addLayout(io2)
         self.status = label("", "faint")
         lay.addWidget(self.status)

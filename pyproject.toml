@@ -28,7 +28,7 @@ version = {attr = "studiovideo.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-studiovideo = ["db/migrations/*.sql", "ui/assets/*"]
+studiovideo = ["db/migrations/*.sql", "ui/assets/*", "ui/icons/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

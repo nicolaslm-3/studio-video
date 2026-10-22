@@ -6,14 +6,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFontComboBox,
+from PySide6.QtWidgets import (QLabel, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QMessageBox,
                                QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
                                QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core import AppContext
 from ..edit.model import ASPECTS, Timeline
 from ..media.ffmpeg import fmt_timecode
-from .widgets import button, label
+from .widgets import tool, button, label
 
 FIT_MODES = [("fill", "Remplir (recadré)"), ("blur", "Image entière + fond flou"), ("fit", "Image entière + bandes noires")]
 POSITIONS = [("top", "En haut"), ("center", "Au centre"), ("bottom", "En bas"), ("custom", "Libre (X / Y)")]
@@ -54,6 +54,49 @@ class ColorButton(QPushButton):
         if c.isValid():
             self.set(c.name())
             self.picked.emit(c.name())
+
+
+POPULAR_FONTS = ["Segoe UI", "Segoe UI Black", "Arial", "Arial Black", "Impact", "Bahnschrift", "Montserrat",
+                 "Poppins", "Inter", "Roboto", "Bebas Neue", "Anton", "Oswald", "Calibri", "Verdana", "Trebuchet MS",
+                 "Tahoma", "Georgia", "Times New Roman", "Cambria", "Comic Sans MS", "Segoe Print", "Segoe Script",
+                 "Gabriola", "Consolas", "Courier New", "DejaVu Sans", "Noto Sans", "Liberation Sans"]
+
+
+class FontPicker(QComboBox):
+    """Menu déroulant de polices : les plus courantes d'abord (chacune affichée dans son style), puis toutes."""
+    fontChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtGui import QFontDatabase
+        self.setMaxVisibleItems(16)
+        fams = sorted(set(QFontDatabase.families()), key=str.lower)
+        have = {f.lower(): f for f in fams}
+        top = [have[f.lower()] for f in POPULAR_FONTS if f.lower() in have]
+        for f in top:
+            self._add(f)
+        if top:
+            self.insertSeparator(self.count())
+        for f in fams:
+            if f not in top and not f.startswith("@"):
+                self._add(f)
+        self.currentIndexChanged.connect(lambda _i: self.currentData() and self.fontChanged.emit(self.currentData()))
+
+    def _add(self, family: str) -> None:
+        self.addItem(family, family)
+        f = QFont(family)
+        f.setPointSizeF(11)
+        self.setItemData(self.count() - 1, f, Qt.FontRole)
+
+    def set_family(self, family: str) -> None:
+        i = self.findData(family)
+        if i < 0 and family:
+            self._add(family)
+            i = self.count() - 1
+        self.blockSignals(True)
+        self.setCurrentIndex(max(0, i))
+        self.blockSignals(False)
+        self.setFont(QFont(family or self.font().family()))
 
 
 class Binder:
@@ -121,9 +164,9 @@ class Binder:
         self.items.append(("color", path, w))
         return w
 
-    def font(self, path) -> QFontComboBox:
-        w = QFontComboBox()
-        w.currentFontChanged.connect(lambda f: self._commit(path, f.family()))
+    def font(self, path) -> "FontPicker":
+        w = FontPicker()
+        w.fontChanged.connect(lambda fam: self._commit(path, fam))
         self.items.append(("font", path, w))
         return w
 
@@ -149,11 +192,37 @@ class Binder:
             elif kind == "color":
                 w.set(v)
             elif kind == "font":
-                w.setCurrentFont(QFont(v))
+                w.set_family(v)
             w.blockSignals(False)
 
 
+def _shrinkable(root: QWidget) -> None:
+    """Aucun champ ne doit imposer sa largeur (listes de polices, libellés longs) : pas de débordement."""
+    for cb in root.findChildren(QComboBox):
+        from PySide6.QtWidgets import QSizePolicy
+        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        cb.setMinimumContentsLength(8)
+        cb.setSizePolicy(QSizePolicy.Expanding, cb.sizePolicy().verticalPolicy())
+    for b in root.findChildren(QPushButton):
+        b.setMinimumWidth(min(b.minimumSizeHint().width(), 56))     # peut rétrécir au lieu de déborder
+        if not b.toolTip() and b.text():
+            b.setToolTip(b.text())
+    from PySide6.QtWidgets import QAbstractSpinBox, QPlainTextEdit
+    for sp in root.findChildren(QAbstractSpinBox):
+        sp.setMinimumWidth(min(sp.minimumSizeHint().width(), 64))
+    for te in root.findChildren(QPlainTextEdit):
+        te.setMinimumWidth(80)
+    for cb in root.findChildren(QCheckBox):
+        cb.setMinimumWidth(min(cb.minimumSizeHint().width(), 60))
+        if not cb.toolTip():
+            cb.setToolTip(cb.text())
+    for lb in root.findChildren(QLabel):
+        if not lb.wordWrap() and len(lb.text()) > 22:
+            lb.setWordWrap(True)
+
+
 def _scroll(inner: QWidget) -> QScrollArea:
+    _shrinkable(inner)
     sc = QScrollArea()
     sc.setWidgetResizable(True)
     sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -168,6 +237,7 @@ def _form() -> tuple[QWidget, QFormLayout]:
     f.setContentsMargins(4, 10, 8, 10)
     f.setLabelAlignment(Qt.AlignLeft)
     f.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+    f.setRowWrapPolicy(QFormLayout.WrapLongRows)         # panneau étroit : le champ passe sous son libellé
     return w, f
 
 
@@ -197,17 +267,34 @@ class MontagePanel(QTabWidget):
         self.playhead = 0.0
         self.durations: dict[int, float] = {}
         self._loading = False
-        self.setMinimumWidth(390)
+        self.setMinimumWidth(330)
         self.setUsesScrollButtons(False)
+        self.tabBar().setStyleSheet("QTabBar::tab { padding: 6px 10px; margin: 2px 1px 6px 0; }")
         self.setDocumentMode(True)
         self.b = Binder(self)
         self.bt = Binder(self, "text")
-        self.addTab(_scroll(self._segment_tab()), "Extrait")
-        self.addTab(_scroll(self._frame_tab()), "Cadrage")
-        self.addTab(_scroll(self._texts_tab()), "Textes")
-        self.addTab(_scroll(self._subs_tab()), "Sous-titres")
-        self.addTab(_scroll(self._audio_tab()), "Audio")
-        self.addTab(_scroll(self._export_tab()), "Export")
+        from . import theme
+        from PySide6.QtCore import QSize
+        self.setIconSize(QSize(19, 19))
+        for page, name, ic in ((self._segment_tab(), "Extrait", "film"), (self._frame_tab(), "Cadrage", "crop"),
+                               (self._texts_tab(), "Textes", "type"), (self._subs_tab(), "Sous-titres", "captions"),
+                               (self._audio_tab(), "Audio", "audio-waveform"),
+                               (self._export_tab(), "Export", "share-2")):
+            i = self.addTab(_scroll(page), theme.icon(ic, theme.color("muted"), 19), "")
+            self.setTabToolTip(i, name)
+            self.tabBar().setTabData(i, name)
+        self.currentChanged.connect(self._tab_title)
+        self._tab_title(0)
+
+    def tab_name(self, i: int) -> str:
+        return self.tabBar().tabData(i) or ""
+
+    def _tab_title(self, i: int) -> None:
+        """Onglet actif : icône dans la couleur d'accent, les autres en gris."""
+        from . import theme
+        for k, ic in enumerate(("film", "crop", "type", "captions", "audio-waveform", "share-2")):
+            if k < self.count():
+                self.setTabIcon(k, theme.icon(ic, theme.color("accent") if k == i else theme.color("muted"), 19))
 
     # -- chargement ---------------------------------------------------------
     def set_timeline(self, tl: Timeline, project_id: int, concept_name: str, durations: dict[int, float]) -> None:
@@ -327,6 +414,29 @@ class MontagePanel(QTabWidget):
         f.addRow(label("Cliquez sur un extrait dans la timeline pour le régler. Les fichiers sources ne sont "
                        "jamais modifiés.", "faint", wrap=True))
         return w
+
+    def _font_row(self, picker) -> QWidget:
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(picker, 1)
+        h.addWidget(tool("plus", "Ajouter une police (.ttf, .otf)…", lambda: self._add_font(picker), size=30))
+        return w
+
+    def _add_font(self, picker) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Ajouter une police", "", "Polices (*.ttf *.otf)")
+        if not path:
+            return
+        from ..media.fonts import install_font
+        try:
+            fams = install_font(self.app.paths.root, path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Police", str(exc))
+            return
+        for fam in fams:
+            picker.set_family(fam)
+        if fams:
+            picker.fontChanged.emit(fams[0])
 
     def _seg(self):
         try:
@@ -636,7 +746,7 @@ class MontagePanel(QTabWidget):
         f.addRow("Position", bt.combo("position", POSITIONS))
         f.addRow("X (libre)", bt.slider("x", 0.0, 1.0))
         f.addRow("Y (libre)", bt.slider("y", 0.0, 1.0))
-        f.addRow("Police", bt.font("font"))
+        f.addRow("Police", self._font_row(bt.font("font")))
         f.addRow("Taille", bt.ispin("size", 16, 240, " px"))
         st = QHBoxLayout()
         st.addWidget(bt.check("bold", "Gras"))
@@ -780,7 +890,7 @@ class MontagePanel(QTabWidget):
             ("pop", "Effet pop + surlignage"), ("fade", "Apparition progressive"), ("none", "Aucune")]))
         f.addRow("Position", b.combo("subtitles.style.position", POSITIONS))
         f.addRow("Hauteur (libre)", b.slider("subtitles.style.y", 0.1, 0.9))
-        f.addRow("Police", b.font("subtitles.style.font"))
+        f.addRow("Police", self._font_row(b.font("subtitles.style.font")))
         f.addRow("Taille", b.ispin("subtitles.style.size", 20, 200, " px"))
         st = QHBoxLayout()
         st.addWidget(b.check("subtitles.style.bold", "Gras"))
@@ -989,7 +1099,10 @@ class MontagePanel(QTabWidget):
         f.addRow("Gain du doublage", b.spin("voice.dub_gain_db", -20, 20, 0.5, 1, " dB"))
         self.voice_note = label("", "faint", wrap=True)
         f.addRow(self.voice_note)
-        f.addRow(b.check("voice.isolate", "Isoler la voix d'origine (retirer musique et ambiance)"))
+        iso = b.check("voice.isolate", "Voix seule (sans musique ni ambiance)")
+        iso.setToolTip("Après « Séparer voix et musique » : la voix seule reste sur l'extrait, la musique et "
+                       "l'ambiance vont sur la piste Musique, dont vous réglez le volume.")
+        f.addRow(iso)
         sp = QHBoxLayout()
         sp.addWidget(button("Séparer voix et musique", tooltip="Calcule, sur ce PC, une piste voix seule et une "
                             "piste musique et ambiance pour chaque média du montage",

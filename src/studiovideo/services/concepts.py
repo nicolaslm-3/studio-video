@@ -38,6 +38,17 @@ class ConceptService:
             return c.execute("INSERT INTO workspace(name) VALUES ('Principal')").lastrowid
 
     # -- concepts --------------------------------------------------------
+    DRAFTS = "Brouillons"
+
+    def drafts_concept(self) -> Concept:
+        """Concept par défaut des projets pas encore rangés (créé au besoin)."""
+        for c in self.list_concepts(include_archived=True):
+            if c.name == self.DRAFTS:
+                if c.archived:
+                    self.update_concept(c.id, archived=0)
+                return self.get_concept(c.id)
+        return self.create_concept(self.DRAFTS, theme="Projets pas encore rangés", color="#ADA698")
+
     def create_concept(self, name: str, theme: str = "", color: str = "#8A8F98",
                        language: str = "fr") -> Concept:
         name = name.strip()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QComboBox, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
+from PySide6.QtWidgets import (QFileDialog, QComboBox, QLabel, QMenu, QToolButton, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
                                QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from ...core import AppContext
@@ -20,7 +20,8 @@ from ..player import PlayerWidget
 from ..timeline_view import TimelineView
 from ..highlights_panel import HighlightsPanel
 from ..transcript_panel import TranscriptPanel
-from ..widgets import Card, EmptyState, button, label
+from .. import theme
+from ..widgets import Card, EmptyState, button, label, tool
 
 HISTORY_MAX = 100
 
@@ -53,27 +54,43 @@ class StudioPage(QWidget):
         self._snap_timer.timeout.connect(self._snapshot)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 12)
+        root.setContentsMargins(18, 14, 18, 4)
         root.setSpacing(10)
         top = QHBoxLayout()
-        top.addWidget(label("Studio", "h1"))
-        top.addSpacing(16)
+        top.setSpacing(8)
+        self.mode_icon = QLabel()
+        self.mode_icon.setFixedSize(28, 28)
+        top.addWidget(self.mode_icon)
         self.project_combo = QComboBox()
-        self.project_combo.setMinimumWidth(280)
+        self.project_combo.setMinimumWidth(240)
+        self.project_combo.setMaximumWidth(380)
+        self.project_combo.setToolTip("Projet ouvert")
         self.project_combo.currentIndexChanged.connect(self._on_project_combo)
         top.addWidget(self.project_combo)
-        self.concept_lbl = label("", "faint")
+        self.concept_lbl = label("", "badge")
         top.addWidget(self.concept_lbl)
         top.addStretch(1)
-        self.undo_btn = button("↶", tooltip="Annuler (Ctrl+Z)", on_click=self.undo)
-        self.redo_btn = button("↷", tooltip="Rétablir (Ctrl+Y)", on_click=self.redo)
-        top.addWidget(self.undo_btn)
-        top.addWidget(self.redo_btn)
         self.save_lbl = label("", "faint")
         top.addWidget(self.save_lbl)
-        top.addWidget(button("Exporter le projet…", "ghost", tooltip="Archive .studioproj : changer d'ordinateur ou "
-                             "sauvegarder", on_click=self._export_project))
-        top.addWidget(button("Nouveau projet", on_click=lambda: self.new_project.emit(None)))
+        self.undo_btn = tool("undo-2", "Annuler (Ctrl+Z)", self.undo)
+        self.redo_btn = tool("redo-2", "Rétablir (Ctrl+Y)", self.redo)
+        top.addWidget(self.undo_btn)
+        top.addWidget(self.redo_btn)
+        more = tool("ellipsis", "Plus")
+        more.setPopupMode(QToolButton.InstantPopup)
+        mm = QMenu(more)
+        mm.addAction(theme.icon("layers", theme.color("muted"), 16), "Production en série…", self._batch)
+        mm.addAction(theme.icon("image", theme.color("muted"), 16), "Enregistrer l'image (Ctrl+Maj+S)",
+                     self._export_still)
+        mm.addSeparator()
+        mm.addAction(theme.icon("archive", theme.color("muted"), 16), "Exporter le projet (.studioproj)…",
+                     self._export_project)
+        more.setMenu(mm)
+        more.setStyleSheet("QToolButton::menu-indicator { image: none; }")
+        top.addWidget(more)
+        self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export,
+                                   icon="share-2")
+        top.addWidget(self.export_quick)
         root.addLayout(top)
         from ..guide import GuideBar
         self.guide = GuideBar()
@@ -82,60 +99,68 @@ class StudioPage(QWidget):
 
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
-        self.stack.addWidget(EmptyState("Aucun projet ouvert",
-                                        "Créez un projet ou ouvrez-en un depuis le tableau de bord pour importer "
-                                        "des médias et commencer le montage.", "Nouveau projet",
-                                        lambda: self.new_project.emit(None)))
+        self.stack.addWidget(EmptyState("Choisissez un parcours en bas",
+                                        "Ou glissez une vidéo n'importe où dans la fenêtre : un projet brouillon "
+                                        "est créé et ses moments forts sont recherchés automatiquement."))
 
         vsplit = QSplitter(Qt.Vertical)
+        vsplit.setHandleWidth(8)
         hsplit = QSplitter(Qt.Horizontal)
+        hsplit.setHandleWidth(10)
+        hsplit.setChildrenCollapsible(False)
+        vsplit.setChildrenCollapsible(False)
 
         # -- colonne médias et clips
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        ll.addWidget(label("Médias du projet", "h2"))
+        mh = QHBoxLayout()
+        mh.addStretch(1)
+        mh.addWidget(tool("upload", "Importer des fichiers", lambda: pick_and_import(self.app, self, self.project_id)))
+        mh.addWidget(tool("link", "Importer depuis une URL", lambda: import_url(self.app, self, self.project_id)))
+        mh.addWidget(tool("film", "Ajouter depuis Extraits", self._attach_from_library))
+        ll.addLayout(mh)
         self.media_list = QListWidget()
         self.media_list.setIconSize(QSize(64, 36))
         self.media_list.currentItemChanged.connect(self._on_media)
         self.media_list.itemDoubleClicked.connect(lambda _it: self._add_media_to_timeline())
         ll.addWidget(self.media_list, 2)
         dz = DropZone("Déposez des fichiers ici")
-        dz.setMinimumHeight(64)
+        dz.setMinimumHeight(52)
+        dz.setMaximumHeight(64)
         dz.dropped.connect(lambda p: import_paths(self.app, self, p, self.project_id))
         ll.addWidget(dz)
-        hb = QHBoxLayout()
-        hb.addWidget(button("Importer…", on_click=lambda: pick_and_import(self.app, self, self.project_id)))
-        hb.addWidget(button("URL…", on_click=lambda: import_url(self.app, self, self.project_id)))
-        hb.addWidget(button("+ Biblio.", "ghost", tooltip="Ajouter un média de la bibliothèque",
-                            on_click=self._attach_from_library))
-        ll.addLayout(hb)
-        ll.addWidget(label("Clips", "h2"))
+        ch = QHBoxLayout()
+        ch.addWidget(label("Clips", "h2"))
+        ch.addStretch(1)
+        ch.addWidget(tool("plus", "Ajouter le clip à la timeline",
+                          lambda: self._clip_to_timeline(self.clips.currentItem())))
+        ch.addWidget(tool("pencil", "Renommer le clip", self._rename_clip))
+        ch.addWidget(tool("trash-2", "Supprimer le clip", self._delete_clip))
+        ll.addLayout(ch)
         self.clips = QListWidget()
         self.clips.itemDoubleClicked.connect(self._clip_to_timeline)
         ll.addWidget(self.clips, 1)
-        ch = QHBoxLayout()
-        ch.addWidget(button("→ Timeline", tooltip="Ajouter le clip à la fin de la timeline",
-                            on_click=lambda: self._clip_to_timeline(self.clips.currentItem())))
-        ch.addWidget(button("Renommer", "ghost", on_click=self._rename_clip))
-        ch.addWidget(button("✕", "ghost", tooltip="Supprimer le clip", on_click=self._delete_clip))
-        ll.addLayout(ch)
         self.left_tabs = QTabWidget()
         self.left_tabs.setDocumentMode(True)
-        self.left_tabs.addTab(left, "Médias")
+        self.left_tabs.setIconSize(QSize(18, 18))
+        self.left_tabs.addTab(left, theme.icon("folder-open", theme.color("muted"), 18), "Médias")
         self.transcript = TranscriptPanel(app)
         self.transcript.seek.connect(self._seek_source)
         self.transcript.make_clip.connect(self._create_clip)
         self.transcript.add_to_timeline.connect(self._add_range_to_timeline)
         self.transcript.open_models.connect(self.open_models.emit)
         self.transcript.text_edit.connect(self._text_edit_ranges)
-        self.left_tabs.addTab(self.transcript, "Transcription")
+        self.left_tabs.addTab(self.transcript, theme.icon("captions", theme.color("muted"), 18), "Texte")
+        self.left_tabs.setTabToolTip(1, "Transcription")
         self.highlights = HighlightsPanel(app)
         self.highlights.play_range.connect(self._play_source_range)
         self.highlights.clips_created.connect(self._load_clips)
         self.highlights.add_to_timeline.connect(self._add_ranges)
         self.highlights.open_settings.connect(self.open_ai_settings.emit)
-        self.left_tabs.addTab(self.highlights, "Moments forts")
+        self.left_tabs.addTab(self.highlights, theme.icon("sparkles", theme.color("muted"), 18), "Moments")
+        self.left_tabs.setTabToolTip(2, "Moments forts")
+        self.left_tabs.tabBar().setStyleSheet("QTabBar::tab { padding: 6px 9px; margin: 2px 1px 6px 0; }")
         hsplit.addWidget(self.left_tabs)
 
         # -- lecteurs
@@ -153,12 +178,9 @@ class StudioPage(QWidget):
         self.player.in_out_changed.connect(lambda *_: self._save_timer.start())
         self.player.position_changed.connect(lambda t: self.transcript.highlight_time(t))
         sc.lay.addWidget(self.player)
-        srow = QHBoxLayout()
-        srow.addStretch(1)
-        srow.addWidget(button("Ajouter à la timeline (A)", "primary",
-                              tooltip="Ajoute la sélection (ou tout le média) à la fin de la timeline (A)",
-                              on_click=self._add_media_to_timeline))
-        sc.lay.addLayout(srow)
+        self.player.actions_row.addWidget(button("Ajouter", "primary",
+                                                 tooltip="Ajoute la sélection (ou tout le média) à la fin de la "
+                                                 "timeline (A)", on_click=self._add_media_to_timeline, icon="plus"))
         self.viewer_tabs.addTab(sc, "Source")
         self.viewer_tabs.currentChanged.connect(self._viewer_changed)
         hsplit.addWidget(self.viewer_tabs)
@@ -181,7 +203,9 @@ class StudioPage(QWidget):
         hsplit.setStretchFactor(0, 1)
         hsplit.setStretchFactor(1, 3)
         hsplit.setStretchFactor(2, 1)
-        hsplit.setSizes([230, 760, 410])
+        hsplit.setSizes([250, 720, 380])
+        self.left_tabs.setMinimumWidth(230)
+        self.viewer_tabs.setMinimumWidth(330)
         vsplit.addWidget(hsplit)
 
         # -- timeline
@@ -189,22 +213,20 @@ class StudioPage(QWidget):
         tl_lay = QVBoxLayout(tw)
         tl_lay.setContentsMargins(0, 4, 0, 0)
         bar = QHBoxLayout()
-        bar.addWidget(label("Timeline", "h2"))
-        bar.addSpacing(12)
-        bar.addWidget(button("Couper (S)", tooltip="Couper l'extrait à la tête de lecture", on_click=self.split))
-        bar.addWidget(button("Supprimer l'extrait", "ghost", tooltip="Suppr", on_click=self._delete_selected))
-        bar.addWidget(button("Ajuster", "ghost", tooltip="Afficher toute la timeline", on_click=lambda: self.timeline.fit()))
-        bar.addWidget(button("Retirer les silences…", "ghost", tooltip="Coupe les blancs de parole dans les extraits "
-                             "(annulable avec Ctrl+Z)", on_click=self._remove_silences))
+        bar.setSpacing(4)
+        bar.addWidget(tool("scissors", "Couper à la tête de lecture (S)", self.split))
+        bar.addWidget(tool("trash-2", "Supprimer l'élément sélectionné (Suppr)", self._delete_selected))
+        bar.addWidget(tool("maximize-2", "Afficher toute la timeline", lambda: self.timeline.fit()))
+        bar.addSpacing(6)
+        bar.addWidget(button("Silences", "ghost", tooltip="Retirer les blancs de parole (annulable avec Ctrl+Z)",
+                             on_click=self._remove_silences, icon="audio-waveform"))
         bar.addStretch(1)
-        bar.addWidget(button("Production en série…", tooltip="Exporter plusieurs clips dans plusieurs formats",
-                             on_click=self._batch))
-        bar.addWidget(button("Image…", "ghost", tooltip="Enregistrer l'image affichée en pleine définition "
-                             "(Ctrl+Maj+S)", on_click=self._export_still))
-        self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export)
-        bar.addWidget(self.export_quick)
         tl_lay.addLayout(bar)
         self.timeline = TimelineView()
+        bar.addWidget(self.timeline.info)                 # infos et zoom sur la même ligne que les outils
+        bar.addSpacing(10)
+        bar.addWidget(self.timeline.zoom)
+        self.timeline.zoom.setFixedWidth(120)
         c = self.timeline.canvas
         c.seek.connect(lambda t: self.mplayer.seek(t))
         c.edited.connect(self._on_timeline_drag)
@@ -216,6 +238,7 @@ class StudioPage(QWidget):
         vsplit.addWidget(tw)
         vsplit.setStretchFactor(0, 4)
         vsplit.setStretchFactor(1, 1)
+        vsplit.setSizes([520, 200])
         self.stack.addWidget(vsplit)
 
         for key, fn in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Shift+Z", self.redo),
@@ -231,7 +254,7 @@ class StudioPage(QWidget):
         self.project_combo.blockSignals(True)
         self.project_combo.clear()
         for r in self.app.projects.recent(200):
-            self.project_combo.addItem(f"{r['name']}  ·  {r['concept_name']}", r["id"])
+            self.project_combo.addItem(r["name"], r["id"])
         if self.project_id:
             if self.project_combo.findData(self.project_id) < 0:          # projet archivé ouvert
                 cur = self.app.projects.get(self.project_id)
@@ -481,7 +504,12 @@ class StudioPage(QWidget):
         self.asset_id = None
         p = self.app.projects.get(project_id)
         self.concept_id = p["concept_id"] if p else None
-        self.concept_lbl.setText(f"Concept : {p['concept_name']}" if p else "")
+        self.concept_lbl.setText(p["concept_name"] if p else "")
+        self.concept_lbl.setToolTip("Concept (à changer dans Concepts et projets)")
+        if p and p["mode"] in theme.PARCOURS:
+            name, ic, col, _d = theme.PARCOURS[p["mode"]]
+            self.mode_icon.setPixmap(theme.icon(ic, col, 24).pixmap(24, 24))
+            self.mode_icon.setToolTip(name)
         self.transcript.glossary_hint = [p["concept_name"]] if p else []
         self.tl = self.app.montage.load(project_id)
         self._history = [json.dumps(self.tl.to_dict(), sort_keys=True)]
@@ -563,10 +591,10 @@ class StudioPage(QWidget):
                                  "AND kind IN ('video','audio') AND missing = 0 ORDER BY imported_at DESC LIMIT 300",
                                  (self.project_id,))
         if not rows:
-            QMessageBox.information(self, "Bibliothèque", "Aucun autre média dans la bibliothèque.")
+            QMessageBox.information(self, "Extraits", "Aucun autre média dans Extraits.")
             return
         names = [f"{r['file_name']}  [#{r['id']}]" for r in rows]
-        choice, ok = QInputDialog.getItem(self, "Ajouter depuis la bibliothèque", "Média :", names, 0, False)
+        choice, ok = QInputDialog.getItem(self, "Ajouter depuis Extraits", "Média :", names, 0, False)
         if ok:
             aid = rows[names.index(choice)]["id"]
             self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (self.project_id, aid))
@@ -967,6 +995,36 @@ class StudioPage(QWidget):
         self.panel.stems_note.setText(f"Séparation lancée pour {len(todo)} média(s). Durée : environ celle du "
                                       "média (calcul sur le processeur).")
 
+    def apply_stems(self, asset_id: int) -> bool:
+        """Après séparation : voix seule sur la piste vidéo, musique et ambiance sur la piste Musique (continue)."""
+        from ...edit.model import Music
+        from ...media.importer import DuplicateAsset
+        mus = self.app.stems.music(asset_id)
+        if mus is None or not mus.exists():
+            return False
+        try:
+            mid = self.app.importer().import_file(mus, project_id=self.project_id, provenance="separation").asset_id
+        except DuplicateAsset as exc:
+            mid = exc.existing_id
+        src = self.app.library.get(asset_id)
+        if src:
+            self.app.db.connect().execute("UPDATE source_asset SET file_name = ? WHERE id = ?",
+                                          (f"Musique · {Path(src['file_name']).stem}.wav", mid))
+        segs = [sg for sg in self.tl.segments if sg.asset_id == asset_id]
+        if not segs:
+            return False
+        self._snapshot()
+        start = self.tl.segment_start(self.tl.segments.index(segs[0]))
+        self.tl.music = Music(asset_id=mid, volume_db=-8.0, fade_in=0.0, fade_out=1.0, start=round(start, 3),
+                              src_offset=round(segs[0].src_in, 3), loop=False, duck=False)
+        self.tl.voice.isolate = True
+        row = self.app.library.get(mid)
+        if row:
+            self.assets[mid] = dict(row)
+        self._changed(panel=True)
+        self.save_lbl.setText("Voix isolée · musique et ambiance sur la piste Musique (−8 dB). Ctrl+Z pour annuler.")
+        return True
+
     def _reframe(self, on: bool) -> None:
         if not self.tl.segments:
             QMessageBox.information(self, "Recadrage", "Ajoutez d'abord un extrait vidéo au montage.")
@@ -1081,6 +1139,13 @@ class StudioPage(QWidget):
                 self.highlights.refresh()
         if job.kind == "find_highlights":
             self.highlights.on_job(job)
+        if job.kind == "auto_clips" and job.status == "succeeded" and \
+                (job.result or {}).get("project_id") == self.project_id:
+            self._load_media()
+            self.transcript.set_asset(self.asset_id) if self.asset_id else None
+            self.highlights.refresh()
+            if (job.result or {}).get("count"):
+                self.left_tabs.setCurrentIndex(2)
         kind = self._jobs.get(job.id)
         if not kind or job.status in ("pending", "running"):
             return
@@ -1162,6 +1227,8 @@ class StudioPage(QWidget):
         elif kind == "separate":
             if job.status == "failed":
                 QMessageBox.warning(self, "Séparer voix et musique", job.error[:800])
+            elif job.status == "succeeded":
+                self.apply_stems(job.result["asset_id"])
             self.panel.reload_voice()
         elif kind == "analyze":
             if job.status == "succeeded":
@@ -1209,7 +1276,8 @@ class StudioPage(QWidget):
                                  "c.source_asset_id WHERE c.project_id = ? AND c.name != 'Montage' ORDER BY c.id",
                                  (self.project_id,))
         if not rows:
-            it = QListWidgetItem("Aucun clip. Dans l'onglet Source : début (I), fin (O), puis « Créer un clip » (C).")
+            it = QListWidgetItem("Aucun clip")
+            it.setToolTip("Dans l'onglet Source : début (I), fin (O), puis « Créer un clip » (C).")
             it.setFlags(Qt.NoItemFlags)
             self.clips.addItem(it)
         for r in rows:

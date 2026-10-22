@@ -19,7 +19,7 @@ from ..edit.subrender import render_state, strip_geometry
 from ..edit.subtitles import State, states
 from ..edit.textrender import render_text_image
 from ..media.ffmpeg import fmt_timecode
-from .widgets import button, label
+from .widgets import PlayButton, button, label, tool
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -306,7 +306,7 @@ class MontagePlayer(QWidget):
         lay.setSpacing(8)
         self.stack = QStackedLayout()
         self.view = LivePreview()
-        self.view.setMinimumHeight(260)
+        self.view.setMinimumHeight(170)
         self.rendered = QLabel()
         self.rendered.setAlignment(Qt.AlignCenter)
         self.rendered.setStyleSheet("background:#0B0C0E; border-radius:8px;")
@@ -339,25 +339,26 @@ class MontagePlayer(QWidget):
         self.slider.sliderMoved.connect(lambda v: self.seek(v / 1000))
         lay.addWidget(self.slider)
         ctr = QHBoxLayout()
-        ctr.addWidget(button("◀|", tooltip="Image précédente (←)", on_click=lambda: self.step(-1)))
-        self.play_btn = button("▶", tooltip="Lire le montage (Espace)", on_click=self.toggle)
-        self.play_btn.setFixedWidth(44)
+        ctr.setSpacing(4)
+        ctr.addWidget(tool("step-back", "Image précédente (←)", lambda: self.step(-1)))
+        self.play_btn = PlayButton("Lire le montage (Espace)", self.toggle)
         ctr.addWidget(self.play_btn)
-        ctr.addWidget(button("|▶", tooltip="Image suivante (→)", on_click=lambda: self.step(1)))
+        ctr.addWidget(tool("step-forward", "Image suivante (→)", lambda: self.step(1)))
         self.tc = label("0:00.000 / 0:00", "muted")
-        self.tc.setMinimumWidth(150)
+        self.tc.setMinimumWidth(118)
+        ctr.addSpacing(6)
         ctr.addWidget(self.tc)
         ctr.addStretch(1)
-        ctr2 = QHBoxLayout()
         self.zone = QCheckBox("Zones TikTok / Reels")
         self.zone.setToolTip("Affiche les zones masquées par l'interface TikTok / Reels (boutons, légende).")
         self.zone.toggled.connect(lambda on: self.view.set_zone("TikTok" if on else None))
-        ctr2.addWidget(self.zone)
-        ctr2.addStretch(1)
-        self.render_btn = button("Aperçu exact de l'export", tooltip="Calcule l'image exacte de l'export à cet instant "
-                                 "(couleurs, fond flou, textes)", on_click=self._ask_render)
-        self.render_btn.setCheckable(True)
-        ctr2.addWidget(self.render_btn)
+        self.zone_btn = tool("smartphone", "Zones masquées par TikTok / Reels", None, checkable=True)
+        self.zone_btn.toggled.connect(self.zone.setChecked)
+        self.zone.hide()
+        ctr.addWidget(self.zone_btn)
+        self.render_btn = tool("eye", "Aperçu exact de l'export (couleurs, fond flou, textes)", self._ask_render,
+                               checkable=True)
+        ctr.addWidget(self.render_btn)
         if self.enabled:
             self.vol = QSlider(Qt.Horizontal)
             self.vol.setRange(0, 100)
@@ -368,7 +369,7 @@ class MontagePlayer(QWidget):
             self._apply_volumes()
             ctr.addWidget(self.vol)
         lay.addLayout(ctr)
-        lay.addLayout(ctr2)
+        ctr.addWidget(self.zone)
         self.note = label("", "faint", wrap=True)
         lay.addWidget(self.note)
         for key, fn in (("Space", self.toggle), ("Left", lambda: self.step(-1)), ("Right", lambda: self.step(1))):

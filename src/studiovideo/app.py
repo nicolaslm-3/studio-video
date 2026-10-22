@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         ctx.db.daily_backup()                      # au plus une sauvegarde automatique par jour
     except Exception:                              # une sauvegarde ratée ne doit pas empêcher de travailler
         log.exception("Sauvegarde quotidienne impossible")
+    try:
+        from .media.fonts import load_user_fonts
+        load_user_fonts(ctx.paths.root)
+    except Exception:
+        log.exception("Polices ajoutées non chargées")
     theme.apply(qapp, ctx.settings.get("theme"))
     win = MainWindow(ctx, message)
     win.show()

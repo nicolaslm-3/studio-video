@@ -323,7 +323,7 @@ class TranscriptPanel(QWidget):
             m.addAction(label, self._dub)
             m.addAction("Supprimer cette traduction", self._delete_translation)
         dz = m.addAction("Identifier les intervenants…", self._diarize)
-        dz.setEnabled(bool(self.asset_id and self.app.transcripts.has(self.asset_id)) and not self.lang)
+        dz.setEnabled(bool(self.asset_id))
         te = m.addAction("Monter depuis le texte…", self._text_edit)
         te.setEnabled(self.tr is not None)
         m.addSeparator()
@@ -346,6 +346,12 @@ class TranscriptPanel(QWidget):
 
     def _diarize(self) -> None:
         from ..ai import diarize
+        if not self.asset_id:
+            return
+        if not self.app.transcripts.has(self.asset_id):
+            QMessageBox.information(self, "Intervenants", "Transcrivez d'abord ce média : les intervenants sont "
+                                    "attribués phrase par phrase.")
+            return
         if not diarize.installed(self.app.paths.models):
             if QMessageBox.question(self, "Intervenants", "Le modèle d'empreintes vocales (26 Mo) n'est pas encore "
                                     "installé. Ouvrir la page des modèles ?") == QMessageBox.Yes:
