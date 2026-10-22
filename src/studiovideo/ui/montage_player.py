@@ -203,6 +203,34 @@ class LivePreview(QGraphicsView):
         self.fit()
 
 
+def _gain(db: float) -> float:
+    return 0.0 if db <= -59 else 10 ** (db / 20)
+
+
+def audio_plan(tl: Timeline, tracks: dict | None) -> dict:
+    """Ce que l'aperçu doit faire entendre pour un média (§10.2) — fonction pure, testable.
+
+    tracks : {"dub": chemin | None, "voice": chemin | None, "music": chemin | None}.
+    Retour : {"main": gain du son d'origine, "aux": [(chemin, gain), …] (2 pistes au plus),
+              "note": explication courte}.
+    """
+    tracks = tracks or {}
+    v = getattr(tl, "voice", None)
+    if v is None:
+        return {"main": 1.0, "aux": [], "note": ""}
+    if v.mode == "dub":
+        if not tracks.get("dub"):
+            return {"main": 1.0, "aux": [], "note": "Pas de doublage pour ce média : voix d'origine."}
+        aux = [(tracks["dub"], _gain(v.dub_gain_db))]
+        if v.background == "ambience" and tracks.get("music"):
+            aux.append((tracks["music"], _gain(v.ambience_db)))
+            return {"main": 0.0, "aux": aux, "note": "Écoute : doublage + musique et ambiance séparées."}
+        return {"main": _gain(v.original_level_db), "aux": aux, "note": "Écoute : doublage."}
+    if v.isolate and tracks.get("voice"):
+        return {"main": 0.0, "aux": [(tracks["voice"], 1.0)], "note": "Écoute : voix isolée."}
+    return {"main": 1.0, "aux": [], "note": ""}
+
+
 class MontagePlayer(QWidget):
     time_changed = Signal(float)
     render_requested = Signal(float)
@@ -216,6 +244,9 @@ class MontagePlayer(QWidget):
         self.loaded_asset: int | None = None
         self._pending: float | None = None
         self._playing = False
+        self.track_resolver = None          # asset_id -> {"dub", "voice", "music"} (chemins ou None)
+        self._plan = {"main": 1.0, "aux": [], "note": ""}
+        self._aux_loaded: list[str | None] = [None, None]
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
@@ -240,8 +271,14 @@ class MontagePlayer(QWidget):
             self.player.setVideoOutput(self.view.video_item)
             self.player.positionChanged.connect(self._on_pos)
             self.player.mediaStatusChanged.connect(self._on_status)
+            self.aux = []
+            for _ in range(2):
+                ap, ao = QMediaPlayer(self), QAudioOutput(self)
+                ap.setAudioOutput(ao)
+                self.aux.append((ap, ao))
         else:
             self.player = None
+            self.aux = []
             self.view.set_placeholder("Lecture vidéo indisponible ici")
 
         self.slider = QSlider(Qt.Horizontal)
@@ -273,8 +310,8 @@ class MontagePlayer(QWidget):
             self.vol.setValue(80)
             self.vol.setFixedWidth(80)
             self.vol.setToolTip("Volume d'écoute")
-            self.vol.valueChanged.connect(lambda v: self.audio.setVolume(v / 100))
-            self.audio.setVolume(0.8)
+            self.vol.valueChanged.connect(lambda _v: self._apply_volumes())
+            self._apply_volumes()
             ctr.addWidget(self.vol)
         lay.addLayout(ctr)
         lay.addLayout(ctr2)
@@ -296,8 +333,12 @@ class MontagePlayer(QWidget):
             self.view.set_placeholder("Lecture vidéo indisponible ici")
         else:
             self.view.set_placeholder("")
-        self.note.setText("Aperçu en direct : cadrage, miroir et textes. Couleurs et fond flou : « Aperçu exact de l'export »."
-                          if tl.segments else "")
+        loc = tl.locate(self.t)
+        if loc:
+            self._update_plan(tl.segments[loc[0]].asset_id)
+        extra = (" " + self._plan["note"]) if self._plan.get("note") else ""
+        self.note.setText("Aperçu en direct : cadrage, miroir et textes. Couleurs et fond flou : « Aperçu exact de "
+                          "l'export »." + extra if tl.segments else "")
         self.seek(min(self.t, tl.duration), keep_playing=self._playing)
         if self.render_btn.isChecked():
             self._ask_render()
@@ -328,6 +369,7 @@ class MontagePlayer(QWidget):
         self.index = i
         if new_asset:
             self._apply_geometry()
+        self._update_plan(seg.asset_id)
         if not self.player:
             return
         if new_asset:
@@ -339,6 +381,7 @@ class MontagePlayer(QWidget):
             self.player.setSource(QUrl.fromLocalFile(a["path"]))
         else:
             self.player.setPosition(int(src_t * 1000))
+        self._sync_aux(src_t, keep_playing)
         if keep_playing:
             self.player.play()
         elif self.player.playbackState() == QMediaPlayer.PlayingState:
@@ -351,6 +394,8 @@ class MontagePlayer(QWidget):
             return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
+            for ap, _ in self.aux:
+                ap.pause()
             self._playing = False
         else:
             if self.render_btn.isChecked():
@@ -365,6 +410,8 @@ class MontagePlayer(QWidget):
     def pause(self) -> None:
         if self.player:
             self.player.pause()
+        for ap, _ in self.aux:
+            ap.pause()
         self._playing = False
         self._update_ui()
 
@@ -376,7 +423,41 @@ class MontagePlayer(QWidget):
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
+        for ap, _ in self.aux:
+            ap.stop()
+            ap.setSource(QUrl())
+        self._aux_loaded = [None, None]
         self.loaded_asset = None
+
+    # -- pistes d'écoute supplémentaires (doublage, pistes séparées) ---------------
+    def _update_plan(self, asset_id: int) -> None:
+        tracks = self.track_resolver(asset_id) if self.track_resolver else None
+        self._plan = audio_plan(self.tl, tracks)
+        self._apply_volumes()
+
+    def _apply_volumes(self) -> None:
+        if not self.player:
+            return
+        base = self.vol.value() / 100 if hasattr(self, "vol") else 0.8
+        self.audio.setVolume(base * min(1.0, self._plan["main"]))
+        for k, (ap, ao) in enumerate(self.aux):
+            gain = self._plan["aux"][k][1] if k < len(self._plan["aux"]) else 0.0
+            ao.setVolume(base * min(1.0, gain))
+
+    def _sync_aux(self, src_t: float, play: bool) -> None:
+        for k, (ap, _) in enumerate(self.aux):
+            path = self._plan["aux"][k][0] if k < len(self._plan["aux"]) else None
+            path = str(path) if path else None
+            if path != self._aux_loaded[k]:
+                self._aux_loaded[k] = path
+                ap.setSource(QUrl.fromLocalFile(path) if path else QUrl())
+            if not path:
+                continue
+            ap.setPosition(int(src_t * 1000))
+            if play:
+                ap.play()
+            else:
+                ap.pause()
 
     def _on_status(self, status) -> None:
         if self._pending is not None and status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
@@ -393,6 +474,9 @@ class MontagePlayer(QWidget):
         if src < seg.src_in - 0.25:
             return
         self.t = self.tl.segment_start(self.index) + max(0.0, src - seg.src_in)
+        for k, (ap, _) in enumerate(self.aux):               # recalage si une piste dérive (> 120 ms)
+            if self._aux_loaded[k] and self._playing and abs(ap.position() - ms) > 120:
+                ap.setPosition(ms)
         if src >= seg.src_out - 0.02 and self._playing:
             if self.index + 1 < len(self.tl.segments):
                 nxt = self.tl.segments[self.index + 1]

@@ -62,3 +62,23 @@ def test_problems():
     assert any("dépasse" in p for p in t.problems(lambda i: row))
     t.segments[0].src_out = 4
     assert t.problems(lambda i: row) == []
+
+
+def test_preview_audio_plan():
+    from studiovideo.ui.montage_player import audio_plan
+    tl = Timeline()
+    tracks = {"dub": "d.wav", "voice": "v.wav", "music": "m.wav"}
+    assert audio_plan(tl, tracks) == {"main": 1.0, "aux": [], "note": ""}
+    tl.voice.isolate = True
+    assert audio_plan(tl, tracks)["aux"] == [("v.wav", 1.0)] and audio_plan(tl, tracks)["main"] == 0.0
+    assert audio_plan(tl, {"voice": None})["main"] == 1.0              # pas encore séparé : son d'origine
+    tl.voice.isolate = False
+    tl.voice.mode, tl.voice.language = "dub", "en"
+    p = audio_plan(tl, tracks)
+    assert p["main"] == 0.0 and p["aux"] == [("d.wav", 1.0)]          # voix d'origine remplacée (-60 dB)
+    tl.voice.original_level_db = -20
+    assert abs(audio_plan(tl, tracks)["main"] - 0.1) < 1e-9
+    tl.voice.background, tl.voice.ambience_db = "ambience", -6
+    p = audio_plan(tl, tracks)
+    assert p["main"] == 0.0 and p["aux"][1][0] == "m.wav" and abs(p["aux"][1][1] - 0.501) < 0.001
+    assert "Pas de doublage" in audio_plan(tl, {"dub": None})["note"]

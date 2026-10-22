@@ -320,3 +320,74 @@ def test_detected_zones_are_added_once(window):
     assert w.studio.panel.add_detected(zones) == 2
     assert w.studio.panel.add_detected(zones) == 0
     assert [m["mode"] for m in w.studio.tl.video.masks] == ["blur", "blur"]
+
+
+def test_preview_aux_tracks_follow_video(qtbot):
+    """Synchronisation du doublage dans l'aperçu, avec des lecteurs simulés (pas de carte son en CI)."""
+    from studiovideo.edit.model import Timeline
+    from studiovideo.ui import montage_player as mpmod
+
+    class FakeOut:
+        def __init__(self):
+            self.v = 1.0
+
+        def setVolume(self, v):
+            self.v = v
+
+        def volume(self):
+            return self.v
+
+    class FakePlayer:
+        PlayingState, PausedState = 1, 2
+
+        def __init__(self):
+            self.src, self.pos, self.state = None, 0, 0
+
+        def setSource(self, url):
+            self.src = url.toLocalFile() or None
+
+        def setPosition(self, ms):
+            self.pos = ms
+
+        def position(self):
+            return self.pos
+
+        def play(self):
+            self.state = 1
+
+        def pause(self):
+            self.state = 2
+
+        def stop(self):
+            self.state = 0
+
+        def playbackState(self):
+            return self.state
+
+    p = mpmod.MontagePlayer()
+    qtbot.addWidget(p)
+    p.player, p.audio = FakePlayer(), FakeOut()
+    p.aux = [(FakePlayer(), FakeOut()), (FakePlayer(), FakeOut())]
+    p.vol = type("V", (), {"value": lambda self: 100})()
+    tl = Timeline()
+    tl.add_segment(1, 10, 20)
+    tl.voice.mode, tl.voice.language = "dub", "en"
+    p.track_resolver = lambda aid: {"dub": "/x/dub.wav", "voice": None, "music": None}
+    p.set_timeline(tl, {1: {"path": "/x/v.mp4", "width": 320, "height": 240}})
+    p.loaded_asset, p._pending = 1, None        # le lecteur simulé n'émet pas « média chargé »
+    p.seek(3.0)
+    dub, dout = p.aux[0]
+    assert dub.src == "/x/dub.wav" and dub.pos == 13000                 # même instant du média source
+    assert p.audio.volume() == 0.0 and dout.volume() == 1.0             # voix d'origine coupée
+    assert "doublage" in p.note.text()
+    p._playing = True
+    p.seek(4.0, keep_playing=True)
+    assert dub.state == 1
+    dub.pos = 14500                                                      # dérive de 500 ms
+    p._on_pos(14000)
+    assert dub.pos == 14000                                              # recalée
+    p.pause()
+    assert dub.state == 2
+    tl.voice.mode = "original"
+    p.set_timeline(tl, {1: {"path": "/x/v.mp4", "width": 320, "height": 240}})
+    assert p.audio.volume() == 1.0 and dub.src is None                   # retour à la voix d'origine

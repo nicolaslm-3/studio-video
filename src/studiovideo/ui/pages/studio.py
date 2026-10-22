@@ -136,6 +136,7 @@ class StudioPage(QWidget):
         self.viewer_tabs = QTabWidget()
         mc = Card(padding=10)
         self.mplayer = MontagePlayer()
+        self.mplayer.track_resolver = self._tracks_for
         self.mplayer.time_changed.connect(self._on_time)
         self.mplayer.render_requested.connect(self._request_preview)
         mc.lay.addWidget(self.mplayer)
@@ -609,6 +610,12 @@ class StudioPage(QWidget):
         self.panel.opt_btn.setText("Analyse en cours…")
         jid = self.app.jobs.submit("optimize_audio", "Optimisation de l'audio", {"timeline": self.tl.to_dict()})
         self._jobs[jid] = "optimize"
+
+    def _tracks_for(self, asset_id: int) -> dict:
+        lang = self.tl.voice.language if self.tl.voice.mode == "dub" else ""
+        dub = self.app.dubs.track(asset_id, lang) if (lang and self.app.dubs) else None
+        st = self.app.stems
+        return {"dub": dub, "voice": st.voice(asset_id) if st else None, "music": st.music(asset_id) if st else None}
 
     def _separate(self) -> None:
         from ...edit import separate

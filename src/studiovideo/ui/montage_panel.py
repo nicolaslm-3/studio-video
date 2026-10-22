@@ -1014,9 +1014,7 @@ class MontagePanel(QTabWidget):
             self.voice_note.setText("⚠ Certains médias du montage n'ont pas de doublage dans cette langue : "
                                     "l'export sera refusé tant qu'ils ne sont pas doublés.")
         else:
-            self.voice_note.setText(("L'aperçu en direct joue encore la voix d'origine ; l'export utilise le "
-                                     "doublage. " if cur else "") +
-                                    "Astuce : affichez les sous-titres dans la même langue (onglet Sous-titres).")
+            self.voice_note.setText("Astuce : affichez les sous-titres dans la même langue (onglet Sous-titres).")
         stems = self.app.stems
         sep = [a for a in ids if stems and stems.has(a)]
         if not ids:
