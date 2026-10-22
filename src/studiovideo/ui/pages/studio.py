@@ -73,6 +73,10 @@ class StudioPage(QWidget):
         top.addWidget(self.save_lbl)
         top.addWidget(button("Nouveau projet", on_click=lambda: self.new_project.emit(None)))
         root.addLayout(top)
+        from ..guide import GuideBar
+        self.guide = GuideBar()
+        self.guide.hide()
+        root.addWidget(self.guide)
 
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
@@ -229,6 +233,172 @@ class StudioPage(QWidget):
             self._load_media()
             self._load_clips()
             self._push_views(panel=True)
+        self._refresh_guide()
+
+    # -- parcours guidés (§4) -------------------------------------------------------
+    def _project_videos(self) -> list[dict]:
+        return [a for a in self.assets.values() if a.get("kind") == "video" and a.get("project_id") == self.project_id]
+
+    def _guide_asset(self) -> int | None:
+        vids = self._project_videos()
+        if self.asset_id and any(v["id"] == self.asset_id for v in vids):
+            return self.asset_id
+        return vids[0]["id"] if vids else None
+
+    def _select_asset(self, aid: int) -> None:
+        for i in range(self.media_list.count()):
+            if self.media_list.item(i).data(Qt.UserRole) == aid:
+                self.media_list.setCurrentRow(i)
+                return
+
+    def target_language(self) -> str:
+        data = self.app.projects.load_data(self.project_id) if self.project_id else {}
+        aid = self._guide_asset()
+        langs = self.app.transcripts.languages(aid) if aid else []
+        t = data.get("target_lang")
+        return t if t in langs else (langs[0] if langs else "")
+
+    def _refresh_guide(self) -> None:
+        p = self.app.projects.get(self.project_id) if self.project_id else None
+        mode = p["mode"] if p else None
+        steps = None
+        extras = []
+        if mode == "translation":
+            steps, title = self._translation_steps(), "Traduction"
+        elif mode == "campaign":
+            b = self.app.campaigns.brief(self.project_id)
+            steps, title = self._campaign_steps(), f"Campagne · {b.name}" if b.defined else "Campagne"
+            if b.defined:
+                extras = [("Brief…", self._edit_brief), ("Conformité…", self._compliance)]
+        if not steps:
+            self.guide.hide()
+            return
+        self.guide.set_steps(title, steps, extras)
+        self.guide.show()
+
+    def _edit_brief(self) -> None:
+        from ..campaign_dialog import BriefDialog
+        if BriefDialog(self.app, self.project_id, self).exec():
+            self._refresh_guide()
+
+    def _compliance(self) -> None:
+        from ..campaign_dialog import ComplianceDialog
+        ComplianceDialog(self.app, self.project_id, self).exec()
+
+    def _campaign_steps(self):
+        from ..guide import Step
+        b = self.app.campaigns.brief(self.project_id)
+        vids = self._project_videos()
+        n_clips = self.app.db.query_one("SELECT COUNT(*) n FROM clip WHERE project_id = ? AND name != 'Montage'",
+                                        (self.project_id,))["n"]
+        rep = self.app.campaigns.report(self.project_id) if b.defined else []
+        target = max(1, b.target_count)
+        conform = [r for r in rep if r["summary"].startswith("✓")]
+        variants = [r["variant_id"] for r in rep]
+        published = 0
+        if variants:
+            q = ",".join("?" * len(variants))
+            published = self.app.db.query_one(f"SELECT COUNT(DISTINCT variant_id) n FROM master_publication "
+                                              f"WHERE variant_id IN ({q})", tuple(variants))["n"]
+        nxt_pub = next((r["variant_id"] for r in conform if not self.app.db.query_one(
+            "SELECT 1 FROM master_publication WHERE variant_id = ?", (r["variant_id"],))), None)
+
+        def clips():
+            aid = self._guide_asset()
+            if aid and self.app.transcripts.has(aid):
+                self._select_asset(aid)
+                self.left_tabs.setCurrentIndex(2)
+            else:
+                self.left_tabs.setCurrentIndex(1 if aid else 0)
+        return [
+            Step("brief", "Brief", b.defined, self._edit_brief, "Exigences du client : formats, durées, mots, mentions"),
+            Step("import", "Importer", bool(vids), lambda: pick_and_import(self.app, self, self.project_id),
+                 "Vidéo(s) source"),
+            Step("clips", f"Clips ({n_clips})", n_clips > 0, clips,
+                 "Moments forts ou sélection manuelle dans la source"),
+            Step("export", f"Exporter ({len(rep)}/{target})", len(rep) >= target, self._batch,
+                 "Production en série avec les réglages du montage"),
+            Step("check", f"Conformité ({len(conform)}/{len(rep)})", bool(rep) and len(conform) == len(rep),
+                 self._compliance, "Contrôle automatique de chaque vidéo d'après le brief"),
+            Step("publish", f"Publier ({published}/{len(conform)})", bool(conform) and published >= len(conform),
+                 (lambda: self.plan_publication.emit(nxt_pub)) if nxt_pub else None,
+                 "Préparer la publication des vidéos conformes"),
+        ]
+
+    def _translation_steps(self):
+        from ..guide import Step
+        aid = self._guide_asset()
+        tr = self.app.transcripts
+        langs = tr.languages(aid) if aid else []
+        lang = self.target_language()
+        dubbed = bool(aid and lang and self.app.dubs and self.app.dubs.get(aid, lang))
+        on_tl = bool(aid and any(sg.asset_id == aid for sg in self.tl.segments))
+        built = on_tl and self.tl.subtitles.language == lang and bool(self.tl.subtitles.cues)
+        exported = bool(self.project_id and self.app.montage.exports(self.project_id, limit=1))
+
+        def transcribe():
+            self._select_asset(aid)
+            self.left_tabs.setCurrentIndex(1)
+            self.transcript._transcribe()
+
+        def translate():
+            self._select_asset(aid)
+            self.left_tabs.setCurrentIndex(1)
+            self.transcript._translate()
+
+        def dub():
+            self._select_asset(aid)
+            self.left_tabs.setCurrentIndex(1)
+            self.transcript.lang = lang
+            self.transcript.set_asset(aid)
+            self.transcript._dub()
+        return [
+            Step("import", "Importer la vidéo", bool(aid),
+                 lambda: pick_and_import(self.app, self, self.project_id), "Vidéo d'origine à traduire"),
+            Step("transcribe", "Transcrire", bool(aid and tr.has(aid)), transcribe if aid else None,
+                 "Reconnaissance vocale locale, corrigeable"),
+            Step("translate", "Traduire", bool(langs), translate if aid and tr.has(aid) else None,
+                 "Une ou plusieurs langues, avec glossaire"),
+            Step("dub", f"Doubler ({lang.upper()})" if lang else "Doubler", dubbed, dub if lang else None,
+                 "Voix de synthèse par intervenant (ElevenLabs)", optional=True),
+            Step("build", "Monter", built, (lambda: self._build_translation(aid)) if lang else None,
+                 "Vidéo entière, sous-titres dans la langue choisie, voix doublée si disponible"),
+            Step("export", "Exporter", exported, self._export if built else None, "Un MP4 prêt à publier"),
+        ]
+
+    def _build_translation(self, aid: int) -> None:
+        from ..dialogs import LANGUAGES
+        langs = self.app.transcripts.languages(aid)
+        lang = self.target_language()
+        if len(langs) > 1:
+            names = dict(LANGUAGES)
+            items = [names.get(c, c) for c in langs]
+            choice, ok = QInputDialog.getItem(self, "Monter la version traduite", "Langue :", items,
+                                              max(0, langs.index(lang)) if lang in langs else 0, False)
+            if not ok:
+                return
+            lang = langs[items.index(choice)]
+        self.setup_translation(aid, lang)
+
+    def setup_translation(self, aid: int, lang: str) -> None:
+        """Prépare le montage traduit : vidéo entière, sous-titres traduits, voix doublée si elle existe."""
+        from ...edit.subtitles import generate
+        a = self.assets.get(aid) or dict(self.app.library.get(aid))
+        self._snapshot()
+        if not any(sg.asset_id == aid for sg in self.tl.segments):
+            self.tl.add_segment(aid, 0.0, float(a["duration_s"] or 0))
+        self.tl.subtitles.language = lang
+        trs = {i: self.app.transcripts.for_language(i, lang) for i in {sg.asset_id for sg in self.tl.segments}}
+        self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
+        self.tl.subtitles.enabled = bool(self.tl.subtitles.cues)
+        if self.app.dubs and self.app.dubs.get(aid, lang):
+            self.tl.voice.mode, self.tl.voice.language = "dub", lang
+        data = self.app.projects.load_data(self.project_id)
+        data["target_lang"] = lang
+        self.app.projects.save_data(self.project_id, data)
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        self._refresh_guide()
 
     def open_project(self, project_id: int) -> None:
         self.flush()
@@ -681,6 +851,8 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        if job.status in ("succeeded", "failed", "cancelled") and not self.guide.isHidden():
+            QTimer.singleShot(0, self._refresh_guide)
         if job.kind in ("transcribe", "download_model", "translate", "dub", "dub_line", "diarize"):
             self.transcript.on_job(job)
         if job.kind in ("dub", "dub_line", "separate") and job.status == "succeeded":

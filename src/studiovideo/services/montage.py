@@ -119,7 +119,8 @@ class MontageService:
                             (cid, Path(report["path"]).stem, tl.format.aspect, report["path"])).lastrowid
             c.execute("INSERT INTO export_job(variant_id, job_id, settings_json, output_path) VALUES (?,?,?,?)",
                       (vid, job_id, json.dumps({"report": report, "format": tl.to_dict()["format"],
-                                                "export": tl.to_dict()["export"]}, ensure_ascii=False, default=str),
+                                                "export": tl.to_dict()["export"], "timeline": tl.to_dict()},
+                                               ensure_ascii=False, default=str),
                        report["path"]))
         self.db.audit("export.done", report["path"])
         return vid

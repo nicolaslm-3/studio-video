@@ -19,6 +19,7 @@ from .services.publications import PublicationService
 from .services.settings import SettingsService
 from .services.transcripts import TranscriptService
 from .services.analytics import AnalyticsService
+from .services.campaigns import CampaignService
 from .services.dubs import DubService, StemService
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class AppContext:
     dubs: DubService | None = None
     stems: StemService | None = None
     analytics: AnalyticsService | None = None
+    campaigns: CampaignService | None = None
 
     def importer(self) -> MediaImporter:
         return MediaImporter(self.db, self.paths, self.workspace_id)
@@ -63,6 +65,7 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
                      candidates=CandidateService(db), workspace_id=ws,
                      dubs=DubService(db, paths.dubs), stems=StemService(paths.root / "stems"),
                      analytics=AnalyticsService(db))
+    ctx.campaigns = CampaignService(db, ctx.projects, ctx.transcripts)
     _register_handlers(ctx)
     return ctx
 

@@ -391,3 +391,103 @@ def test_preview_aux_tracks_follow_video(qtbot):
     tl.voice.mode = "original"
     p.set_timeline(tl, {1: {"path": "/x/v.mp4", "width": 320, "height": 240}})
     assert p.audio.volume() == 1.0 and dub.src is None                   # retour à la voix d'origine
+
+
+def test_translation_guided_project(window, tmp_path):
+    from test_translate import tr
+    from studiovideo.domain.models import ProjectMode
+    from studiovideo.transcribe.model import TSegment, Transcript
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Trad guidée", ProjectMode.TRANSLATION)
+    w.open_project(pid)
+    st = w.studio
+    assert not st.guide.isHidden() and st.guide.next_step().key == "import"
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','x.mp4','x.mp4','fg',1,8,640,360)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.refresh()
+    assert st.guide.next_step().key == "transcribe"
+    ctx.transcripts.store_original(aid, tr())
+    st.refresh()
+    assert st.guide.next_step().key == "translate"
+    ctx.transcripts.store_translation(aid, Transcript([TSegment(s.start, s.end, s.text.upper(), [], s.speaker)
+                                                      for s in tr().segments], "en", "t"))
+    st.refresh()
+    assert st.guide.next_step().key == "build"
+    assert {s.key: s.done for s in st.guide.steps}["dub"] is False      # facultatif
+    st.setup_translation(aid, "en")
+    assert st.tl.segments and st.tl.subtitles.language == "en" and st.tl.subtitles.cues
+    assert any("BONJOUR" in c.text for c in st.tl.subtitles.cues)
+    assert st.tl.voice.mode == "original"                                # pas de doublage : voix d'origine
+    assert st.guide.next_step().key == "export"
+    assert ctx.projects.load_data(pid)["target_lang"] == "en"
+
+
+def test_campaign_project_flow(window, tmp_path):
+    from studiovideo.domain.models import ProjectMode
+    from studiovideo.edit import campaign as cp
+    from studiovideo.edit.model import Timeline
+    from studiovideo.edit.subtitles import Cue
+    from studiovideo.transcribe.model import TSegment, Transcript
+    from studiovideo.ui.campaign_dialog import BriefDialog, ComplianceDialog
+    from studiovideo.ui.publication_dialog import PublicationDialog
+    w, ctx = window
+    c = ctx.concepts.create_concept("Marque")
+    tk = ctx.concepts.create_account(Platform.TIKTOK, "Marque")
+    ctx.concepts.link(c.id, tk.id)
+    pid = ctx.projects.create(c.id, "Lancement", ProjectMode.CAMPAIGN)
+    w.open_project(pid)
+    st = w.studio
+    assert st.guide.next_step().key == "brief"
+    d = BriefDialog(ctx, pid)
+    d.name.setText("Lancement Éclair")
+    d.aspects["9:16"].setChecked(True)
+    d.max_s.setValue(60)
+    d.subs.setChecked(True)
+    d.req.setText("Boisson Éclair")
+    d.forb.setText("concurrent")
+    d.tags.setText("#eclair")
+    d.disc.setText("#pub")
+    d._save()
+    b = ctx.campaigns.brief(pid)
+    assert b.required_hashtags == ["eclair"] and b.aspects == ["9:16"]
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','s.mp4','s.mp4','fc',1,90,1920,1080)", (pid,))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    con.execute("INSERT INTO clip(project_id, source_asset_id, name, start_s, end_s) VALUES (?,?,'Clip 1',0,30)",
+                (pid, aid))
+    ctx.transcripts.store_original(aid, Transcript([TSegment(1, 4, "Goûtez la boisson éclair"),
+                                                    TSegment(40, 45, "le concurrent")], "fr"))
+    good, bad = tmp_path / "good.mp4", tmp_path / "bad.mp4"
+    for f in (good, bad):
+        f.write_bytes(b"x")
+    tl = Timeline()
+    tl.add_segment(aid, 0, 30)
+    tl.subtitles.cues, tl.subtitles.enabled = [Cue(0, 2, "Goûtez")], True
+    ctx.montage.record_export(pid, tl, {"path": str(good), "duration": 30.0}, None)
+    tl2 = Timeline()
+    tl2.set_aspect("16:9", 1080)
+    tl2.add_segment(aid, 35, 50)
+    ctx.montage.record_export(pid, tl2, {"path": str(bad), "duration": 15.0}, None)
+    st.refresh()
+    steps = {s.key: s.done for s in st.guide.steps}
+    assert steps["brief"] and steps["import"] and steps["clips"] and steps["export"] and not steps["check"]
+    rep = {r["path"]: r for r in ctx.campaigns.report(pid)}
+    assert rep[str(good)]["summary"] == "✓ Conforme"
+    bad_rules = {c.rule for c in rep[str(bad)]["checks"] if c.ok is False}
+    assert {"Format", "Sous-titres", "Mot requis « Boisson Éclair »", "Mot interdit « concurrent »"} <= bad_rules
+    dlg = ComplianceDialog(ctx, pid)
+    assert dlg.table.rowCount() == 2 and "Lancement Éclair" in dlg.text_report()
+    # publication de la vidéo conforme : le brief contrôle le texte
+    assert st.guide.next_step().key == "check"
+    vid = rep[str(good)]["variant_id"]
+    pd = PublicationDialog(ctx, variant_id=vid)
+    pd.title.setText("Nouveau goût")
+    pd.tags.setText("#eclair")
+    pd._check()
+    assert "Mention de partenariat" in pd.warn.text()
+    pd.tags.setText("#eclair #pub")
+    pd._check()
+    assert "Brief" not in pd.warn.text()

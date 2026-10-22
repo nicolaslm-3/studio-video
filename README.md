@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.15.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
+**Version 0.16.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -13,7 +13,9 @@ l'interface : aucun bouton n'est simulé.
 |---|---|
 | Concepts éditoriaux, comptes sociaux, associations (plusieurs comptes par plateforme, un compte dans plusieurs concepts) | ✅ |
 | Publication maître et publications par destination, avec héritage et exceptions, confirmation des comptes hors concept et prévention des doublons (couche données, sans interface) | ✅ |
-| Projets (6 parcours ; « Montage libre » actif, les autres marqués « Prévu V2/V4 ») | ✅ |
+| Projets : 6 parcours ; Montage libre, Clipping intelligent, Traduction (guidée), Campagne (brief + conformité), Production en série actifs ; Création originale prévue V4 | ✅ |
+| **V2** — Parcours Traduction guidé : importer → transcrire → traduire → doubler → monter (sous-titres et voix dans la langue) → exporter | ✅ |
+| **V2** — Campagne : brief client (formats, durées, mots requis/interdits, hashtags, mentions, partenariat, date limite) et contrôle automatique de chaque export et de chaque texte de publication | ✅ |
 | Import local non destructif : glisser-déposer, plusieurs fichiers, détection des doublons, analyse FFprobe, miniatures, contrôle d'espace disque | ✅ |
 | Import par URL (yt-dlp), avec conservation de la provenance | ✅ (si yt-dlp est installé) |
 | Bibliothèque : recherche, filtres, favoris, tags, détection des fichiers manquants | ✅ |
