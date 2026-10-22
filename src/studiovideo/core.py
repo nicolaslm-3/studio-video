@@ -870,6 +870,17 @@ def _register_handlers(app: AppContext) -> None:
             out["engine"] = "local"
         return out
 
+    def export_project_job(ctx: JobContext, params: dict) -> dict:
+        from .services import archive
+        return archive.export_project(app, params["project_id"], Path(params["dest"]), params.get("media", True),
+                                      ctx.progress)
+
+    def import_project_job(ctx: JobContext, params: dict) -> dict:
+        from .services import archive
+        return archive.import_project(app, Path(params["path"]), Path(params["media_dir"]), None, ctx.progress)
+
+    app.jobs.register("export_project", export_project_job)
+    app.jobs.register("import_project", import_project_job)
     app.jobs.register("write_copy", write_copy)
     app.jobs.register("write_script", write_script)
     app.jobs.register("create_original", create_original)

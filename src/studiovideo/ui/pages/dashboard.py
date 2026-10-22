@@ -14,6 +14,7 @@ class DashboardPage(QWidget):
     edit_concept = Signal(object)     # concept_id | None
     show_jobs = Signal()
     open_calendar = Signal()
+    import_project = Signal()
     open_settings = Signal(str)       # nom de l'onglet des paramètres
 
     def __init__(self, app: AppContext, parent=None):
@@ -45,6 +46,8 @@ class DashboardPage(QWidget):
     def refresh(self) -> None:
         self._clear()
         head = PageHeader("Tableau de bord", "Vos concepts, projets et tâches en un coup d'œil")
+        head.add_action(button("Importer un projet…", "ghost", "Ouvrir une archive .studioproj",
+                               self.import_project.emit))
         head.add_action(button("Nouveau projet", "primary", "Ctrl+N", lambda: self.new_project.emit(None)))
         self.lay.addWidget(head)
 

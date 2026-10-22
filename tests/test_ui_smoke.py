@@ -593,3 +593,22 @@ def test_propose_copy_in_publication(window, tmp_path, monkeypatch):
     d._propose_copy()
     assert d.title.text().startswith("Aujourd'hui") and "#Citron" in d.tags.text()
     assert "relisez" in d.warn.text()
+
+
+def test_import_project_opens_it(window, tmp_path, monkeypatch):
+    import time
+
+    from test_archive import _setup
+    from studiovideo.services import archive
+    from PySide6.QtWidgets import QMessageBox
+    w, ctx = window
+    pid, aid, vid = _setup(ctx, tmp_path)
+    archive.export_project(ctx, pid, tmp_path / "a.studioproj")
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    jid = ctx.jobs.submit("import_project", "Import", {"path": str(tmp_path / "a.studioproj"),
+                                                       "media_dir": str(tmp_path / "Videos")})
+    end = time.time() + 30
+    while ctx.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+        time.sleep(0.05)
+    w._on_project_imported(ctx.jobs.get(jid))
+    assert w.studio.project_id == ctx.jobs.get(jid).result["project_id"] and len(w.studio.tl.segments) == 1

@@ -109,6 +109,7 @@ class MainWindow(QMainWindow):
         self.dashboard.edit_concept.connect(self.edit_concept)
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
         self.dashboard.open_calendar.connect(lambda: self.go(3))
+        self.dashboard.import_project.connect(self.import_project)
         self.dashboard.open_settings.connect(lambda tab: (self.go(5), self.settings_page.show_tab(tab)))
         self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(lambda m: theme.apply(QApplication.instance(), m))
@@ -200,6 +201,30 @@ class MainWindow(QMainWindow):
         if p and p["mode"] == "smart_clipping":
             self.studio.left_tabs.setCurrentIndex(2 if self.app.transcripts.has(self.studio.asset_id or 0) else 1)
 
+    def import_project(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        from .pages.studio import default_export_dir
+        path, _ = QFileDialog.getOpenFileName(self, "Importer un projet", str(default_export_dir()),
+                                              "Projet Studio Vidéo (*.studioproj)")
+        if not path:
+            return
+        self._import_job = self.app.jobs.submit("import_project", "Import du projet", {
+            "path": path, "media_dir": str(default_export_dir() / "Projets importés")})
+        self.statusBar().showMessage("Import du projet en cours…", 10000)
+
+    def _on_project_imported(self, j) -> None:
+        if j.status == "succeeded":
+            r = j.result
+            msg = f"Projet « {r['name']} » importé."
+            if r["missing"]:
+                msg += f"\n\nMédias introuvables ({len(r['missing'])}) : {', '.join(r['missing'][:5])}"
+            QMessageBox.information(self, "Importer un projet", msg)
+            self.dashboard.refresh()
+            self.open_project(r["project_id"])
+        elif j.status == "failed":
+            QMessageBox.warning(self, "Importer un projet", j.error[:600])
+
     def edit_concept(self, concept_id=None) -> None:
         if ConceptDialog(self.app, concept_id, self).exec():
             self.dashboard.refresh()
@@ -211,6 +236,9 @@ class MainWindow(QMainWindow):
             self.jobs_panel.schedule_refresh()
         j = self.app.jobs.get(job_id)
         if j:
+            if j.id == getattr(self, "_import_job", None) and j.status in ("succeeded", "failed", "cancelled"):
+                self._import_job = None
+                self._on_project_imported(j)
             self.studio.on_job(j)
             self.settings_page.on_job(j)
             self.analytics.on_job(j)

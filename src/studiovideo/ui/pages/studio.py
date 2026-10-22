@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
+from PySide6.QtWidgets import (QFileDialog, QComboBox, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
                                QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
 
 from ...core import AppContext
@@ -71,6 +71,8 @@ class StudioPage(QWidget):
         top.addWidget(self.redo_btn)
         self.save_lbl = label("", "faint")
         top.addWidget(self.save_lbl)
+        top.addWidget(button("Exporter le projet…", "ghost", tooltip="Archive .studioproj : changer d'ordinateur ou "
+                             "sauvegarder", on_click=self._export_project))
         top.addWidget(button("Nouveau projet", on_click=lambda: self.new_project.emit(None)))
         root.addLayout(top)
         from ..guide import GuideBar
@@ -849,6 +851,24 @@ class StudioPage(QWidget):
         st = self.app.stems
         return {"dub": dub, "voice": st.voice(asset_id) if st else None, "music": st.music(asset_id) if st else None}
 
+    def _export_project(self) -> None:
+        if not self.project_id:
+            return
+        self.flush()
+        p = self.app.projects.get(self.project_id)
+        path, _ = QFileDialog.getSaveFileName(self, "Exporter le projet",
+                                              str(default_export_dir() / f"{p['name']}.studioproj"),
+                                              "Projet Studio Vidéo (*.studioproj)")
+        if not path:
+            return
+        media = QMessageBox.question(self, "Exporter le projet", "Inclure les fichiers vidéo et audio dans l'archive ?"
+                                     "\n\nOui : archive complète, utilisable sur un autre ordinateur.\nNon : archive "
+                                     "légère, les médias devront être présents sur l'autre ordinateur.") == QMessageBox.Yes
+        jid = self.app.jobs.submit("export_project", f"Archive · {p['name']}", {
+            "project_id": self.project_id, "dest": path, "media": media})
+        self._jobs[jid] = "archive"
+        self.save_lbl.setText("Création de l'archive…")
+
     def _separate(self) -> None:
         from ...edit import separate
         ids = sorted({sg.asset_id for sg in self.tl.segments})
@@ -972,6 +992,11 @@ class StudioPage(QWidget):
                 QMessageBox.information(self, "Optimiser l'audio", msg)
             elif job.status == "failed":
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
+        elif kind == "archive":
+            if job.status == "succeeded":
+                self.save_lbl.setText(f"Archive créée : {Path(job.result['path']).name}")
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Archive", job.error[:600])
         elif kind == "create_original":
             if job.status == "succeeded":
                 r = job.result
