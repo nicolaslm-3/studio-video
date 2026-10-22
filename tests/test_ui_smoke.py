@@ -559,3 +559,15 @@ def test_reframe_flow(window, monkeypatch):
     assert "1/1" in st.panel.reframe_note.text()
     st._reframe(False)
     assert st.tl.segments[0].reframe == []
+
+
+def test_getting_started_card(window):
+    w, ctx = window
+    w.go(0)
+    items = w.dashboard.setup_items()
+    assert items[0][1] is True                      # le fixture a créé un compte
+    assert not all(done for _, done, _, _ in items)
+    w.dashboard.open_settings.emit("Publication")
+    assert w.settings_page.tabs.tabText(w.settings_page.tabs.currentIndex()) == "Publication"
+    w.dashboard._hide_start()
+    assert ctx.settings.get("hide_getting_started") is True

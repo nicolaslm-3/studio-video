@@ -109,6 +109,7 @@ class MainWindow(QMainWindow):
         self.dashboard.edit_concept.connect(self.edit_concept)
         self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
         self.dashboard.open_calendar.connect(lambda: self.go(3))
+        self.dashboard.open_settings.connect(lambda tab: (self.go(5), self.settings_page.show_tab(tab)))
         self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(lambda m: theme.apply(QApplication.instance(), m))
         self.settings_page.check_updates.connect(self.updater.check_now)

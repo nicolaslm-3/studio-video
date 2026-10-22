@@ -98,3 +98,33 @@ src/studiovideo/
 3. Une base plus récente que le programme est refusée avec un message explicite. Cela arrive
    après un retour à une version antérieure ; le script de restauration remet alors la base
    sauvegardée avant la mise à jour.
+
+## Modules ajoutés depuis la 0.7
+
+| Module | Rôle |
+|---|---|
+| `ai/tts.py`, `ai/piper.py` | Voix de synthèse : ElevenLabs (clé de l'utilisateur), Piper hors ligne (programme MIT téléchargé, voix vérifiées par MD5) |
+| `edit/dubbing.py`, `services/dubs.py` | Doublage phrase par phrase, calage temporel (accélération ≤ ×1,35), assemblage, reprise d'une phrase |
+| `edit/separate.py` | Séparation voix / musique MDX-Net (ONNX), STFT numpy, par blocs de 60 s |
+| `ai/diarize.py` | Intervenants : empreintes WeSpeaker + regroupement hiérarchique |
+| `edit/textdetect.py` | Repérage des logos (contours permanents) et sous-titres incrustés (bandes intermittentes) |
+| `edit/reframe.py` | Recadrage intelligent : visages UltraFace, trajectoire lissée par plan, expression `crop` FFmpeg |
+| `edit/campaign.py`, `services/campaigns.py` | Brief de campagne, contrôle de conformité des exports et des textes |
+| `edit/original.py` | Création originale : script en scènes, voix off, fabrication de la vidéo |
+| `publish/rules.py` | Limites de texte par plateforme, composition des légendes, contrôle des liens |
+| `publish/youtube.py`, `tiktok.py`, `meta.py`, `xapi.py` | Connexions OAuth (redirection locale, PKCE), envois reprenables, statistiques |
+| `services/analytics.py` | Relevés horodatés ; un indicateur absent n'est jamais remplacé par zéro |
+| `ui/guide.py` | Barre d'étapes des parcours guidés (Traduction, Campagne, Création originale) |
+| `ui/pages/calendar.py`, `ui/pages/analytics.py` | Calendrier éditorial, comparaisons et rétention |
+
+Tous les modèles d'IA tournent sur le PC (onnxruntime, CTranslate2) et sont téléchargés à la demande avec
+vérification d'empreinte. Les services distants (ElevenLabs, DeepL, Google, plateformes sociales) ne sont
+utilisés qu'avec les clés et applications de l'utilisateur, rangées dans le coffre d'identifiants Windows.
+
+## Vérifications automatiques à chaque version
+
+- Tests unitaires et d'interface (Windows et Linux), serveurs simulés pour chaque API distante.
+- Tests réels sur Linux : transcription Whisper, séparation (gain de SDR mesuré), intervenants, voix Piper
+  retranscrite par Whisper, recadrage vérifié par le détecteur de visages sur l'export.
+- Auto-test de l'exécutable Windows distribué : base, FFmpeg, transcription réelle, séparation, export sous-titré,
+  PDF et création originale, voix Piper Windows entendue par Whisper.

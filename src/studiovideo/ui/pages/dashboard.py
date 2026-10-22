@@ -14,6 +14,7 @@ class DashboardPage(QWidget):
     edit_concept = Signal(object)     # concept_id | None
     show_jobs = Signal()
     open_calendar = Signal()
+    open_settings = Signal(str)       # nom de l'onglet des paramètres
 
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
@@ -57,6 +58,9 @@ class DashboardPage(QWidget):
             return
 
         self.lay.addLayout(self._alerts())
+        start = self._getting_started()
+        if start is not None:
+            self.lay.addWidget(start)
         # Concepts
         row = QHBoxLayout()
         row.addWidget(label("Concepts éditoriaux", "h2"))
@@ -82,6 +86,52 @@ class DashboardPage(QWidget):
         cols2.addWidget(self._publications_card(), 1)
         self.lay.addLayout(cols2)
         self.lay.addStretch(1)
+
+    def setup_items(self) -> list[tuple[str, bool, str, str]]:
+        """(libellé, fait, texte du bouton, onglet des paramètres) — état réel de l'installation."""
+        from ...ai import piper
+        from ...edit import separate
+        from ...transcribe import engines
+        models = self.app.paths.models
+        accounts = self.app.concepts.list_accounts()
+        llm = self.app.settings.get("llm", None) or {}
+        return [
+            ("Comptes sociaux enregistrés", bool(accounts), "Ajouter", "Concepts et comptes"),
+            ("Modèle de transcription téléchargé", bool(engines.available() and engines.installed_models(models)),
+             "Télécharger", "Matériel et moteurs"),
+            ("Séparation voix / musique prête", bool(separate.installed(models)), "Télécharger", "Matériel et moteurs"),
+            ("Voix hors ligne installée", bool(piper.exe_path(models) and piper.installed_voices(models)), "Installer",
+             "Matériel et moteurs"),
+            ("Modèle de langage configuré (facultatif)", llm.get("kind") in ("ollama", "openai"), "Configurer",
+             "Matériel et moteurs"),
+            ("Un compte connecté pour publier automatiquement", any(a.connection_status == "connected"
+                                                                    for a in accounts), "Connecter", "Publication"),
+        ]
+
+    def _getting_started(self):
+        if self.app.settings.get("hide_getting_started", False):
+            return None
+        items = self.setup_items()
+        if all(done for _, done, _, _ in items):
+            return None
+        card = Card(padding=12, spacing=4)
+        head = QHBoxLayout()
+        head.addWidget(label(f"Premiers pas · {sum(d for _, d, _, _ in items)}/{len(items)}", "h2"))
+        head.addStretch(1)
+        head.addWidget(button("Masquer", "ghost", on_click=self._hide_start))
+        card.lay.addLayout(head)
+        for text, done, action, tab in items:
+            row = QHBoxLayout()
+            row.addWidget(label(("✓ " if done else "○ ") + text, "muted" if done else None))
+            row.addStretch(1)
+            if not done:
+                row.addWidget(button(action, "ghost", on_click=lambda _=False, t=tab: self.open_settings.emit(t)))
+            card.lay.addLayout(row)
+        return card
+
+    def _hide_start(self) -> None:
+        self.app.settings.set("hide_getting_started", True)
+        self.refresh()
 
     def _alerts(self):
         lay = QVBoxLayout()
