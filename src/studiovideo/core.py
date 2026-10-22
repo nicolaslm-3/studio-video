@@ -385,6 +385,19 @@ def _register_handlers(app: AppContext) -> None:
             app.db.audit("account.connect", f"account={acc.id} {acc.platform.value}={remote}")
             who = ("@" + pg["ig_username"]) if acc.platform.value == "instagram" else pg["name"]
             return {"account_id": acc.id, "channel": who, "channel_id": remote}
+        if acc.platform.value == "x":
+            from .publish import xapi
+            cid_, sec = app.settings.get("x_client_id", "") or "", secrets.get_secret("x_client_secret") or ""
+            ctx.progress(0.1, "Autorisation dans le navigateur…")
+            tok = xapi.connect(cid_, sec, webbrowser.open, is_cancelled=lambda: ctx.cancelled)
+            secrets.set_secret(f"x_refresh_{acc.id}", tok["refresh_token"])
+            user = xapi.me(tok["access_token"])
+            with app.db.transaction() as c:
+                c.execute("UPDATE social_account SET connection_status = 'connected', remote_id = ?, scopes = ?, "
+                          "public_url = CASE WHEN public_url = '' THEN ? ELSE public_url END WHERE id = ?",
+                          (user.get("id", ""), xapi.SCOPES, f"https://x.com/{user.get('username', '')}", acc.id))
+            app.db.audit("account.connect", f"account={acc.id} x={user.get('id', '')}")
+            return {"account_id": acc.id, "channel": "@" + user.get("username", ""), "channel_id": user.get("id", "")}
         if acc.platform.value != "youtube":
             raise ValueError(f"La connexion automatique {acc.platform.label} n'est pas encore disponible.")
         cid = app.settings.get("youtube_client_id", "") or ""
@@ -415,13 +428,15 @@ def _register_handlers(app: AppContext) -> None:
         def fail(msg: str):
             ps.set_status(r["id"], PublicationStatus.FAILED, error=msg)
             raise ValueError(msg)
-        if r["platform"] not in ("youtube", "tiktok", "instagram", "facebook"):
+        if r["platform"] not in ("youtube", "tiktok", "instagram", "facebook", "x"):
             fail("Mise en ligne automatique non disponible pour cette plateforme.")
         acc = app.concepts.get_account(r["account_id"])
         if r["platform"] == "tiktok":
             return _publish_tiktok(ctx, r, acc, params, fail)
         if r["platform"] in ("instagram", "facebook"):
             return _publish_meta(ctx, r, acc, params, fail)
+        if r["platform"] == "x":
+            return _publish_x(ctx, r, acc, params, fail)
         refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
         if acc.connection_status != "connected" or not refresh:
             fail("Compte YouTube non connecté (Paramètres → Comptes).")
@@ -491,6 +506,75 @@ def _register_handlers(app: AppContext) -> None:
             raise
         ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=res["id"], public_url=res["url"])
         return {"publication_id": r["id"], "video_id": res["id"], "url": res["url"], "state": "publiée"}
+
+    def _x_token(acc) -> str:
+        from .publish import xapi
+        from .services import secrets
+        refresh_tok = secrets.get_secret(f"x_refresh_{acc.id}")
+        if not refresh_tok:
+            raise xapi.XError("Compte X non connecté (Paramètres → Comptes).")
+        tok = xapi.refresh(app.settings.get("x_client_id", "") or "", secrets.get_secret("x_client_secret") or "",
+                           refresh_tok)
+        if tok.get("refresh_token") and tok["refresh_token"] != refresh_tok:
+            secrets.set_secret(f"x_refresh_{acc.id}", tok["refresh_token"])
+        return tok["access_token"]
+
+    def _publish_x(ctx: JobContext, r, acc, params: dict, fail) -> dict:
+        from datetime import datetime
+
+        from .domain.models import PublicationStatus
+        from .publish import rules, xapi
+        from .services import secrets
+        ps = app.publications
+        if acc.connection_status != "connected" or not secrets.get_secret(f"x_refresh_{acc.id}"):
+            fail("Compte X non connecté (Paramètres → Comptes).")
+        if r["at"] and r["at"] > datetime.now().strftime("%Y-%m-%dT%H:%M") and not params.get("now"):
+            raise ValueError("X : la vidéo partira automatiquement à l'heure prévue si Studio Vidéo est ouvert.")
+        if not r["output_path"] or not Path(r["output_path"]).exists():
+            fail("La vidéo de cette publication est introuvable.")
+        text = rules.compose("x", r["title"] or "", r["description"] or "", r["hashtags"] or "")["text"]
+        problems = rules.check("x", r["title"] or "", r["description"] or "", r["hashtags"] or "")
+        if problems:
+            fail(" ".join(problems))
+        try:
+            ps.set_status(r["id"], PublicationStatus.UPLOADING)
+            res = xapi.post_video(Path(r["output_path"]), text, _x_token(acc), ctx.progress, lambda: ctx.cancelled)
+        except Exception as exc:
+            if "révoquée" in str(exc):
+                with app.db.transaction() as c:
+                    c.execute("UPDATE social_account SET connection_status = 'expired' WHERE id = ?", (acc.id,))
+            ps.set_status(r["id"], PublicationStatus.FAILED, error=str(exc)[:300])
+            raise
+        url = f"{(acc.public_url or 'https://x.com/i').rstrip('/')}/status/{res['id']}"
+        ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=res["id"], public_url=url)
+        return {"publication_id": r["id"], "video_id": res["id"], "url": url, "state": "publiée"}
+
+    def _x_stats() -> tuple[int, list[str]]:
+        from .publish import xapi
+        done, errors = 0, []
+        rows = app.db.query("SELECT p.id, p.remote_id, p.public_url, p.social_account_id FROM publication p "
+                            "JOIN social_account a ON a.id = p.social_account_id WHERE a.platform = 'x' "
+                            "AND p.status = 'published'")
+        import re as _re
+        by_acc: dict = {}
+        for r in rows:
+            m = _re.search(r"/status/(\d+)", r["public_url"] or "") or _re.fullmatch(r"(\d{5,})", r["remote_id"] or "")
+            if m:
+                by_acc.setdefault(r["social_account_id"], []).append((r["id"], m.group(1)))
+        for acc_id, items in by_acc.items():
+            acc = app.concepts.get_account(acc_id)
+            if acc.connection_status != "connected":
+                continue
+            try:
+                stats = xapi.post_stats(_x_token(acc), [v for _, v in items])
+            except xapi.XError as exc:
+                errors.append(f"X : {exc}")
+                continue
+            for pid, tid in items:
+                if stats.get(tid):
+                    app.analytics.record(pid, stats[tid], "api")
+                    done += 1
+        return done, errors
 
     def acc_remote(acc_id: int) -> str:
         row = app.db.query_one("SELECT remote_id FROM social_account WHERE id = ?", (acc_id,))
@@ -597,6 +681,8 @@ def _register_handlers(app: AppContext) -> None:
         from .services import secrets
         tk_done, tk_errors = _tiktok_stats()
         ig_done, ig_errors = _instagram_stats()
+        x_done, x_errors = _x_stats()
+        ig_done, ig_errors = ig_done + x_done, ig_errors + x_errors
         tk_done, tk_errors = tk_done + ig_done, tk_errors + ig_errors
         items = app.analytics.youtube_ids()
         if not items:
