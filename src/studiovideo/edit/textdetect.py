@@ -83,13 +83,13 @@ def detect(frames: np.ndarray) -> list[dict]:
     if n < 4:
         return []
     e = _edges(frames)
-    persist = e.mean(axis=0)                                  # part des images où le contour est présent
+    persist = _edges(frames, 28.0).mean(axis=0)               # part des images où le contour est présent
     stable = frames.std(axis=0) < 10                          # intensité qui ne bouge pas
     moving = (frames.std(axis=0) > 3).mean() > 0.25           # l'image change sur une bonne partie du cadre
     zones: list[dict] = []
     # -- logos / filigranes : contours permanents et stables près d'un bord
     if moving:
-        logo = (_box_mean((persist > 0.85) & stable, 2) > 0.18)
+        logo = (_box_mean((persist > 0.8) & stable, 2) > 0.15)
         for x0, y0, x1, y1 in _components(logo):
             bw, bh = x1 - x0, y1 - y0
             area = bw * bh / (w * h)

@@ -189,7 +189,7 @@ def test_detect_burned_text_and_logo(tmp_path):
                   for k in range(28))
     s2 = ",".join(f"drawbox=x={150 + 11 * k}:y=302:w=3:h=24:color=yellow@1:t=fill:enable='between(t,5,7)'"
                   for k in range(30))
-    src = "gradients=s=640x360:r=25:d=8:speed=0.25:n=4"
+    src = "gradients=s=640x360:r=25:d=8:speed=0.25:n=4:seed=3"
     burned = _make(tmp_path / "burn.mp4", ["-f", "lavfi", "-i", src, "-vf", ",".join([logo, s1, s2]),
                                            "-c:v", "libx264", "-pix_fmt", "yuv420p"])
     clean = _make(tmp_path / "clean.mp4", ["-f", "lavfi", "-i", src, "-c:v", "libx264", "-pix_fmt", "yuv420p"])
