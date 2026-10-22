@@ -195,7 +195,7 @@ MODE_INFO = {
     ProjectMode.FREE_EDIT: ("Assembler, découper, recadrer et exporter vos fichiers.", None),
     ProjectMode.SMART_CLIPPING: ("Transcrire une vidéo longue et en extraire les meilleurs passages.", None),
     ProjectMode.TRANSLATION: ("Transcrire, traduire, sous-titrer et doubler une vidéo, étape par étape.", None),
-    ProjectMode.ORIGINAL: ("Créer une vidéo à partir d'un texte, d'un PDF ou d'une idée.", "V4"),
+    ProjectMode.ORIGINAL: ("Créer une vidéo à partir d'une idée, d'un texte ou d'un PDF : script, voix off, images.", None),
     ProjectMode.CAMPAIGN: ("Suivre le brief d'un client et contrôler la conformité de chaque clip.", None),
     ProjectMode.BATCH: ("Produire plusieurs vidéos à partir d'un modèle (bouton « Production en série »).", None),
 }

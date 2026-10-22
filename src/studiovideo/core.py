@@ -141,6 +141,23 @@ def _register_handlers(app: AppContext) -> None:
 
     def download_model(ctx: JobContext, params: dict) -> dict:
         from .transcribe import engines
+        if params["model"].startswith("piper:"):
+            from .ai import piper
+            what = params["model"][6:]
+            try:
+                if what == "bin":
+                    p = piper.install_engine(app.paths.models, ctx.progress, lambda: ctx.cancelled)
+                elif what == "catalog":
+                    return {"model": params["model"], "voices": len(piper.catalog(app.paths.models, refresh=True))}
+                else:
+                    info = next((v for v in piper.catalog(app.paths.models) if v.key == what), None)
+                    if info is None:
+                        raise ValueError(f"Voix inconnue : {what}")
+                    p = piper.download_voice(app.paths.models, info, ctx.progress, lambda: ctx.cancelled)
+            except piper.PiperError:
+                ctx.check()
+                raise
+            return {"model": params["model"], "path": str(p)}
         if params["model"].startswith("spk:"):
             from .ai import diarize
             try:
@@ -463,6 +480,61 @@ def _register_handlers(app: AppContext) -> None:
                                        a["width"] or 16, a["height"] or 9)
         return {"asset_id": a["id"], "zones": zones}
 
+    def write_script(ctx: JobContext, params: dict) -> dict:
+        """Script en scènes par le modèle de langage configuré (Création originale)."""
+        from .ai.highlights import LLMEngine
+        from .edit import original
+        from .services import secrets
+        llm = app.settings.get("llm", None) or {}
+        if llm.get("kind") not in ("ollama", "openai") or not llm.get("model"):
+            raise ValueError("Aucun modèle de langage configuré (Paramètres → Matériel et moteurs).")
+        eng = LLMEngine(llm["kind"], llm["model"], llm.get("base_url", ""),
+                        (secrets.get_secret("llm_api_key") or "") if llm["kind"] == "openai" else "")
+        ctx.progress(0.2, "Écriture du script")
+        scenes = original.script_from_llm(eng, params.get("idea", ""), params.get("language", "fr"),
+                                          int(params.get("seconds") or 45), params.get("source", ""))
+        return {"scenes": [s.to_dict() for s in scenes]}
+
+    def create_original(ctx: JobContext, params: dict) -> dict:
+        """Fabrique la vidéo d'une création originale et l'importe dans le projet."""
+        import shutil
+
+        from .edit import original
+        pid = params["project_id"]
+        scenes = [original.Scene(**{k: v for k, v in s.items() if k in original.Scene.__dataclass_fields__})
+                  for s in params["scenes"]]
+        tts = None
+        if params.get("tts"):
+            tts = _tts(params["tts"])
+
+        def visuals(v: str):
+            if v and v.startswith("asset:"):
+                a = app.library.get(int(v[6:]))
+                if a and Path(a["path"]).exists() and a["kind"] in ("image", "video"):
+                    return {"kind": a["kind"], "path": a["path"]}
+            return None
+        out_dir = app.paths.projects / f"p{pid}"
+        n = len(list(out_dir.glob("creation_*.mp4"))) + 1 if out_dir.exists() else 1
+        dest = out_dir / f"creation_{n:02d}.mp4"
+        work = app.paths.temp / f"original_{ctx.job_id}"
+        try:
+            res = original.build(scenes, int(params["width"]), int(params["height"]), float(params.get("fps") or 30),
+                                 dest, work, tts, params.get("voice", ""), params.get("language", "fr"), visuals,
+                                 ctx.progress, lambda: ctx.cancelled)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        ctx.progress(0.95, "Import dans le projet")
+        imp = app.importer().import_file(dest, project_id=pid, allow_duplicate=True, provenance="création originale")
+        if res["transcript"].segments:
+            app.transcripts.store_original(imp.asset_id, res["transcript"])
+        data = app.projects.load_data(pid)
+        data["original_script"] = params["scenes"]
+        data["original_asset"] = imp.asset_id
+        app.projects.save_data(pid, data)
+        return {"asset_id": imp.asset_id, "duration": res["duration"], "texts": res["texts"], "path": res["path"]}
+
+    app.jobs.register("write_script", write_script)
+    app.jobs.register("create_original", create_original)
     app.jobs.register("detect_text", detect_text)
     app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("connect_account", connect_account)

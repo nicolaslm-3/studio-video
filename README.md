@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.16.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
+**Version 0.17.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -13,7 +13,7 @@ l'interface : aucun bouton n'est simulé.
 |---|---|
 | Concepts éditoriaux, comptes sociaux, associations (plusieurs comptes par plateforme, un compte dans plusieurs concepts) | ✅ |
 | Publication maître et publications par destination, avec héritage et exceptions, confirmation des comptes hors concept et prévention des doublons (couche données, sans interface) | ✅ |
-| Projets : 6 parcours ; Montage libre, Clipping intelligent, Traduction (guidée), Campagne (brief + conformité), Production en série actifs ; Création originale prévue V4 | ✅ |
+| Projets : 6 parcours ; Montage libre, Clipping intelligent, Traduction (guidée), Campagne (brief + conformité), Production en série, Création originale : tous actifs | ✅ |
 | **V2** — Parcours Traduction guidé : importer → transcrire → traduire → doubler → monter (sous-titres et voix dans la langue) → exporter | ✅ |
 | **V2** — Campagne : brief client (formats, durées, mots requis/interdits, hashtags, mentions, partenariat, date limite) et contrôle automatique de chaque export et de chaque texte de publication | ✅ |
 | Import local non destructif : glisser-déposer, plusieurs fichiers, détection des doublons, analyse FFprobe, miniatures, contrôle d'espace disque | ✅ |
@@ -55,6 +55,8 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Identification des intervenants sur le PC (empreintes vocales WeSpeaker), reportée sur les traductions | ✅ |
 | **V2** — Masquage manuel de zones (texte incrusté, logo) : flou, effacement, bande | ✅ |
 | **V2** — Détection automatique des logos et sous-titres incrustés : zones proposées, à vérifier (sans lecture du texte) | ✅ |
+| **V4** — Création originale : idée, texte, PDF ou Word → script en scènes (IA si configurée) → voix off → vidéo (images, vidéos ou couleurs) avec textes et sous-titres calés | ✅ |
+| **V2** — Voix hors ligne gratuites (Piper, licence MIT) pour le doublage et la voix off : moteur et voix téléchargés à la demande | ✅ |
 | **V3** — Calendrier éditorial : tous concepts et comptes, mois par mois, filtre par concept | ✅ |
 | **V3** — Publication : vidéo + texte maître, destinations du concept (hors concept sur confirmation), horaire et texte propres à chaque destination, contrôle des limites de chaque plateforme | ✅ |
 | **V3** — Rappels à l'heure prévue et publication assistée (texte copié, vidéo prête, page d'envoi), confirmée par le lien public | ✅ |

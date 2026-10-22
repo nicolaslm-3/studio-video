@@ -491,3 +491,33 @@ def test_campaign_project_flow(window, tmp_path):
     pd.tags.setText("#eclair #pub")
     pd._check()
     assert "Brief" not in pd.warn.text()
+
+
+def test_original_creation_flow(window):
+    import time
+
+    from studiovideo.domain.models import ProjectMode
+    from studiovideo.edit.original import Scene
+    from studiovideo.ui.original_dialog import OriginalDialog
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Idée", ProjectMode.ORIGINAL)
+    w.open_project(pid)
+    st = w.studio
+    assert st.guide.next_step().key == "script"
+    d = OriginalDialog(ctx, pid, 360, 640)
+    d.text.setPlainText("Le café vient d'Éthiopie. Il est bu partout. Deux milliards de tasses chaque jour !")
+    d._split_text()
+    assert d.table.rowCount() >= 1
+    d._set_scenes([Scene("Le café vient d'Éthiopie.", "Le café"), Scene("Deux milliards de tasses.", "", "", 2.5)])
+    d._create()
+    assert d.params["scenes"][0]["text"] == "Le café" and d.params["tts"] is None
+    jid = ctx.jobs.submit("create_original", "Création", d.params)
+    st._jobs[jid] = "create_original"
+    end = time.time() + 60
+    while ctx.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+        time.sleep(0.05)
+    st.on_job(ctx.jobs.get(jid))
+    assert ctx.jobs.get(jid).status == "succeeded", ctx.jobs.get(jid).error
+    assert len(st.tl.segments) == 1 and [t.text for t in st.tl.texts] == ["Le café"]
+    assert st.tl.subtitles.enabled and any("tasses" in c.text for c in st.tl.subtitles.cues)
+    assert st.guide.next_step().key == "export"

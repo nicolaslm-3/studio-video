@@ -352,6 +352,7 @@ class SettingsPage(QWidget):
         card.lay.addLayout(form)
         lay.addWidget(card)
         lay.addWidget(self._models_card(ram))
+        lay.addWidget(self._voices_card())
         lay.addWidget(self._llm_card())
         lay.addStretch(1)
         return w
@@ -375,6 +376,99 @@ class SettingsPage(QWidget):
         self._rec_model = rec
         self._fill_models()
         return card
+
+    # -- voix hors ligne (Piper) ----------------------------------------------------------
+    def _voices_card(self) -> Card:
+        from ..dialogs import LANGUAGES
+        card = Card()
+        card.lay.addWidget(label("Voix hors ligne (gratuites, sur ce PC)", "h2"))
+        card.lay.addWidget(label("Pour le doublage et la voix off sans service payant : le moteur Piper (licence "
+                                 "MIT, 22 Mo) puis une ou plusieurs voix (20 à 120 Mo chacune, licence indiquée "
+                                 "dans la fiche de chaque voix). Rien n'est envoyé sur Internet pendant la lecture.",
+                                 "muted", wrap=True))
+        row = QHBoxLayout()
+        self.piper_state = label("", "muted")
+        row.addWidget(self.piper_state, 1)
+        self.piper_btn = button("Installer le moteur", on_click=lambda: self._piper_job("bin"))
+        row.addWidget(self.piper_btn)
+        card.lay.addLayout(row)
+        row2 = QHBoxLayout()
+        self.piper_lang = QComboBox()
+        for c, n in LANGUAGES:
+            self.piper_lang.addItem(n, c)
+        self.piper_lang.currentIndexChanged.connect(lambda _i: self._fill_voices())
+        row2.addWidget(label("Langue", "muted"))
+        row2.addWidget(self.piper_lang)
+        row2.addWidget(button("Actualiser le catalogue", "ghost", on_click=lambda: self._piper_job("catalog")))
+        row2.addStretch(1)
+        card.lay.addLayout(row2)
+        self.voices_table = QTableWidget(0, 4)
+        self.voices_table.setHorizontalHeaderLabels(["Voix", "Qualité", "Taille", ""])
+        self.voices_table.verticalHeader().hide()
+        self.voices_table.setShowGrid(False)
+        self.voices_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.voices_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.voices_table.setMinimumHeight(160)
+        card.lay.addWidget(self.voices_table)
+        self._fill_voices()
+        return card
+
+    def _fill_voices(self) -> None:
+        from ...ai import piper
+        models = self.app.paths.models
+        exe = piper.exe_path(models)
+        inst = piper.installed_voices(models)
+        running = set(self._model_jobs.values()) if hasattr(self, "_model_jobs") else set()
+        self.piper_state.setText(("✓ Moteur installé" if exe else "Moteur non installé") +
+                                 (f" · {len(inst)} voix : {', '.join(inst[:4])}{'…' if len(inst) > 4 else ''}"
+                                  if inst else ""))
+        self.piper_btn.setVisible(exe is None)
+        self.piper_btn.setEnabled("piper:bin" not in running)
+        t = self.voices_table
+        try:
+            cat = [v for v in piper.catalog(models) if v.family == self.piper_lang.currentData()] \
+                if (piper.root(models) / "voices.json").exists() else None
+        except Exception:
+            cat = None
+        if cat is None:
+            t.setRowCount(1)
+            t.setItem(0, 0, QTableWidgetItem("Catalogue non chargé : « Actualiser le catalogue »."))
+            for j in (1, 2, 3):
+                t.setItem(0, j, QTableWidgetItem(""))
+            t.removeCellWidget(0, 3)
+            return
+        t.setRowCount(len(cat))
+        for i, v in enumerate(cat):
+            t.setItem(i, 0, QTableWidgetItem(f"{v.name} ({v.language})" + (f" · {v.speakers} voix" if v.speakers > 1
+                                                                               else "")))
+            t.setItem(i, 1, QTableWidgetItem({"x_low": "très basse", "low": "basse", "medium": "moyenne",
+                                              "high": "haute"}.get(v.quality, v.quality)))
+            t.setItem(i, 2, QTableWidgetItem(f"{v.size_mb:.0f} Mo"))
+            key = "piper:" + v.key
+            if key in running:
+                b = button("Téléchargement…", "ghost")
+                b.setEnabled(False)
+            elif v.key in inst:
+                b = button("Supprimer", "ghost", on_click=lambda _=False, k=v.key: self._delete_voice(k))
+            else:
+                b = button("Télécharger", on_click=lambda _=False, k=v.key: self._piper_job(k))
+            t.setCellWidget(i, 3, b)
+        if not cat:
+            t.setRowCount(1)
+            t.setItem(0, 0, QTableWidgetItem("Aucune voix Piper pour cette langue."))
+
+    def _piper_job(self, what: str) -> None:
+        jid = self.app.jobs.submit("download_model", {"bin": "Installation du moteur de voix",
+                                                      "catalog": "Catalogue des voix"}.get(what, f"Voix {what}"),
+                                   {"model": "piper:" + what})
+        self._model_jobs[jid] = "piper:" + what
+        self._fill_voices()
+
+    def _delete_voice(self, key: str) -> None:
+        from ...ai import piper
+        if QMessageBox.question(self, "Voix", f"Supprimer la voix « {key} » ?") == QMessageBox.Yes:
+            piper.delete_voice(self.app.paths.models, key)
+            self._fill_voices()
 
     def _llm_card(self) -> Card:
         from PySide6.QtWidgets import QLineEdit
@@ -569,9 +663,12 @@ class SettingsPage(QWidget):
             self.refresh()
         if job.id in getattr(self, "_model_jobs", {}):
             if job.status in ("succeeded", "failed", "cancelled"):
-                self._model_jobs.pop(job.id, None)
+                key = self._model_jobs.pop(job.id, None) or ""
                 if job.status == "failed":
-                    QMessageBox.warning(self, "Téléchargement du modèle", job.error[:600])
+                    QMessageBox.warning(self, "Téléchargement", job.error[:600])
+                if key.startswith("piper:"):
+                    self._fill_voices()
+                    return
                 self._fill_models()
             elif job.status == "running" and job.progress:
                 row = next((i for i, r in enumerate(self._model_rows()) if r[0] == self._model_jobs[job.id]), None)

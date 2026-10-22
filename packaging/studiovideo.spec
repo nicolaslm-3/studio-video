@@ -41,7 +41,7 @@ a = Analysis(
     pathex=[str(SRC)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["keyring.backends.Windows", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"] + asr_hidden,
+    hiddenimports=["keyring.backends.Windows", "pypdf", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"] + asr_hidden,
     # Paquets inutiles à l'exécution (tirés par l'environnement de compilation) : allège l'installateur.
     excludes=["tkinter", "torch", "matplotlib", "IPython", "pytest", "scipy", "pandas", "PIL", "lxml", "sympy",
               "cryptography", "yaml", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtQuickWidgets",

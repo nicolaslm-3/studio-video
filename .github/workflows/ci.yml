@@ -105,3 +105,41 @@ jobs:
             echo "::error title=Intervenants::$msg"
           fi
           exit $rc
+      - name: Voix hors ligne réelle (Piper + voix officielle, vérifiée par Whisper)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STUDIOVIDEO_PIPER_EXE: piperbin/piper/piper
+          STUDIOVIDEO_PIPER_VOICE: pipervoice/fr_FR-siwis-medium.onnx
+          STUDIOVIDEO_TEST_MODELS: models
+        shell: bash
+        run: |
+          mkdir -p piperbin pipervoice
+          curl -sSfL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz | tar xz -C piperbin
+          V=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0
+          curl -sSfL -o pipervoice/fr_FR-siwis-medium.onnx $V/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx
+          curl -sSfL -o pipervoice/fr_FR-siwis-medium.onnx.json $V/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx.json
+          curl -sSfL -o pipervoice/voices.json $V/voices.json
+          python - <<'PY'
+          import json, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, "src")
+          from studiovideo.ai import piper
+          m = Path("catmodels"); (m / "piper").mkdir(parents=True, exist_ok=True)
+          shutil.copy("pipervoice/voices.json", m / "piper" / "voices.json")
+          cat = piper.catalog(m)
+          fr = [v for v in cat if v.family == "fr"]
+          assert len(cat) > 50 and any(v.key == "fr_FR-siwis-medium" for v in fr), (len(cat), [v.key for v in fr])
+          print(f"::notice title=Catalogue Piper::{len(cat)} voix, dont {len(fr)} en français")
+          PY
+          set +e
+          python -m pytest -q -s tests/test_piper.py -rA > piper.txt 2>&1
+          rc=$?
+          cat piper.txt
+          t=$(grep -o '{"piper_transcription.*}' piper.txt | head -1)
+          [ -n "$t" ] && echo "::notice title=Piper réel::$t"
+          if grep -q "SKIPPED" piper.txt; then echo "::error title=Piper réel::test réel ignoré"; rc=1; fi
+          if [ $rc -ne 0 ]; then
+            msg=$(grep -E "Error|error|assert|Exception|^E " piper.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Piper réel::$msg"
+          fi
+          exit $rc

@@ -34,7 +34,7 @@ class DubDialog(QDialog):
         has_key = bool(secrets.get_secret("elevenlabs_api_key"))
         self.engine.addItem("ElevenLabs" + ("" if has_key else " (clé à saisir dans Paramètres)"), "elevenlabs")
         try:
-            tts.PiperTTS(app.paths.models / "piper")
+            tts.PiperTTS(app.paths.models)
             self.engine.addItem("Piper (hors ligne)", "piper")
         except tts.TTSError:
             pass

@@ -7,7 +7,6 @@ Chaque moteur écrit un fichier WAV mono pour une phrase.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import urllib.error
@@ -101,40 +100,38 @@ class ElevenLabsTTS:
 
 
 class PiperTTS:
-    """Piper (hors ligne). Voix : fichiers .onnx (+ .onnx.json) dans le dossier des modèles."""
+    """Piper (hors ligne, gratuit) : programme autonome + voix .onnx téléchargées (Paramètres → Modèles)."""
     name = "piper"
 
-    def __init__(self, voices_dir: Path):
-        self.dir = voices_dir
-        self.exe = shutil.which("piper")
-        try:
-            import piper  # noqa: F401
-            self.module = True
-        except Exception:
-            self.module = False
-        if not (self.module or self.exe):
-            raise TTSError("Piper n'est pas installé dans cette version.")
+    def __init__(self, models_dir: Path):
+        from . import piper
+        self.models_dir = Path(models_dir)
+        self.exe = piper.exe_path(self.models_dir)
+        if self.exe is None:
+            raise TTSError("Moteur de voix hors ligne non installé (Paramètres → Matériel et moteurs → Voix).")
+        if not piper.installed_voices(self.models_dir):
+            raise TTSError("Aucune voix hors ligne téléchargée (Paramètres → Matériel et moteurs → Voix).")
 
     def voices(self) -> list[Voice]:
+        from . import piper
         out = []
-        for f in sorted(self.dir.glob("*.onnx")):
-            lang = f.stem.split("-")[0].split("_")[0]
-            out.append(Voice(str(f), f.stem, "local", lang))
+        for key in piper.installed_voices(self.models_dir):
+            lang = key.split("-")[0]
+            out.append(Voice(key, key.replace("_", " ").replace("-", " · "), "hors ligne", lang.split("_")[0]))
         return out
 
     def synth(self, text: str, voice: str, language: str, dest: Path, speed: float = 1.0) -> Path:
+        from . import piper
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if self.module:
-            from piper import PiperVoice  # type: ignore
-            v = PiperVoice.load(voice)
-            with wave.open(str(dest), "wb") as w:
-                v.synthesize_wav(text, w)
-            return dest
-        p = subprocess.run([self.exe, "--model", voice, "--output_file", str(dest),
-                            "--length_scale", f"{1.0 / max(0.5, speed):.3f}"], input=text, text=True,
-                           capture_output=True, creationflags=_NOWIN)
-        if p.returncode != 0 or not dest.exists():
-            raise TTSError(f"Piper a échoué : {p.stderr[-300:]}")
+        model = piper.voice_path(self.models_dir, voice)
+        if not model.exists():
+            raise TTSError(f"Voix hors ligne absente : {voice}")
+        p = subprocess.run([str(self.exe), "-q", "-m", str(model), "-f", str(dest),
+                            "--length_scale", f"{1.0 / max(0.5, min(2.0, speed)):.3f}"],
+                           input=text.replace("\n", " ").encode("utf-8"), capture_output=True,
+                           cwd=str(self.exe.parent), creationflags=_NOWIN, timeout=300)
+        if p.returncode != 0 or not dest.exists() or dest.stat().st_size < 100:
+            raise TTSError(f"Piper a échoué : {p.stderr[-300:].decode('utf-8', 'replace')}")
         return dest
 
 
@@ -144,5 +141,5 @@ def make_engine(kind: str, secret, models_dir: Path) -> TTSEngine:
         return ElevenLabsTTS(secret("elevenlabs_api_key") or "",
                              base_url=os.environ.get("STUDIOVIDEO_ELEVENLABS_URL", ""))
     if kind == "piper":
-        return PiperTTS(models_dir / "piper")
+        return PiperTTS(models_dir)
     raise TTSError(f"Moteur de voix inconnu : {kind}")

@@ -47,3 +47,13 @@ Inno Setup (licence libre propre), cryptography (Apache 2.0 / BSD), pytest, pyte
 | Élément | Origine | Licence | Remarque |
 |---|---|---|---|
 | Modèle WeSpeaker ResNet34 (ONNX, 26 Mo) | github.com/k2-fsa/sherpa-onnx (release speaker-recongition-models) | Apache-2.0 (WeSpeaker), entraîné sur VoxCeleb | téléchargé à la demande, empreinte SHA-256 vérifiée |
+
+## Création originale et voix hors ligne (0.17.0)
+
+| Élément | Origine | Licence | Remarque |
+|---|---|---|---|
+| pypdf | PyPI | BSD-3-Clause | lecture du texte des PDF |
+| Piper 2023.11.14-2 (programme autonome) | github.com/rhasspy/piper | MIT | téléchargé à la demande, lancé comme programme séparé |
+| Voix Piper | huggingface.co/rhasspy/piper-voices | propre à chaque voix (fiche MODEL_CARD) | téléchargées à la demande, MD5 vérifié |
+
+Le paquet Python `piper-tts` récent (GPL-3.0) n'est volontairement **pas** utilisé.

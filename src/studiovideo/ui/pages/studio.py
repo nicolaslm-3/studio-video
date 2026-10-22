@@ -265,6 +265,10 @@ class StudioPage(QWidget):
         extras = []
         if mode == "translation":
             steps, title = self._translation_steps(), "Traduction"
+        elif mode == "original":
+            steps, title = self._original_steps(), "Création originale"
+            if self.app.projects.load_data(self.project_id).get("original_script"):
+                extras = [("Script…", self._original_dialog)]
         elif mode == "campaign":
             b = self.app.campaigns.brief(self.project_id)
             steps, title = self._campaign_steps(), f"Campagne · {b.name}" if b.defined else "Campagne"
@@ -275,6 +279,60 @@ class StudioPage(QWidget):
             return
         self.guide.set_steps(title, steps, extras)
         self.guide.show()
+
+    def _original_steps(self):
+        from ..guide import Step
+        data = self.app.projects.load_data(self.project_id)
+        aid = data.get("original_asset")
+        made = bool(aid and self.app.library.get(aid))
+        on_tl = bool(made and any(sg.asset_id == aid for sg in self.tl.segments))
+        exported = bool(self.app.montage.exports(self.project_id, limit=1))
+        return [
+            Step("script", "Script", bool(data.get("original_script")), self._original_dialog,
+                 "Idée, texte ou PDF → scènes (avec l'IA si configurée)"),
+            Step("make", "Créer la vidéo", made, self._original_dialog, "Voix off facultative, images ou couleurs"),
+            Step("build", "Monter", on_tl, (lambda: self.apply_original(aid, [])) if made else None,
+                 "Vidéo, textes à l'écran et sous-titres sur la timeline"),
+            Step("export", "Exporter", exported, self._export if on_tl else None, "Un MP4 prêt à publier"),
+        ]
+
+    def _original_dialog(self) -> None:
+        from ..original_dialog import OriginalDialog
+        self._orig_dlg = OriginalDialog(self.app, self.project_id, self.tl.format.width, self.tl.format.height, self)
+        try:
+            ok = self._orig_dlg.exec()
+            params = self._orig_dlg.params
+        finally:
+            self._orig_dlg = None
+        if ok and params:
+            jid = self.app.jobs.submit("create_original", "Création de la vidéo", params)
+            self._jobs[jid] = "create_original"
+            self.save_lbl.setText("Création de la vidéo en cours…")
+        self._refresh_guide()
+
+    def apply_original(self, aid: int, texts: list) -> None:
+        """Pose la vidéo créée sur la timeline (remplace le montage), avec textes et sous-titres."""
+        from ...edit.subtitles import generate
+        a = self.app.library.get(aid)
+        if a is None:
+            return
+        self._snapshot()
+        self.tl.segments = []
+        self.tl.texts = []
+        self.tl.add_segment(aid, 0.0, float(a["duration_s"] or 0))
+        style = {k: v for k, v in self.app.montage.text_style_for(self.project_id).items()
+                 if k not in ("text", "start", "end", "id")}
+        style.setdefault("position", "top")
+        for start, end, text in texts:
+            self.tl.add_text(text, start, end, **style)
+        tr = self.app.transcripts.get(aid)
+        self.tl.subtitles.language = ""
+        self.tl.subtitles.cues = generate(self.tl, {aid: tr}) if tr else []
+        self.tl.subtitles.enabled = bool(self.tl.subtitles.cues)
+        self._load_media()
+        self._changed(panel=True)
+        self.viewer_tabs.setCurrentIndex(0)
+        self._refresh_guide()
 
     def _edit_brief(self) -> None:
         from ..campaign_dialog import BriefDialog
@@ -851,6 +909,8 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        if getattr(self, "_orig_dlg", None) is not None:
+            self._orig_dlg.on_job(job)
         if job.status in ("succeeded", "failed", "cancelled") and not self.guide.isHidden():
             QTimer.singleShot(0, self._refresh_guide)
         if job.kind in ("transcribe", "download_model", "translate", "dub", "dub_line", "diarize"):
@@ -886,6 +946,14 @@ class StudioPage(QWidget):
                 QMessageBox.information(self, "Optimiser l'audio", msg)
             elif job.status == "failed":
                 QMessageBox.warning(self, "Optimiser l'audio", job.error[:800])
+        elif kind == "create_original":
+            if job.status == "succeeded":
+                r = job.result
+                self.apply_original(r["asset_id"], r.get("texts") or [])
+                self.save_lbl.setText(f"Vidéo créée ({r['duration']:.0f} s) et posée sur la timeline.")
+            elif job.status == "failed":
+                QMessageBox.warning(self, "Création originale", job.error[:800])
+                self.save_lbl.setText("")
         elif kind == "detect_text":
             self.panel.detect_btn.setEnabled(True)
             self.panel.detect_btn.setText("Détecter le texte incrusté et les logos")
