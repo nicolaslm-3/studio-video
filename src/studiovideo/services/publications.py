@@ -41,7 +41,7 @@ class PublicationService:
                 (concept_id, variant_id, title, description, hashtags, language, planned_at)).lastrowid
 
     def update_master(self, master_id: int, **fields) -> None:
-        allowed = {"title", "description", "hashtags", "thumbnail", "language", "planned_at", "variant_id"}
+        allowed = {"title", "description", "hashtags", "thumbnail", "language", "planned_at", "variant_id", "cover_s"}
         if set(fields) - allowed:
             raise PublicationError(f"Champs invalides : {set(fields) - allowed}")
         if fields:
@@ -145,7 +145,7 @@ class PublicationService:
             " COALESCE(p.scheduled_at, m.planned_at) at, a.platform, a.name account, a.id account_id,"
             " c.id concept_id, c.name concept, c.color, COALESCE(p.title, m.title) title,"
             " COALESCE(p.description, m.description) description, COALESCE(p.hashtags, m.hashtags) hashtags,"
-            " m.variant_id, v.output_path, v.aspect "
+            " m.variant_id, v.output_path, v.aspect, m.thumbnail, m.cover_s "
             "FROM publication p JOIN master_publication m ON m.id = p.master_id "
             "JOIN concept c ON c.id = m.concept_id JOIN social_account a ON a.id = p.social_account_id "
             "LEFT JOIN video_variant v ON v.id = COALESCE(p.variant_id, m.variant_id) ")

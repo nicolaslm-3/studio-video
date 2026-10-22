@@ -178,7 +178,7 @@ def chunk_plan(size: int) -> tuple[int, int]:
 def upload(path: Path, title: str, privacy: str, token: str,
            progress: Callable[[float, str], None] = lambda f, m: None,
            is_cancelled: Callable[[], bool] = lambda: False, ep: Endpoints | None = None,
-           poll_s: float = 5.0, max_wait: float = 900) -> dict:
+           poll_s: float = 5.0, max_wait: float = 900, cover_ms: int | None = None) -> dict:
     """Publie la vidéo. Retourne {"publish_id", "status", "post_ids", "privacy"}."""
     ep = ep or Endpoints.from_env()
     path = Path(path)
@@ -192,7 +192,8 @@ def upload(path: Path, title: str, privacy: str, token: str,
     chunk, count = chunk_plan(size)
     init = _call("POST", ep.api + "/v2/post/publish/video/init/", token, body={
         "post_info": {"title": title[:2200], "privacy_level": used, "disable_comment": False,
-                      "disable_duet": False, "disable_stitch": False},
+                      "disable_duet": False, "disable_stitch": False,
+                      **({"video_cover_timestamp_ms": int(cover_ms)} if cover_ms else {})},
         "source_info": {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk,
                         "total_chunk_count": count}}).get("data") or {}
     pid, url = init.get("publish_id"), init.get("upload_url")

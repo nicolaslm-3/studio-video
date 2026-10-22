@@ -462,6 +462,12 @@ def _register_handlers(app: AppContext) -> None:
         vid = video["id"]
         url = f"https://youtu.be/{vid}"
         got = (video.get("status") or {}).get("privacyStatus", "")
+        thumb_note = ""
+        if r["thumbnail"] and Path(r["thumbnail"]).exists():
+            try:
+                youtube.set_thumbnail(token, vid, Path(r["thumbnail"]))
+            except youtube.YouTubeError as exc:
+                thumb_note = str(exc)
         if when:
             ps.set_status(r["id"], PublicationStatus.SCHEDULED_PLATFORM, remote_id=vid, public_url=url)
             state = "programmée sur YouTube"
@@ -473,7 +479,7 @@ def _register_handlers(app: AppContext) -> None:
         else:
             ps.set_status(r["id"], PublicationStatus.PUBLISHED, remote_id=vid, public_url=url)
             state = "publiée"
-        return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state}
+        return {"publication_id": r["id"], "video_id": vid, "url": url, "state": state, "warning": thumb_note}
 
     def _publish_meta(ctx: JobContext, r, acc, params: dict, fail) -> dict:
         from datetime import datetime
@@ -495,7 +501,7 @@ def _register_handlers(app: AppContext) -> None:
             ps.set_status(r["id"], PublicationStatus.UPLOADING)
             if r["platform"] == "instagram":
                 res = meta.instagram_reel(Path(r["output_path"]), text, acc_remote(acc.id), token, ctx.progress,
-                                          lambda: ctx.cancelled)
+                                          lambda: ctx.cancelled, cover_ms=int((r["cover_s"] or 0) * 1000) or None)
             else:
                 res = meta.facebook_reel(Path(r["output_path"]), text, acc_remote(acc.id), token, ctx.progress)
         except Exception as exc:
@@ -604,7 +610,7 @@ def _register_handlers(app: AppContext) -> None:
                 secrets.set_secret(f"tiktok_refresh_{acc.id}", tok["refresh_token"])
             text = rules.compose("tiktok", r["title"] or "", r["description"] or "", r["hashtags"] or "")["text"]
             res = tiktok.upload(Path(r["output_path"]), text, desired, tok["access_token"], ctx.progress,
-                                lambda: ctx.cancelled)
+                                lambda: ctx.cancelled, cover_ms=int((r["cover_s"] or 0) * 1000) or None)
         except Exception as exc:
             if "révoquée" in str(exc):
                 with app.db.transaction() as c:

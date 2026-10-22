@@ -2,7 +2,7 @@
 
 Studio de production et de distribution audiovisuelle assisté par IA, pour Windows.
 
-**Version 0.19.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
+**Version 0.20.0 — V1 et V2 complètes ; V3 : calendrier, publication assistée, mise en ligne automatique sur YouTube ; V4 : analytiques.** On peut importer, transcrire,
 trouver les meilleurs moments d'une vidéo longue, monter, recadrer, titrer, sous-titrer, régler le son
 et exporter un MP4. Ce qui n'est pas encore opérationnel est signalé comme tel dans
 l'interface : aucun bouton n'est simulé.
@@ -58,6 +58,7 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Détection automatique des logos et sous-titres incrustés : zones proposées, à vérifier (sans lecture du texte) | ✅ |
 | **V4** — Création originale : idée, texte, PDF ou Word → script en scènes (IA si configurée) → voix off → vidéo (images, vidéos ou couleurs) avec textes et sous-titres calés | ✅ |
 | **V2** — Voix hors ligne gratuites (Piper, licence MIT) pour le doublage et la voix off : moteur et voix téléchargés à la demande | ✅ |
+| **V3** — Miniature : instant choisi + titre ; miniature YouTube, couverture TikTok et Instagram | ✅ |
 | **V3** — Calendrier éditorial : tous concepts et comptes, mois par mois, filtre par concept | ✅ |
 | **V3** — Publication : vidéo + texte maître, destinations du concept (hors concept sur confirmation), horaire et texte propres à chaque destination, contrôle des limites de chaque plateforme | ✅ |
 | **V3** — Rappels à l'heure prévue et publication assistée (texte copié, vidéo prête, page d'envoi), confirmée par le lien public | ✅ |

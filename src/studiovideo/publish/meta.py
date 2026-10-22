@@ -168,15 +168,17 @@ def pick(pgs: list[dict], platform: str, name: str) -> dict:
 # -- Instagram -----------------------------------------------------------------------------------
 def instagram_reel(path: Path, caption: str, ig_id: str, token: str, progress=lambda f, m: None,
                    is_cancelled=lambda: False, ep: Endpoints | None = None, poll_s: float = 5.0,
-                   max_wait: float = 900) -> dict:
+                   max_wait: float = 900, cover_ms: int | None = None) -> dict:
     ep = ep or Endpoints.from_env()
     path = Path(path)
     if not path.exists():
         raise MetaError(f"Vidéo introuvable : {path}")
     size = path.stat().st_size
-    c = _call("POST", ep.graph + f"/{ig_id}/media", {"media_type": "REELS", "upload_type": "resumable",
-                                                     "caption": caption[:2200], "share_to_feed": "true",
-                                                     "access_token": token})
+    params = {"media_type": "REELS", "upload_type": "resumable", "caption": caption[:2200], "share_to_feed": "true",
+              "access_token": token}
+    if cover_ms:
+        params["thumb_offset"] = str(int(cover_ms))
+    c = _call("POST", ep.graph + f"/{ig_id}/media", params)
     cid = c.get("id")
     if not cid:
         raise MetaError("Instagram n'a pas créé de conteneur.")

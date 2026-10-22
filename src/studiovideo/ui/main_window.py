@@ -219,6 +219,8 @@ class MainWindow(QMainWindow):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
                 self._import_refresh.timeout.connect(self._refresh_after_import)
             self._import_refresh.start()
+        elif j and j.status == "succeeded" and isinstance(j.result, dict) and j.result.get("warning"):
+            self.statusBar().showMessage(f"{j.label} : {j.result['warning']}", 15000)
         elif j and j.status == "failed" and j.kind != "preview_frame":
             self.statusBar().showMessage(f"Échec : {j.label} — {j.error.splitlines()[0] if j.error else ''}", 10000)
 

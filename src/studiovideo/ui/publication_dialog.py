@@ -188,6 +188,10 @@ class PublicationDialog(QDialog):
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
         row.addWidget(button("Ajouter un compte hors concept…", "ghost", on_click=self._add_external))
+        self.thumb_btn = button("Miniature…", "ghost", on_click=self._thumbnail)
+        row.addWidget(self.thumb_btn)
+        self.thumb_lbl = label("", "faint")
+        row.addWidget(self.thumb_lbl)
         row.addStretch(1)
         lay.addLayout(row)
         self.warn = label("", "muted", wrap=True)
@@ -204,6 +208,7 @@ class PublicationDialog(QDialog):
         self.rows: list[dict] = []
         self.external: set[int] = set()
         self.concept.currentIndexChanged.connect(self._fill)
+        self._show_thumb()
         self.video.currentIndexChanged.connect(lambda _i: self._check())
         for w in (self.title, self.tags):
             w.textChanged.connect(self._check)
@@ -355,6 +360,33 @@ class PublicationDialog(QDialog):
             if when != p.scheduled_at:
                 ps.schedule(p.id, when)
         self.accept()
+
+    def _thumbnail(self) -> None:
+        from .thumbnail_dialog import ThumbnailDialog
+        vid = self.video.currentData()
+        row = self.app.db.query_one("SELECT output_path FROM video_variant WHERE id = ?", (vid,)) if vid else None
+        if not row or not Path(row["output_path"]).exists():
+            QMessageBox.information(self, "Miniature", "Choisissez d'abord une vidéo existante.")
+            return
+        if not self.master_id:
+            self._save_master_only()
+        if ThumbnailDialog(self.app, self.master_id, row["output_path"], self.title.text(), self).exec():
+            self._show_thumb()
+
+    def _show_thumb(self) -> None:
+        m = self.app.publications.master(self.master_id) if self.master_id else None
+        if m and m["thumbnail"] and Path(m["thumbnail"]).exists():
+            self.thumb_lbl.setText(f"✓ miniature à {m['cover_s'] or 0:.1f} s")
+        else:
+            self.thumb_lbl.setText("")
+
+    def _save_master_only(self) -> None:
+        cid = self.concept.currentData()
+        self.master_id = self.app.publications.create_master(
+            cid, self.title.text().strip(), self.desc.toPlainText().strip(),
+            rules.normalize_hashtags(self.tags.text()), variant_id=self.video.currentData(),
+            planned_at=_when(self.default_when))
+        self.concept.setEnabled(False)
 
     def _upload(self, pid: int, now: bool = False) -> None:
         r = self.app.publications.get(pid)

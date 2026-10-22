@@ -325,3 +325,22 @@ def video_analytics(token: str, video_id: str, start: str, end: str, ep: Endpoin
     if curve:
         out["retention"] = sorted(curve)
     return out
+
+
+def set_thumbnail(token: str, video_id: str, image: Path, ep: Endpoints | None = None) -> None:
+    """Miniature personnalisée (la chaîne doit être validée par téléphone chez YouTube)."""
+    ep = ep or Endpoints.from_env()
+    data = Path(image).read_bytes()
+    url = ep.api + "/upload/youtube/v3/thumbnails/set?" + urllib.parse.urlencode({"videoId": video_id,
+                                                                                  "uploadType": "media"})
+    try:
+        with _api("POST", url, token, data, {"Content-Type": "image/jpeg", "Content-Length": str(len(data))}):
+            return
+    except urllib.error.HTTPError as exc:
+        body = exc.read()[:300].decode("utf-8", "replace")
+        if exc.code == 403:
+            raise YouTubeError("Miniature refusée : la chaîne doit être validée (youtube.com/verify) pour les "
+                               "miniatures personnalisées.") from exc
+        raise YouTubeError(f"Miniature refusée ({exc.code}) : {body}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise YouTubeError(f"YouTube injoignable : {exc}") from exc
