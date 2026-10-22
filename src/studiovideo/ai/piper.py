@@ -49,7 +49,7 @@ def root(models_dir: Path) -> Path:
 def exe_path(models_dir: Path) -> Path | None:
     override = os.environ.get("STUDIOVIDEO_PIPER_EXE")
     if override and Path(override).exists():
-        return Path(override)
+        return Path(override).resolve()
     p = root(models_dir) / "bin" / "piper" / ("piper.exe" if sys.platform == "win32" else "piper")
     return p if p.exists() else None
 

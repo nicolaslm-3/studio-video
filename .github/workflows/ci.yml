@@ -29,7 +29,21 @@ jobs:
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q -rfE --tb=short > pytest.txt 2>&1
+          rc=$?
+          cat pytest.txt
+          if [ $rc -ne 0 ]; then
+            # échecs en annotations : lisibles sans ouvrir les journaux
+            grep -E "^(FAILED|ERROR) " pytest.txt | head -20 | while read -r line; do
+              echo "::error title=Test::$(echo "$line" | cut -c1-900 | sed 's/%/%25/g')"
+            done
+            msg=$(grep -E "^E |Error:|assert " pytest.txt | head -30 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=Détail::$msg"
+          fi
+          exit $rc
 
   whisper:
     # Transcription réelle : modèle « tiny » téléchargé, voix de synthèse, contrôle des mots reconnus.
