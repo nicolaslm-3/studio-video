@@ -4,6 +4,40 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.29.0</title>
+      <pubDate>Tue, 27 Oct 2026 07:41:12 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.29.0 — Un projet, une vidéo, de l&amp;#x27;import à la publication&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;**Un projet = une vidéo** qui traverse tous les onglets : même montage, même format. Clic droit sur un projet pour&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;le renommer ou le supprimer&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Barre du haut épurée** : nom du projet avec sa flèche, format en trois icônes (16:9, carré, 9:16), Importer, lien,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Médias et tâches en icônes, bouton Exporter rouge ; bulles d&amp;#x27;aide aux couleurs du logiciel ; timecodes au dixième&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Clipping** : extraits à cocher, début et fin réglables à la souris, suivi de la personne qui parle sur un&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;bouton ; chaque extrait coché devient une vidéo, puis **« Suivant »** l&amp;#x27;envoie à l&amp;#x27;onglet de votre choix&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Traduction** : moteur **Automatique** par défaut (si un service échoue ou n&amp;#x27;a plus de crédit, le suivant prend le&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;relais, dont Google Traduction et MyMemory, gratuits et sans clé) ; doublage **sans phrase coupée** ; voix choisie&lt;/p&gt;
+&lt;p&gt;selon la langue ; voix OpenAI ajoutée ; icônes réglages pour comparer les solutions, coller une clé et la tester&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Nouvel onglet Textes** : textes, sous-titres et leur mise en forme, rien d&amp;#x27;autre&lt;/li&gt;
+&lt;li&gt;**Export** : nom du fichier et dossier, titre et description communs, une colonne par réseau (YouTube Shorts,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;TikTok, Facebook, Instagram) avec son aperçu, photo de profil des comptes, **« Sur mon PC seulement »**, et tous&lt;/p&gt;
+&lt;p&gt;les emojis avec une recherche en français et en anglais&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Campagne et Production en série sont retirées ; la bibliothèque s&amp;#x27;appelle **Médias**&lt;/li&gt;
+&lt;li&gt;Vos projets et médias sont conservés lors de la mise à jour (sauvegarde automatique avant)&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.29.0/StudioVideo-0.29.0-Setup.exe" sparkle:version="0.29.0" sparkle:shortVersionString="0.29.0" sparkle:os="windows-x64" length="204311716" type="application/octet-stream" sparkle:edSignature="zLxtpcv4UqqmSt02fcJkHE4GzDAWWMn9vOHFnxOH+ngAULdvyugnmv7utyOOllsZrDFeSje2tZNfJrUC5N9WBg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.28.2</title>
       <pubDate>Thu, 22 Oct 2026 11:13:18 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.28.2 — Nouvelle interface&lt;/h2&gt;
@@ -291,26 +325,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.9.0/StudioVideo-0.9.0-Setup.exe" sparkle:version="0.9.0" sparkle:shortVersionString="0.9.0" sparkle:os="windows-x64" length="193623799" type="application/octet-stream" sparkle:edSignature="F2FvfLQjoSC3ciN1lAPjj5ZslYop60QGWhaG53hcgzHKuJpidB7fwO/15m9HycAODx+jYqaLsreM0uaHuJoUCA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.8.0</title>
-      <pubDate>Wed, 21 Oct 2026 22:23:06 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.8.0 — Séparation voix / musique&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Montage → onglet Audio → « Séparer voix et musique » : calcule, sur votre PC, une piste voix seule et une&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;piste musique et ambiance pour chaque média (aucun envoi de données ; durée ≈ celle du média)&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Modèle à télécharger une fois (64 Mo) : Paramètres → Matériel et moteurs → Modèles&lt;/li&gt;
-&lt;li&gt;« Isoler la voix d&amp;#x27;origine » : retire musique et bruit de fond derrière la parole&lt;/li&gt;
-&lt;li&gt;Doublage : « Fond du doublage → Musique et ambiance d&amp;#x27;origine, sans la voix » (la voix d&amp;#x27;origine disparaît,&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;le décor sonore reste)&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Vérifié à chaque version : l&amp;#x27;exécutable sépare réellement une voix mélangée à de la musique&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.8.0/StudioVideo-0.8.0-Setup.exe" sparkle:version="0.8.0" sparkle:shortVersionString="0.8.0" sparkle:os="windows-x64" length="193585273" type="application/octet-stream" sparkle:edSignature="HMAkJ4Wsda77rynpuiOF60dpSKipa/c8ZAymmFAC5M/6a6kZvZ7FancH7TZcp7OMRZ42QBRfz6mxF2SpogElAw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
