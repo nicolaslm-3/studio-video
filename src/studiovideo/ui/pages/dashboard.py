@@ -54,6 +54,7 @@ class DashboardPage(QWidget):
             it = self.lay.takeAt(0)
             w = it.widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
             elif it.layout():
@@ -303,6 +304,7 @@ def _delete_layout(layout) -> None:
         it = layout.takeAt(0)
         w = it.widget()
         if w:
+            w.hide()                  # sinon son affichage différé en fait une fenêtre
             w.setParent(None)
             w.deleteLater()
         elif it.layout():

@@ -1,4 +1,4 @@
-"""Fenêtre principale : navigation latérale permanente, six espaces, tâches."""
+"""Fenêtre principale : dock des six parcours, menu de navigation, tâches."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +16,7 @@ from . import theme
 from .dialogs import ConceptDialog, NewProjectDialog
 from .importing import pick_and_import
 from .jobs_panel import JobsPanel
-from .shell import Dock, Drawer, ParcoursSheet, Popover, Toast
+from .shell import Dock, Drawer, Popover, TipFilter, Toast
 from .pages.dashboard import DashboardPage
 from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
@@ -29,7 +29,7 @@ from .widgets import JobBridge, button, label
 log = logging.getLogger(__name__)
 
 # (index de page, nom, icône, raccourci)
-NAV = [(0, "Accueil", "house", "Ctrl+1"), (1, "Studio", "clapperboard", "Ctrl+2"), (2, "Extraits", "film", "Ctrl+3"),
+NAV = [(0, "Accueil", "house", "Ctrl+1"), (1, "Studio", "clapperboard", "Ctrl+2"), (2, "Médias", "film", "Ctrl+3"),
        (3, "Calendrier", "calendar-days", "Ctrl+4"), (4, "Analytics", "chart-no-axes-column", "Ctrl+5"),
        (6, "Concepts et projets", "folder-kanban", "Ctrl+6"), (5, "Paramètres", "settings", "Ctrl+7")]
 
@@ -92,14 +92,19 @@ class MainWindow(QMainWindow):
         self.jobs_panel = JobsPanel(app)
         self.jobs_pop.lay.setContentsMargins(4, 4, 4, 4)
         self.jobs_pop.lay.addWidget(self.jobs_panel)
-        self.dock.jobs_clicked.connect(lambda: self.toggle_jobs(True))
+        self.studio.jobs_btn.clicked.connect(lambda: self.toggle_jobs(True))
         self.toast = Toast(self.dock)
+        self.tips = TipFilter(self)                      # infobulles aux couleurs du logiciel
+        QApplication.instance().installEventFilter(self.tips)
         self.statusBar().hide()
 
         # signaux
         for page in (self.dashboard, self.studio):
             page.new_project.connect(self.new_project)
         self.studio.open_models.connect(lambda: (self.go(5), self.settings_page.show_models()))
+        self.studio.new_blank.connect(self.new_blank)
+        self.studio.view_changed.connect(self._sync_dock)
+        self.studio.goto_tab.connect(self.start_parcours)
         self.studio.open_ai_settings.connect(lambda: (self.go(5), self.settings_page.show_models()))
         self.concepts_page.edit_concept.connect(self.edit_concept)
         self.concepts_page.open_project.connect(self.open_project)
@@ -131,6 +136,7 @@ class MainWindow(QMainWindow):
 
         self.setAcceptDrops(True)
         self._restore_layout()
+        app.projects.purge_untouched()
         self.go(0)
         self._update_jobs_btn()
         app.importer().refresh_missing()
@@ -236,7 +242,11 @@ class MainWindow(QMainWindow):
         show = (not self.jobs_pop.isVisible()) if force is None or not isinstance(force, bool) else force
         if show:
             self.jobs_panel.refresh()
-            self.jobs_pop.show_above(self.dock.jobs_btn, "right")
+            b = self.studio.jobs_btn                     # bouton en haut du Studio ; ailleurs, au-dessus du dock
+            if b.isVisible():
+                self.jobs_pop.show_above(b, "right", below=True)
+            else:
+                self.jobs_pop.show_above(self.dock, "center")
         else:
             self.jobs_pop.hide()
 
@@ -255,20 +265,21 @@ class MainWindow(QMainWindow):
         from ..media.importer import VIDEO_EXT
         if self.pages.currentWidget() is self.studio and self.studio.project_id:
             from .importing import import_paths
-            import_paths(self.app, self, paths, self.studio.project_id)
+            clipping = self.studio._mode() == "smart_clipping"
+            import_paths(self.app, self, paths, self.studio.project_id, {"auto_clips": True} if clipping else None)
             return self.studio.project_id
         vids = [Path(p) for p in paths if Path(p).suffix.lower() in VIDEO_EXT and Path(p).is_file()]
         if not vids:
             from .importing import import_paths
             import_paths(self.app, self, paths)
-            self.notify("Ajouté à Extraits.")
+            self.notify("Ajouté à Médias.")
             return None
         pid = self.app.projects.quick_create(self.app.concepts, "smart_clipping", vids[0].stem[:60], "9:16")
         for v in vids:
             self.app.jobs.submit("import_file", f"Import · {v.name}",
                                  {"path": str(v), "project_id": pid, "auto_clips": True})
         self.open_project(pid)
-        self.notify("Projet brouillon créé : transcription et recherche des moments forts en cours…", 7000)
+        self.notify("Projet brouillon créé : transcription et recherche des extraits en cours…", 7000)
         return pid
 
     def notify(self, text: str, ms: int = 5000) -> None:
@@ -276,19 +287,32 @@ class MainWindow(QMainWindow):
 
     # -- parcours (dock) ------------------------------------------------------
     def start_parcours(self, mode: str) -> None:
-        """Clic sur un parcours : reprendre un projet ou en commencer un (format seulement)."""
-        cur = self.app.projects.get(self.studio.project_id) if self.studio.project_id else None
-        sheet = ParcoursSheet(mode, self.app.projects.by_mode(mode), self)
-        sheet.open_project.connect(self.open_project)
-        sheet.create.connect(self.create_project)
-        self._sheet = sheet
-        self._sync_dock()
-        sheet.show_above(self.dock.buttons[mode])
-        if cur is not None and cur["mode"] == mode and self.pages.currentWidget() is not self.studio:
-            pass
+        """Clic sur un parcours : le projet ouvert passe dans cette interface (un projet traverse tous les
+        parcours). Sans projet ouvert : le dernier projet, sinon un projet vierge.
 
-    def create_project(self, mode: str, aspect: str, name: str = "") -> int:
-        pid = self.app.projects.quick_create(self.app.concepts, mode, name, aspect)
+        Un projet vierge n'est conservé qu'à la première modification (voir `ProjectService.is_untouched`).
+        Le bouton « Nouveau projet » en ouvre un nouveau dans le parcours affiché."""
+        pid = self.studio.project_id
+        if not (pid and self.app.projects.get(pid)):
+            recent = self.app.projects.recent(1)
+            if not recent:
+                self.new_blank("free_edit" if mode == "export" else mode)
+                if mode == "export":
+                    self.studio.show_export()
+                return
+            pid = recent[0]["id"]
+        if mode == "export":                       # onglet Export : la vidéo du projet ouvert
+            if self.studio.project_id != pid:
+                self.studio.open_project(pid)
+            self.go(1)
+            self.studio.show_export()
+            return
+        self.studio.open_project(pid, mode)
+        self.go(1)
+
+    def new_blank(self, mode: str) -> int:
+        pid = self.app.projects.quick_create(self.app.concepts, mode, "", theme.DEFAULT_ASPECT.get(mode, "9:16"),
+                                             blank=True)
         self.open_project(pid)
         return pid
 
@@ -296,10 +320,12 @@ class MainWindow(QMainWindow):
         mode = None
         if self.pages.currentWidget() is self.studio and self.studio.project_id:
             p = self.app.projects.get(self.studio.project_id)
-            mode = p["mode"] if p else None
+            mode = "export" if self.studio._export_mode else p["mode"] if p else None
         self.dock.set_active(mode)
-        col = theme.PARCOURS[mode][2] if mode in theme.PARCOURS else None
+        col = (theme.EXPORT_TAB[2] if mode == "export" else theme.PARCOURS[mode][2] if mode in theme.PARCOURS
+               else None)
         theme.set_accent(self, col)
+        self.studio.restyle_accent()
         self.studio.panel._tab_title(self.studio.panel.currentIndex())
 
     def set_theme(self, mode: str) -> None:
@@ -307,6 +333,8 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("")
         self.dock.restyle()
         self.drawer.restyle()
+        self.studio.format_pick.restyle()
+        self.studio.jobs_btn.restyle()
         self._sync_dock()
 
     # -- actions ------------------------------------------------------------
@@ -323,9 +351,6 @@ class MainWindow(QMainWindow):
     def open_project(self, project_id: int) -> None:
         self.studio.open_project(project_id)
         self.go(1)
-        p = self.app.projects.get(project_id)
-        if p and p["mode"] == "smart_clipping":
-            self.studio.left_tabs.setCurrentIndex(2 if self.app.transcripts.has(self.studio.asset_id or 0) else 1)
 
     def import_project(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -380,7 +405,7 @@ class MainWindow(QMainWindow):
             elif r.get("skipped"):
                 self.notify(r["skipped"], 12000)
             else:
-                self.notify(f"{r.get('count', 0)} moment(s) fort(s) proposé(s).", 8000)
+                self.notify(f"{r.get('count', 0)} extrait(s) proposé(s).", 8000)
         elif j and j.status == "succeeded" and isinstance(j.result, dict) and j.result.get("warning"):
             self.notify(f"{j.label} : {j.result['warning']}", 15000)
         elif j and j.status == "failed" and j.kind != "preview_frame":
@@ -397,7 +422,7 @@ class MainWindow(QMainWindow):
         n = self.app.jobs.active_count()
         failed = self.app.db.query_one("SELECT COUNT(*) n FROM job WHERE status='failed' AND "
                                        "finished_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 hour')")["n"]
-        self.dock.set_jobs(n, failed)
+        self.studio.jobs_btn.set_jobs(n, failed)
 
     # -- mises à jour -------------------------------------------------------
     def _start_updater(self) -> None:
@@ -433,7 +458,9 @@ class MainWindow(QMainWindow):
                 if r != QMessageBox.Yes:
                     e.ignore()
                     return
-        self.studio.flush()
+        if hasattr(self, "_import_refresh"):
+            self._import_refresh.stop()            # fermeture : plus de rafraîchissement différé
+        self.studio.leave_project()
         s = QSettings(str(self.app.paths.root / "ui.ini"), QSettings.IniFormat)
         s.setValue("geometry", self.saveGeometry())
         self.studio.player.unload()

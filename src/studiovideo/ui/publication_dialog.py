@@ -315,7 +315,6 @@ class PublicationDialog(QDialog):
         vid = self.video.currentData()
         vrow = self.app.db.query_one("SELECT output_path, aspect FROM video_variant WHERE id = ?", (vid,)) if vid else None
         info = video_info(vrow)
-        brief = self.app.campaigns.brief_for_variant(vid) if self.app.campaigns else None
         msgs = []
         for r in self.rows:
             if not r["check"].isChecked():
@@ -325,13 +324,6 @@ class PublicationDialog(QDialog):
             d = p.description if p else self.desc.toPlainText()
             h = p.hashtags if p else self.tags.text()
             msgs += rules.check(r["account"].platform.value, t or "", d or "", h or "", info)
-            if brief is not None:
-                from ..edit import campaign as cp
-                msgs += [f"Brief « {brief.name} » : {c.rule} manquant(e)" if c.ok is False and not
-                         c.rule.startswith("Mot interdit") else f"Brief « {brief.name} » : {c.rule} {c.detail}"
-                         for c in cp.check_text(brief, f"{t or ''} {d or ''} {h or ''}") if c.ok is False]
-                if brief.platforms and r["account"].platform.value not in brief.platforms:
-                    msgs.append(f"Brief « {brief.name} » : {r['account'].platform.label} n'est pas prévu.")
         self.warn.setText("\n".join("⚠ " + m for m in dict.fromkeys(msgs)) or "✓ Textes conformes aux limites des "
                           "plateformes choisies.")
 

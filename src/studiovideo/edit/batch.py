@@ -72,6 +72,8 @@ def plan_batch(template: Timeline, clips: list[dict], opts: BatchOptions, transc
                 tl = clip_timeline(template, c["asset_id"], c["start"], c["end"], asp, opts, tr,
                                    c.get("hook") or "" if not lang else "", title_style)
                 tl.subtitles.language = lang
+                if c.get("reframe") and tl.video.auto_reframe:  # cadre déjà calculé (aperçu) : réutilisé
+                    tl.segments[0].reframe = [list(k) for k in c["reframe"]]
                 if lang and (c["asset_id"], lang) in opts.dubbed:
                     tl.voice.mode, tl.voice.language = "dub", lang
                 else:

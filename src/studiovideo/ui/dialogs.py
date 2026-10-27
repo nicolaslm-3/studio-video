@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-                               QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+                               QGridLayout, QHBoxLayout, QLineEdit, QMessageBox, QScrollArea,
                                QVBoxLayout, QWidget)
 
 from ..core import AppContext
 from ..domain.models import Platform, ProjectMode
 from ..services.concepts import ConceptError
+from .color_picker import ColorButton
 from .widgets import Card, button, label
 
 LANGUAGES = [("fr", "Français"), ("en", "Anglais"), ("es", "Espagnol"), ("pt", "Portugais"),
@@ -26,23 +26,6 @@ def language_combo(selected: str = "fr") -> QComboBox:
     i = cb.findData(selected)
     cb.setCurrentIndex(max(0, i))
     return cb
-
-
-class ColorButton(QPushButton):
-    def __init__(self, value: str):
-        super().__init__()
-        self.setFixedSize(34, 26)
-        self.set_value(value)
-        self.clicked.connect(self._pick)
-
-    def set_value(self, v: str) -> None:
-        self.value = v
-        self.setStyleSheet(f"background:{v}; border-radius:6px; border:1px solid rgba(0,0,0,.2);")
-
-    def _pick(self) -> None:
-        c = QColorDialog.getColor(QColor(self.value), self, "Couleur du concept")
-        if c.isValid():
-            self.set_value(c.name())
 
 
 class AccountDialog(QDialog):
@@ -105,7 +88,7 @@ class ConceptDialog(QDialog):
         self.theme_ = QLineEdit(c.theme if c else "")
         self.theme_.setPlaceholderText("Ex. : humour")
         n = len(app.concepts.list_concepts(True))
-        self.color = ColorButton(c.color if c else CONCEPT_COLORS[n % len(CONCEPT_COLORS)])
+        self.color = ColorButton(c.color if c else CONCEPT_COLORS[n % len(CONCEPT_COLORS)], (34, 26))
         self.lang = language_combo(c.language if c else "fr")
         form.addRow("Nom", self.name)
         form.addRow("Thématique", self.theme_)
@@ -140,6 +123,7 @@ class ConceptDialog(QDialog):
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
         self._rows.clear()
@@ -196,8 +180,7 @@ MODE_INFO = {
     ProjectMode.SMART_CLIPPING: ("Transcrire une vidéo longue et en extraire les meilleurs passages.", None),
     ProjectMode.TRANSLATION: ("Transcrire, traduire, sous-titrer et doubler une vidéo, étape par étape.", None),
     ProjectMode.ORIGINAL: ("Créer une vidéo à partir d'une idée, d'un texte ou d'un PDF : script, voix off, images.", None),
-    ProjectMode.CAMPAIGN: ("Suivre le brief d'un client et contrôler la conformité de chaque clip.", None),
-    ProjectMode.BATCH: ("Produire plusieurs vidéos à partir d'un modèle (bouton « Production en série »).", None),
+    ProjectMode.TEXTS: ("Ajouter et mettre en forme les textes et les sous-titres d'une vidéo.", None),
 }
 
 

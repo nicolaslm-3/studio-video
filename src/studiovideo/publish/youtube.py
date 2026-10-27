@@ -158,7 +158,10 @@ def channel(token: str, ep: Endpoints | None = None) -> dict:
         raise YouTubeError(f"Lecture de la chaîne impossible ({exc.code}).") from exc
     if not items:
         raise YouTubeError("Ce compte Google n'a pas de chaîne YouTube.")
-    return {"id": items[0]["id"], "title": items[0]["snippet"]["title"]}
+    sn = items[0]["snippet"]
+    thumbs = sn.get("thumbnails") or {}
+    pic = (thumbs.get("medium") or thumbs.get("default") or {}).get("url", "")
+    return {"id": items[0]["id"], "title": sn["title"], "thumbnail": pic}
 
 
 # -- envoi ---------------------------------------------------------------------------------------

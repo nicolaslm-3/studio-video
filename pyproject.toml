@@ -12,11 +12,12 @@ dependencies = [
     "keyring>=25",
     "faster-whisper>=1.1",
     "pypdf>=4",
+    "yt-dlp[default]>=2026.10.21",   # YouTube : moteur JavaScript (Node, Deno) + composants EJS
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-qt>=4", "cryptography>=42", "pyinstaller>=6.6"]
-download = ["yt-dlp"]
+download = ["yt-dlp[default]"]
 
 [project.scripts]
 studiovideo = "studiovideo.app:main"

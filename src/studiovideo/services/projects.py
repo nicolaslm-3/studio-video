@@ -22,17 +22,56 @@ class ProjectService:
         return pid
 
     def quick_create(self, concepts, mode: ProjectMode | str, name: str = "", aspect: str = "9:16",
-                     concept_id: int | None = None) -> int:
-        """Projet prêt à monter, sans formalité : concept « Brouillons » si aucun n'est choisi, format donné."""
+                     concept_id: int | None = None, blank: bool = False) -> int:
+        """Projet prêt à monter, sans formalité : concept « Brouillons » si aucun n'est choisi, format donné.
+
+        blank : projet vierge, supprimé par `discard_if_untouched` s'il est quitté sans aucune modification."""
         from ..edit.model import Timeline
         cid = concept_id or concepts.drafts_concept().id
         label_ = ProjectMode(mode).label
         base = name.strip() or f"{label_} {self._next_number(label_)}"
-        pid = self.create(cid, self._unique_name(base), mode)
+        final = self._unique_name(base)
+        pid = self.create(cid, final, mode)
         tl = Timeline()
         tl.set_aspect(aspect)
-        self.save_data(pid, {"timeline": tl.to_dict()})
+        data = {"timeline": tl.to_dict()}
+        if blank:
+            data["blank"] = final
+        self.save_data(pid, data)
         return pid
+
+    def is_untouched(self, project_id: int) -> bool:
+        """Projet vierge resté intact : nom d'origine, aucun média, clip, proposition, texte ni réglage propre."""
+        p = self.get(project_id)
+        if p is None:
+            return False
+        data = self.load_data(project_id)
+        if data.get("blank") != p["name"] or set(data) - {"blank", "timeline", "last_asset_id", "in_out"}:
+            return False
+        tl = data.get("timeline") or {}
+        if tl.get("segments") or tl.get("texts") or (tl.get("music") or {}).get("asset_id") \
+                or (tl.get("subtitles") or {}).get("cues"):
+            return False
+        n = self.db.query_one("SELECT (SELECT COUNT(*) FROM source_asset WHERE project_id = :p) + "
+                              "(SELECT COUNT(*) FROM clip WHERE project_id = :p) + "
+                              "(SELECT COUNT(*) FROM clip_candidate WHERE project_id = :p) n", {"p": project_id})["n"]
+        return n == 0
+
+    def discard_if_untouched(self, project_id: int) -> bool:
+        """En quittant un projet vierge : supprimé s'il est intact, sinon conservé comme projet ordinaire."""
+        if self.is_untouched(project_id):
+            self.delete(project_id)
+            return True
+        data = self.load_data(project_id)
+        if "blank" in data:
+            data.pop("blank")
+            self.save_data(project_id, data)
+        return False
+
+    def purge_untouched(self) -> int:
+        """Au démarrage : projets vierges restés intacts (logiciel fermé brutalement)."""
+        rows = self.db.query("SELECT id FROM project WHERE data_json LIKE '%\"blank\"%'")
+        return sum(self.discard_if_untouched(r["id"]) for r in rows)
 
     def _next_number(self, prefix: str) -> int:
         n = self.db.query_one("SELECT COUNT(*) n FROM project WHERE name LIKE ?", (prefix + " %",))["n"]
@@ -83,6 +122,12 @@ class ProjectService:
                       (name, project_id))
         self.db.audit("project.rename", f"{project_id}:{name}")
         return name
+
+    def set_mode(self, project_id: int, mode: ProjectMode | str) -> None:
+        """Interface dans laquelle le projet a été ouvert en dernier : un même projet passe d'un parcours à
+        l'autre (Clipping, Traduction, Création originale, Montage libre) sans être dupliqué."""
+        with self.db.transaction() as c:
+            c.execute("UPDATE project SET mode = ? WHERE id = ?", (ProjectMode(mode).value, project_id))
 
     def set_concept(self, project_id: int, concept_id: int) -> None:
         with self.db.transaction() as c:

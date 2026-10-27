@@ -6,13 +6,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QSize, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QComboBox, QLabel, QMenu, QToolButton, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMessageBox,
-                               QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QComboBox, QLabel, QLineEdit, QMenu, QToolButton, QHBoxLayout,
+                               QInputDialog, QListWidget, QListWidgetItem, QMessageBox, QSplitter, QStackedWidget,
+                               QTabWidget, QVBoxLayout, QWidget)
 
 from ...core import AppContext
 from ...edit.model import Timeline, apply_concept_defaults
 from ...edit.render import output_path
 from ...media.ffmpeg import fmt_timecode
+from ..clip_export import ClipExportPanel
 from ..importing import DropZone, import_paths, import_url, pick_and_import
 from ..montage_panel import MontagePanel
 from ..montage_player import MontagePlayer
@@ -25,6 +27,62 @@ from ..widgets import Card, EmptyState, button, label, tool
 
 HISTORY_MAX = 100
 
+# Espace de travail de chaque parcours : ce qui est affiché, le reste est masqué (« Tous les outils » le montre).
+# Clipping et Traduction ont leur propre écran (ui/simple_views.py) ; « Tous les outils » ouvre le montage complet
+# depuis Traduction et Création originale. Textes : uniquement les textes, les sous-titres et l'export, sans
+# « Tous les outils » ni annuler / rétablir.
+# left : onglets de gauche (0 Médias, 1 Texte, 2 Extraits) · viewer : 0 Montage, 1 Source ·
+# panel : onglets de l'inspecteur (0 Extrait, 1 Cadrage, 2 Textes, 3 Sous-titres, 4 Audio, 5 Export) ·
+# timeline : piste de montage · export : panneau d'export des clips à droite.
+FULL = {"left": (0, 1, 2), "viewer": (0, 1), "panel": (0, 1, 2, 3, 4, 5), "timeline": True, "export": False}
+LAYOUTS = {
+    "free_edit": FULL,
+    "original": {"left": (0,), "viewer": (0,), "panel": (2, 3, 4, 5), "timeline": False, "export": False},
+    "texts": {"left": (0,), "viewer": (0,), "panel": (2, 3, 5), "timeline": False, "export": False},
+}
+SIMPLE = ("smart_clipping", "translation")
+NO_FULL = ("smart_clipping", "texts")            # pas de « Tous les outils » : l'onglet fait sa seule tâche
+
+# Formats proposés partout (en haut du Studio) : format, icône, nom
+FORMATS = (("16:9", "rectangle-horizontal", "Horizontal 16:9"), ("1:1", "square", "Carré 1:1"),
+           ("9:16", "rectangle-vertical", "Vertical 9:16"))
+
+
+class FormatPicker(QWidget):
+    """Format de la vidéo en trois icônes : horizontal, carré, vertical."""
+    changed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(2)
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self.buttons: dict[str, QToolButton] = {}
+        for asp, ic, name in FORMATS:
+            b = tool(ic, f"Format {name}", checkable=True)
+            b.setProperty("aspect", asp)
+            self.group.addButton(b)
+            self.buttons[asp] = b
+            h.addWidget(b)
+        self.group.buttonClicked.connect(lambda b: self.changed.emit(b.property("aspect")))
+
+    def value(self) -> str | None:
+        b = self.group.checkedButton()
+        return b.property("aspect") if b else None
+
+    def set_value(self, aspect: str) -> None:
+        """Coche le format du montage (aucun si c'est un autre format, 4:5 d'un ancien projet par exemple)."""
+        self.group.setExclusive(False)
+        for asp, b in self.buttons.items():
+            b.setChecked(asp == aspect)
+        self.group.setExclusive(True)
+
+    def restyle(self) -> None:
+        for asp, b in self.buttons.items():
+            b.setIcon(theme.icon(b.icon_name, theme.color("muted"), 18))
+
 
 def default_export_dir() -> Path:
     base = QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or str(Path.home() / "Videos")
@@ -33,6 +91,9 @@ def default_export_dir() -> Path:
 
 class StudioPage(QWidget):
     new_project = Signal(object)
+    new_blank = Signal(str)                   # parcours : projet vierge, supprimé s'il reste intact
+    view_changed = Signal()                   # écran affiché changé (onglet Export, retour…) : dock à jour
+    goto_tab = Signal(str)                    # « Suivant » : le projet ouvert passe dans un autre onglet
     open_models = Signal()
     plan_publication = Signal(int)            # variant_id exporté
     open_ai_settings = Signal()
@@ -67,31 +128,48 @@ class StudioPage(QWidget):
         self.project_combo.setToolTip("Projet ouvert")
         self.project_combo.currentIndexChanged.connect(self._on_project_combo)
         top.addWidget(self.project_combo)
+        top.addWidget(tool("plus", "Nouveau projet", lambda: self.new_blank.emit(self._mode() or "free_edit")))
         self.concept_lbl = label("", "badge")
         top.addWidget(self.concept_lbl)
+        top.addSpacing(6)
+        self.format_pick = FormatPicker()
+        self.format_pick.changed.connect(self._on_format)
+        top.addWidget(self.format_pick)
         top.addStretch(1)
-        self.save_lbl = label("", "faint")
+        self.save_lbl = label("", "faint")               # messages brefs (import lancé, image enregistrée…)
         top.addWidget(self.save_lbl)
+        # importer : même endroit, même forme dans tous les onglets ; la vidéo devient celle du projet
+        self.import_btn = tool("upload", "Importer une vidéo de l'ordinateur (Ctrl+I)", self._import_files,
+                               color=theme.color("accent"))
+        self.import_btn.setProperty("kind", "soft")
+        self.link_edit = QLineEdit()
+        self.link_icon = self.link_edit.addAction(theme.icon("link", theme.color("muted"), 16),
+                                                  QLineEdit.LeadingPosition)
+        self.link_edit.setToolTip("Coller le lien d'une vidéo (YouTube, TikTok, Twitch…) puis Entrée")
+        self.link_edit.setFixedWidth(150)
+        self.link_edit.returnPressed.connect(self._import_link)
+        self.media_btn = button("Médias", "soft", tooltip="Une vidéo déjà importée", icon="film",
+                                on_click=self._attach_from_library)
+        for w in (self.import_btn, self.link_edit, self.media_btn):
+            w.setFixedHeight(34)
+            top.addWidget(w)
         self.undo_btn = tool("undo-2", "Annuler (Ctrl+Z)", self.undo)
         self.redo_btn = tool("redo-2", "Rétablir (Ctrl+Y)", self.redo)
         top.addWidget(self.undo_btn)
         top.addWidget(self.redo_btn)
-        more = tool("ellipsis", "Plus")
-        more.setPopupMode(QToolButton.InstantPopup)
-        mm = QMenu(more)
-        mm.addAction(theme.icon("layers", theme.color("muted"), 16), "Production en série…", self._batch)
-        mm.addAction(theme.icon("image", theme.color("muted"), 16), "Enregistrer l'image (Ctrl+Maj+S)",
-                     self._export_still)
-        mm.addSeparator()
-        mm.addAction(theme.icon("archive", theme.color("muted"), 16), "Exporter le projet (.studioproj)…",
-                     self._export_project)
-        more.setMenu(mm)
-        more.setStyleSheet("QToolButton::menu-indicator { image: none; }")
-        top.addWidget(more)
-        self.export_quick = button("Exporter", "primary", tooltip="Exporter la vidéo (Ctrl+E)", on_click=self._export,
-                                   icon="share-2")
+        self.full_btn = tool("panel-left", "Tous les outils (montage complet)", self._toggle_full, checkable=True)
+        top.addWidget(self.full_btn)
+        from ..shell import JobsButton
+        self.jobs_btn = JobsButton()                     # la fenêtre principale ouvre la liste des tâches
+        top.addWidget(self.jobs_btn)
+        self.export_quick = tool("share-2", "Exporter (Ctrl+E)", self.show_export, size=38, icon_px=19,
+                                 color="#FFFFFF")
+        self.export_quick.setProperty("kind", "export")
         top.addWidget(self.export_quick)
-        root.addLayout(top)
+        self.topbar = QWidget()
+        self.topbar.setLayout(top)
+        top.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.topbar)
         from ..guide import GuideBar
         self.guide = GuideBar()
         self.guide.hide()
@@ -101,7 +179,7 @@ class StudioPage(QWidget):
         root.addWidget(self.stack, 1)
         self.stack.addWidget(EmptyState("Choisissez un parcours en bas",
                                         "Ou glissez une vidéo n'importe où dans la fenêtre : un projet brouillon "
-                                        "est créé et ses moments forts sont recherchés automatiquement."))
+                                        "est créé et ses extraits sont recherchés automatiquement."))
 
         vsplit = QSplitter(Qt.Vertical)
         vsplit.setHandleWidth(8)
@@ -118,7 +196,7 @@ class StudioPage(QWidget):
         mh.addStretch(1)
         mh.addWidget(tool("upload", "Importer des fichiers", lambda: pick_and_import(self.app, self, self.project_id)))
         mh.addWidget(tool("link", "Importer depuis une URL", lambda: import_url(self.app, self, self.project_id)))
-        mh.addWidget(tool("film", "Ajouter depuis Extraits", self._attach_from_library))
+        mh.addWidget(tool("film", "Ajouter depuis Médias", self._attach_from_library))
         ll.addLayout(mh)
         self.media_list = QListWidget()
         self.media_list.setIconSize(QSize(64, 36))
@@ -158,9 +236,10 @@ class StudioPage(QWidget):
         self.highlights.clips_created.connect(self._load_clips)
         self.highlights.add_to_timeline.connect(self._add_ranges)
         self.highlights.open_settings.connect(self.open_ai_settings.emit)
-        self.left_tabs.addTab(self.highlights, theme.icon("sparkles", theme.color("muted"), 18), "Moments")
-        self.left_tabs.setTabToolTip(2, "Moments forts")
+        self.left_tabs.addTab(self.highlights, theme.icon("sparkles", theme.color("muted"), 18), "Extraits")
+        self.left_tabs.setTabToolTip(2, "Extraits")
         self.left_tabs.tabBar().setStyleSheet("QTabBar::tab { padding: 6px 9px; margin: 2px 1px 6px 0; }")
+        self.left_tabs.currentChanged.connect(lambda i: self._keep_visible_tab(self.left_tabs, i))
         hsplit.addWidget(self.left_tabs)
 
         # -- lecteurs
@@ -169,7 +248,6 @@ class StudioPage(QWidget):
         self.mplayer = MontagePlayer()
         self.mplayer.track_resolver = self._tracks_for
         self.mplayer.time_changed.connect(self._on_time)
-        self.mplayer.render_requested.connect(self._request_preview)
         mc.lay.addWidget(self.mplayer)
         self.viewer_tabs.addTab(mc, "Montage")
         sc = Card(padding=10)
@@ -183,14 +261,16 @@ class StudioPage(QWidget):
                                                  "timeline (A)", on_click=self._add_media_to_timeline, icon="plus"))
         self.viewer_tabs.addTab(sc, "Source")
         self.viewer_tabs.currentChanged.connect(self._viewer_changed)
+        self.viewer_tabs.currentChanged.connect(lambda i: self._keep_visible_tab(self.viewer_tabs, i))
         hsplit.addWidget(self.viewer_tabs)
 
         # -- inspecteur
         self.panel = MontagePanel(app)
         self.panel.changed.connect(self._on_panel_change)
+        self.mplayer.layout_edited.connect(self._on_layout_edited)
         self.panel.split_requested.connect(self.split)
         self.panel.analyze_requested.connect(self._analyze)
-        self.panel.export_requested.connect(self._export)
+        self.panel.export_requested.connect(self.show_export)
         self.panel.save_concept_requested.connect(self._save_concept)
         self.panel.apply_concept_requested.connect(self._apply_concept)
         self.panel.generate_subs_requested.connect(self._generate_subs)
@@ -199,11 +279,25 @@ class StudioPage(QWidget):
         self.panel.detect_text_requested.connect(self._detect_text)
         self.panel.reframe_requested.connect(self._reframe)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
+        self.panel.currentChanged.connect(lambda i: self._keep_visible_tab(self.panel, i))
         hsplit.addWidget(self.panel)
+
+        # -- export des clips (espace Clipping intelligent)
+        self.export_card = Card(padding=12)
+        self.export_panel = ClipExportPanel(app, default_export_dir())
+        self.export_panel.launched.connect(self._on_clips_launched)
+        self.export_panel.template_fn = lambda: self.tl
+        self.export_card.lay.addWidget(self.export_panel)
+        self.export_card.setMinimumWidth(320)
+        self.export_card.hide()
+        hsplit.addWidget(self.export_card)
         hsplit.setStretchFactor(0, 1)
         hsplit.setStretchFactor(1, 3)
         hsplit.setStretchFactor(2, 1)
-        hsplit.setSizes([250, 720, 380])
+        hsplit.setStretchFactor(3, 1)
+        hsplit.setSizes([250, 720, 380, 360])
+        self.hsplit = hsplit
+        self._full = False
         self.left_tabs.setMinimumWidth(230)
         self.viewer_tabs.setMinimumWidth(330)
         vsplit.addWidget(hsplit)
@@ -236,14 +330,28 @@ class StudioPage(QWidget):
         c.cue_selected.connect(self._select_cue)
         tl_lay.addWidget(self.timeline)
         vsplit.addWidget(tw)
+        self.timeline_box = tw
         vsplit.setStretchFactor(0, 4)
         vsplit.setStretchFactor(1, 1)
         vsplit.setSizes([520, 200])
         self.stack.addWidget(vsplit)
+        self.editor = vsplit
+
+        # -- espaces simplifiés : Clipping et Traduction s'ouvrent sur un seul écran
+        from ..simple_views import ClippingView, TranslationView
+        self.clip_view = ClippingView(app, self, default_export_dir())
+        self.tr_view = TranslationView(app, self, default_export_dir())
+        from ..export_view import ExportView
+        self.export_view = ExportView(app, self, default_export_dir())
+        self._export_mode = False
+        for v in (self.clip_view, self.tr_view, self.export_view):
+            v.open_editor.connect(lambda: self._toggle_full(True))
+            v.open_settings.connect(self.open_ai_settings.emit)
+            self.stack.addWidget(v)
 
         for key, fn in (("Ctrl+Z", self.undo), ("Ctrl+Y", self.redo), ("Ctrl+Shift+Z", self.redo),
                         ("S", self.split), ("Delete", self._delete_selected), ("A", self._add_media_to_timeline),
-                        ("Ctrl+E", self._export), ("Ctrl+Shift+S", self._export_still)):
+                        ("Ctrl+E", self.show_export), ("Ctrl+Shift+S", self._export_still)):
             sc_ = QShortcut(QKeySequence(key), self)
             sc_.setContext(Qt.WidgetWithChildrenShortcut)
             sc_.activated.connect(fn)
@@ -269,9 +377,83 @@ class StudioPage(QWidget):
         self.stack.setCurrentIndex(1 if self.project_id else 0)
         if self.project_id:
             self._load_media()
+            if self.asset_id is None and self.media_list.count():
+                self.media_list.setCurrentRow(0)          # espaces sans liste de médias : la vidéo est choisie
             self._load_clips()
+            self._sync_project_video()
             self._push_views(panel=True)
-        self._refresh_guide()
+        self._apply_layout()                      # affiche aussi la barre d'étapes du parcours
+
+    # -- la vidéo du projet (la même dans tous les onglets) -----------------------------------
+    def project_video(self) -> dict | None:
+        """La vidéo du projet : celle du montage, sinon la dernière importée."""
+        for sg in self.tl.segments:
+            a = self.assets.get(sg.asset_id)
+            if a and a.get("kind") == "video":
+                return a
+        vids = self._project_videos()
+        return max(vids, key=lambda a: a["id"]) if vids else None
+
+    def _sync_project_video(self) -> None:
+        """Vidéo importée : placée d'office dans le montage (timeline vide) ; dans Clipping et Traduction, une
+        nouvelle vidéo remplace la précédente (un projet = une vidéo). Dans Montage libre, une vidéo ajoutée
+        ensuite reste dans la liste des médias, à placer où l'on veut."""
+        vids = self._project_videos()
+        if not self.project_id or not vids:
+            return
+        latest = max(vids, key=lambda a: a["id"])
+        data = self.app.projects.load_data(self.project_id)
+        known = data.get("project_video")
+        if latest["id"] == known and self.tl.segments:
+            return
+        replace = known is not None and latest["id"] != known and self._mode() in SIMPLE
+        if not self.tl.segments or replace:
+            if self._mode() == "translation" and not self.tl.segments:
+                # Traduction : le format suit la vidéo d'origine (une vidéo courte reste verticale)
+                from ...edit.translation import source_aspect
+                asp = source_aspect(latest.get("width"), latest.get("height"))
+                if asp != self.tl.format.aspect:
+                    self.tl.set_aspect(asp, min(self.tl.format.width, self.tl.format.height))
+            self.tl.segments = []
+            self.tl.add_segment(latest["id"], 0.0, float(latest["duration_s"] or 0))
+            if replace:
+                data.pop("clip_of", None)
+            data["project_video"] = latest["id"]
+            self.app.projects.save_data(self.project_id, data)
+            self._changed(panel=True)
+            self.flush()
+            self.viewer_tabs.setCurrentIndex(0)           # on voit le montage, avec la vidéo dedans
+        elif known is None:
+            data["project_video"] = latest["id"]
+            self.app.projects.save_data(self.project_id, data)
+
+    def replace_timeline(self, tl: Timeline) -> None:
+        """Nouveau montage du projet (extrait choisi en Clipping…) : une étape d'annulation, enregistré."""
+        self.tl = tl
+        self._changed(panel=True)
+        self.flush()
+
+    def show_export(self) -> None:
+        """Onglet Export : la vidéo du projet, ses textes et sa publication."""
+        if not self.project_id:
+            return
+        self.flush()
+        self._export_mode = True
+        self._full = False
+        name, ic, col, _d = theme.EXPORT_TAB
+        self.mode_icon.setPixmap(theme.icon(ic, col, 24).pixmap(24, 24))
+        self.mode_icon.setToolTip(name)
+        self._apply_layout()
+        self.view_changed.emit()
+
+    def _import_extra(self) -> dict | None:
+        return self.clip_view.import_extra() if self._mode() == "smart_clipping" and not self._export_mode else None
+
+    def _import_link(self) -> None:
+        u = self.link_edit.text().strip()
+        if u and self.project_id and import_url(self.app, self, self.project_id, url=u, extra=self._import_extra()):
+            self.link_edit.clear()
+            self.save_lbl.setText("Téléchargement de la vidéo en cours…")
 
     # -- parcours guidés (§4) -------------------------------------------------------
     def _project_videos(self) -> list[dict]:
@@ -296,7 +478,18 @@ class StudioPage(QWidget):
         t = data.get("target_lang")
         return t if t in langs else (langs[0] if langs else "")
 
+    def _simple_view(self):
+        """Écran simplifié affiché (Clipping, Traduction, Export), sauf avec « Tous les outils »."""
+        if self._full or not self.project_id:
+            return None
+        if self._export_mode:
+            return self.export_view
+        return {SIMPLE[0]: self.clip_view, SIMPLE[1]: self.tr_view}.get(self._mode())
+
     def _refresh_guide(self) -> None:
+        if self._simple_view() is not None:
+            self.guide.hide()
+            return
         p = self.app.projects.get(self.project_id) if self.project_id else None
         mode = p["mode"] if p else None
         steps = None
@@ -307,16 +500,142 @@ class StudioPage(QWidget):
             steps, title = self._original_steps(), "Création originale"
             if self.app.projects.load_data(self.project_id).get("original_script"):
                 extras = [("Script…", self._original_dialog)]
-        elif mode == "campaign":
-            b = self.app.campaigns.brief(self.project_id)
-            steps, title = self._campaign_steps(), f"Campagne · {b.name}" if b.defined else "Campagne"
-            if b.defined:
-                extras = [("Brief…", self._edit_brief), ("Conformité…", self._compliance)]
+        elif mode == "smart_clipping":
+            steps, title = self._clipping_steps(), "Clipping"
         if not steps:
             self.guide.hide()
             return
         self.guide.set_steps(title, steps, extras)
         self.guide.show()
+
+    # -- espaces de travail -----------------------------------------------------------
+    def _mode(self) -> str | None:
+        p = self.app.projects.get(self.project_id) if self.project_id else None
+        return p["mode"] if p else None
+
+    def _apply_layout(self) -> None:
+        """Affiche les outils du parcours du projet ouvert ; « Tous les outils » montre le montage complet."""
+        mode = self._mode()
+        simple = self._simple_view()
+        if self.project_id:
+            self.stack.setCurrentWidget(simple or self.editor)
+        self.topbar.setVisible(True)              # en-tête commun : projet, format, import, Exporter
+        for w in (self.export_quick, self.import_btn, self.link_edit, self.media_btn):
+            w.setVisible(not self._export_mode)   # onglet Export : ni import ni bouton Exporter
+        if simple is not None:
+            self.guide.hide()
+            self.player.player.pause() if hasattr(self.player.player, "pause") else None
+            self.mplayer.pause()
+            simple.refresh()
+        else:
+            self._refresh_guide()
+        lay = FULL if (self._full or mode not in LAYOUTS) else LAYOUTS[mode]
+        self.full_btn.setVisible(((mode in LAYOUTS and LAYOUTS[mode] is not FULL) or mode in SIMPLE)
+                                 and mode not in NO_FULL and not self._export_mode)
+        self.full_btn.setToolTip("Revenir à l'écran simplifié" if mode in SIMPLE and self._full else
+                                 "Tous les outils (montage complet)")
+        self.full_btn.blockSignals(True)
+        self.full_btn.setChecked(self._full)
+        self.full_btn.blockSignals(False)
+        for tabs, keep in ((self.left_tabs, lay["left"]), (self.viewer_tabs, lay["viewer"]),
+                           (self.panel, lay["panel"])):
+            for i in range(tabs.count()):
+                tabs.setTabVisible(i, i in keep)
+            tabs.setVisible(bool(keep))
+            tabs.tabBar().setVisible(len(keep) > 1 or tabs is self.panel)
+            if keep and tabs.currentIndex() not in keep:
+                tabs.setCurrentIndex(keep[0])
+        self.timeline_box.setVisible(lay["timeline"])
+        self.export_card.setVisible(lay["export"])
+        if lay["export"] and self.project_id:
+            self.export_panel.load(self.project_id, self.tl)
+        editing = (lay["timeline"] or bool(lay["panel"])) and simple is None and mode != "texts"
+        for w in (self.undo_btn, self.redo_btn):
+            w.setVisible(editing)
+        self.hsplit.setSizes([(250 if lay is FULL else 320) if lay["left"] else 0, 720,
+                              380 if lay["panel"] else 0, 380 if lay["export"] else 0])
+
+    def restyle_accent(self) -> None:
+        """Couleur de l'onglet changée : icônes teintées de l'en-tête à jour."""
+        self.import_btn.setIcon(theme.icon("upload", theme.color("accent"), 18))
+        self.media_btn.setIcon(theme.icon("film", theme.color("accent"), 16))
+
+    def _keep_visible_tab(self, tabs: QTabWidget, i: int) -> None:
+        """Un onglet masqué par l'espace de travail ne devient pas l'onglet affiché."""
+        if 0 <= i < tabs.count() and not tabs.isTabVisible(i):
+            vis = [k for k in range(tabs.count()) if tabs.isTabVisible(k)]
+            if vis:
+                tabs.setCurrentIndex(vis[0])
+
+    def _toggle_full(self, on: bool) -> None:
+        self._full = bool(on)
+        self._apply_layout()
+
+    def leave_project(self) -> None:
+        """Quitte le projet ouvert : un projet vierge resté intact n'est pas conservé."""
+        if self.project_id:
+            self.flush()
+            if self.app.projects.discard_if_untouched(self.project_id):
+                self.project_id = None
+
+    def _on_format(self, asp: str) -> None:
+        if not self.project_id or not asp or asp == self.tl.format.aspect:
+            return
+        self.tl.set_aspect(asp, min(self.tl.format.width, self.tl.format.height))
+        self._changed(panel=True)
+        if self._simple_view() is not None:
+            self._simple_view().schedule_refresh()
+
+    def _on_clips_launched(self) -> None:
+        bp = self.export_panel
+        if bp.job_ids:
+            self.save_lbl.setText(f"{len(bp.job_ids)} export(s) en file · dossier « {bp.folder.name} »")
+        self._refresh_guide()
+
+    def _export_clips(self) -> None:
+        """Export des clips cochés : panneau de droite (affiché au besoin avec « Tous les outils » désactivé)."""
+        if not self.export_card.isVisibleTo(self):
+            self._toggle_full(False)
+        self.flush()
+        if self.export_panel.count():
+            self.export_panel._launch()
+
+    def _exported(self) -> bool:
+        return bool(self.project_id and self.app.montage.exports(self.project_id, limit=1))
+
+    def _n_clips(self) -> int:
+        return self.app.db.query_one("SELECT COUNT(*) n FROM clip WHERE project_id = ? AND name != 'Montage'",
+                                     (self.project_id,))["n"]
+
+    def _clipping_steps(self):
+        from ..guide import Step
+        aid = self._guide_asset()
+        transcribed = bool(aid and self.app.transcripts.has(aid))
+        found = bool(self.app.candidates.list(self.project_id))
+        n = self._n_clips()
+
+        def transcribe():
+            self._select_asset(aid)
+            self.left_tabs.setCurrentIndex(1)
+            self.transcript._transcribe()
+
+        def find():
+            self._select_asset(aid)
+            self.left_tabs.setCurrentIndex(2)
+            if self.highlights.go.isEnabled() and self.highlights.job_id is None:
+                self.highlights._find()
+        return [
+            Step("import", "Importer", bool(aid), lambda: pick_and_import(self.app, self, self.project_id),
+                 "Une vidéo longue : podcast, débat, interview…"),
+            Step("transcribe", "Transcrire", transcribed, transcribe if aid else None,
+                 "Reconnaissance vocale locale"),
+            Step("find", "Extraits", found, find if transcribed else None,
+                 "Les meilleurs passages, notés et justifiés"),
+            Step("choose", f"Choisir ({n})", n > 0, (lambda: self.left_tabs.setCurrentIndex(2)) if found else None,
+                 "Acceptez les passages retenus puis « Créer les clips »"),
+            Step("export", "Exporter", self._exported(), self._export_clips if n else None,
+                 "Chaque clip dans les formats choisis, sous-titré, avec son accroche"),
+        ]
 
     def _original_steps(self):
         from ..guide import Step
@@ -331,12 +650,14 @@ class StudioPage(QWidget):
             Step("make", "Créer la vidéo", made, self._original_dialog, "Voix off facultative, images ou couleurs"),
             Step("build", "Monter", on_tl, (lambda: self.apply_original(aid, [])) if made else None,
                  "Vidéo, textes à l'écran et sous-titres sur la timeline"),
-            Step("export", "Exporter", exported, self._export if on_tl else None, "Un MP4 prêt à publier"),
+            Step("export", "Exporter", exported, self.show_export if on_tl else None, "Titre, réseaux, publication"),
         ]
 
-    def _original_dialog(self) -> None:
+    def _original_dialog(self, load_document: bool = False) -> None:
         from ..original_dialog import OriginalDialog
         self._orig_dlg = OriginalDialog(self.app, self.project_id, self.tl.format.width, self.tl.format.height, self)
+        if load_document:
+            QTimer.singleShot(0, self._orig_dlg._load_file)
         try:
             ok = self._orig_dlg.exec()
             params = self._orig_dlg.params
@@ -371,55 +692,6 @@ class StudioPage(QWidget):
         self._changed(panel=True)
         self.viewer_tabs.setCurrentIndex(0)
         self._refresh_guide()
-
-    def _edit_brief(self) -> None:
-        from ..campaign_dialog import BriefDialog
-        if BriefDialog(self.app, self.project_id, self).exec():
-            self._refresh_guide()
-
-    def _compliance(self) -> None:
-        from ..campaign_dialog import ComplianceDialog
-        ComplianceDialog(self.app, self.project_id, self).exec()
-
-    def _campaign_steps(self):
-        from ..guide import Step
-        b = self.app.campaigns.brief(self.project_id)
-        vids = self._project_videos()
-        n_clips = self.app.db.query_one("SELECT COUNT(*) n FROM clip WHERE project_id = ? AND name != 'Montage'",
-                                        (self.project_id,))["n"]
-        rep = self.app.campaigns.report(self.project_id) if b.defined else []
-        target = max(1, b.target_count)
-        conform = [r for r in rep if r["summary"].startswith("✓")]
-        variants = [r["variant_id"] for r in rep]
-        published = 0
-        if variants:
-            q = ",".join("?" * len(variants))
-            published = self.app.db.query_one(f"SELECT COUNT(DISTINCT variant_id) n FROM master_publication "
-                                              f"WHERE variant_id IN ({q})", tuple(variants))["n"]
-        nxt_pub = next((r["variant_id"] for r in conform if not self.app.db.query_one(
-            "SELECT 1 FROM master_publication WHERE variant_id = ?", (r["variant_id"],))), None)
-
-        def clips():
-            aid = self._guide_asset()
-            if aid and self.app.transcripts.has(aid):
-                self._select_asset(aid)
-                self.left_tabs.setCurrentIndex(2)
-            else:
-                self.left_tabs.setCurrentIndex(1 if aid else 0)
-        return [
-            Step("brief", "Brief", b.defined, self._edit_brief, "Exigences du client : formats, durées, mots, mentions"),
-            Step("import", "Importer", bool(vids), lambda: pick_and_import(self.app, self, self.project_id),
-                 "Vidéo(s) source"),
-            Step("clips", f"Clips ({n_clips})", n_clips > 0, clips,
-                 "Moments forts ou sélection manuelle dans la source"),
-            Step("export", f"Exporter ({len(rep)}/{target})", len(rep) >= target, self._batch,
-                 "Production en série avec les réglages du montage"),
-            Step("check", f"Conformité ({len(conform)}/{len(rep)})", bool(rep) and len(conform) == len(rep),
-                 self._compliance, "Contrôle automatique de chaque vidéo d'après le brief"),
-            Step("publish", f"Publier ({published}/{len(conform)})", bool(conform) and published >= len(conform),
-                 (lambda: self.plan_publication.emit(nxt_pub)) if nxt_pub else None,
-                 "Préparer la publication des vidéos conformes"),
-        ]
 
     def _translation_steps(self):
         from ..guide import Step
@@ -459,7 +731,7 @@ class StudioPage(QWidget):
                  "Voix de synthèse par intervenant (ElevenLabs)", optional=True),
             Step("build", "Monter", built, (lambda: self._build_translation(aid)) if lang else None,
                  "Vidéo entière, sous-titres dans la langue choisie, voix doublée si disponible"),
-            Step("export", "Exporter", exported, self._export if built else None, "Un MP4 prêt à publier"),
+            Step("export", "Exporter", exported, self.show_export if built else None, "Titre, réseaux, publication"),
         ]
 
     def _build_translation(self, aid: int) -> None:
@@ -496,20 +768,39 @@ class StudioPage(QWidget):
         self.viewer_tabs.setCurrentIndex(0)
         self._refresh_guide()
 
-    def open_project(self, project_id: int) -> None:
+    def _mode_icon(self, mode: str | None) -> None:
+        if mode in theme.PARCOURS:
+            name, ic, col, _d = theme.PARCOURS[mode]
+            self.mode_icon.setPixmap(theme.icon(ic, col, 24).pixmap(24, 24))
+            self.mode_icon.setToolTip(name)
+
+    def open_project(self, project_id: int, mode: str | None = None) -> None:
+        """Ouvre le projet ; `mode` : dans cette interface (sinon celle où il a été ouvert en dernier)."""
+        p = self.app.projects.get(project_id)
+        if mode and p and p["mode"] != mode:
+            self.app.projects.set_mode(project_id, mode)
+        self._export_mode = False
+        self._mode_icon(mode or (p["mode"] if p else None))
+        if self.project_id == project_id and mode:
+            # même projet, autre interface : rien à recharger, la vidéo et le montage suivent
+            self.flush()
+            self._full = False
+            self._mode_icon(mode)
+            self._apply_layout()
+            return
+        if self.project_id != project_id:
+            self.leave_project()
         self.flush()
         self.player.unload()
         self.mplayer.stop()
         self.project_id = project_id
         self.asset_id = None
+        self._full = False
         p = self.app.projects.get(project_id)
         self.concept_id = p["concept_id"] if p else None
         self.concept_lbl.setText(p["concept_name"] if p else "")
         self.concept_lbl.setToolTip("Concept (à changer dans Concepts et projets)")
-        if p and p["mode"] in theme.PARCOURS:
-            name, ic, col, _d = theme.PARCOURS[p["mode"]]
-            self.mode_icon.setPixmap(theme.icon(ic, col, 24).pixmap(24, 24))
-            self.mode_icon.setToolTip(name)
+        self._mode_icon(p["mode"] if p else None)
         self.transcript.glossary_hint = [p["concept_name"]] if p else []
         self.tl = self.app.montage.load(project_id)
         self._history = [json.dumps(self.tl.to_dict(), sort_keys=True)]
@@ -525,12 +816,65 @@ class StudioPage(QWidget):
         if self.media_list.count():
             self.media_list.setCurrentRow(row)
         self.viewer_tabs.setCurrentIndex(0 if self.tl.segments else 1)
+        if p and p["mode"] == "smart_clipping":
+            self.left_tabs.setCurrentIndex(2 if self.asset_id and self.app.transcripts.has(self.asset_id) else 1)
+        self._apply_layout()
         QTimer.singleShot(50, self.timeline.fit)
 
     def _on_project_combo(self) -> None:
         pid = self.project_combo.currentData()
         if pid and pid != self.project_id:
-            self.open_project(pid)
+            self.open_project(pid, self._mode())
+
+    def project_menu(self, pid: int, mode: str, parent: QWidget, pos) -> None:
+        """Clic droit sur un projet (listes des écrans Clipping et Traduction) : renommer, supprimer."""
+        p = self.app.projects.get(pid)
+        if p is None:
+            return
+        m = QMenu(parent)
+        ren = m.addAction(theme.icon("pencil", theme.color("muted"), 16), "Renommer…")
+        dele = m.addAction(theme.icon("trash-2", theme.color("muted"), 16), "Supprimer…")
+        a = m.exec(pos)
+        if a is ren:
+            name, ok = QInputDialog.getText(parent, "Renommer", "Nom du projet :", text=p["name"])
+            if ok and name.strip():
+                try:
+                    self.app.projects.rename(pid, name.strip())
+                except ValueError as exc:
+                    QMessageBox.information(parent, "Renommer", str(exc))
+                self.refresh()
+        elif a is dele:
+            self.delete_project(pid, mode, parent)
+
+    def delete_project(self, pid: int, mode: str, parent: QWidget | None = None) -> bool:
+        """Supprime un projet (après confirmation) ; s'il était ouvert, le suivant prend sa place."""
+        p = self.app.projects.get(pid)
+        if p is None:
+            return False
+        if QMessageBox.question(parent or self, "Supprimer", f"Supprimer le projet « {p['name']} » ?\n\nSon montage, "
+                                "ses extraits et l'historique de ses exports sont retirés. Les fichiers vidéo "
+                                "(sources et exports) restent sur le disque.") != QMessageBox.Yes:
+            return False
+        current = pid == self.project_id
+        if current:
+            self.flush()
+            self.player.unload()
+            self.mplayer.stop()
+        try:
+            self.app.projects.delete(pid)
+        except ValueError as exc:
+            QMessageBox.information(parent or self, "Supprimer", str(exc))
+            return False
+        if not current:
+            self.refresh()
+            return True
+        self.project_id = None
+        nxt = self.app.projects.recent(1)
+        if nxt:
+            self.open_project(nxt[0]["id"], mode)
+        else:
+            self.new_blank.emit(mode)
+        return True
 
     def _load_media(self) -> None:
         cur = self.asset_id
@@ -586,19 +930,34 @@ class StudioPage(QWidget):
         else:
             self.mplayer.pause()
 
+    def _import_files(self) -> None:
+        n = pick_and_import(self.app, self, self.project_id, self._import_extra())
+        if n:
+            self.save_lbl.setText(f"Import de {n} fichier(s) en cours…")
+
     def _attach_from_library(self) -> None:
         rows = self.app.db.query("SELECT id, file_name FROM source_asset WHERE (project_id IS NULL OR project_id != ?) "
                                  "AND kind IN ('video','audio') AND missing = 0 ORDER BY imported_at DESC LIMIT 300",
                                  (self.project_id,))
         if not rows:
-            QMessageBox.information(self, "Extraits", "Aucun autre média dans Extraits.")
+            QMessageBox.information(self, "Médias", "Aucun autre média dans Médias.")
             return
         names = [f"{r['file_name']}  [#{r['id']}]" for r in rows]
-        choice, ok = QInputDialog.getItem(self, "Ajouter depuis Extraits", "Média :", names, 0, False)
+        choice, ok = QInputDialog.getItem(self, "Vidéo déjà importée", "Média :", names, 0, False)
         if ok:
-            aid = rows[names.index(choice)]["id"]
-            self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (self.project_id, aid))
-            self._load_media()
+            self.attach_asset(rows[names.index(choice)]["id"])
+
+    def attach_asset(self, aid: int) -> None:
+        """Rattache au projet un média déjà importé (sa transcription et ses analyses le suivent)."""
+        if not self.project_id:
+            return
+        self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (self.project_id, aid))
+        self._load_media()
+        self._sync_project_video()
+        self._select_asset(aid)
+        self._refresh_guide()
+        if self._simple_view() is not None:
+            self._simple_view().refresh()
 
     # -- timeline : modifications ------------------------------------------------------
     def _changed(self, panel: bool = False) -> None:
@@ -625,6 +984,7 @@ class StudioPage(QWidget):
         self._ensure_waves()
         self.mplayer.set_timeline(self.tl, self.assets)
         self.export_quick.setEnabled(bool(self.tl.segments))
+        self.format_pick.set_value(self.tl.format.aspect)
         self.undo_btn.setEnabled(len(self._history) > 1)
         self.redo_btn.setEnabled(bool(self._future))
         if panel:
@@ -644,6 +1004,11 @@ class StudioPage(QWidget):
                 self.mplayer.seek(t.start)
             return
         self._changed(panel=what in ("format", "structure"))
+
+    def _on_layout_edited(self) -> None:
+        """Vue déplacée ou zoomée directement dans l'aperçu : réglages du panneau et sauvegarde à jour."""
+        self.panel._reload_layout()
+        self._changed()
 
     def _on_time(self, t: float) -> None:
         self.timeline.canvas.set_playhead(t)
@@ -840,8 +1205,7 @@ class StudioPage(QWidget):
             data.setdefault("in_out", {})[str(self.asset_id)] = [self.player.in_s, self.player.out_s]
             data["last_asset_id"] = self.asset_id
         data["timeline"] = self.tl.to_dict()
-        self.app.projects.save_data(self.project_id, data)
-        self.save_lbl.setText("Enregistré")
+        self.app.projects.save_data(self.project_id, data)       # enregistrement automatique, sans message
 
     # -- réglages du concept ----------------------------------------------------------
     def _save_concept(self) -> None:
@@ -860,16 +1224,6 @@ class StudioPage(QWidget):
         self._changed(panel=True)
 
     # -- tâches : aperçu, analyse, export ---------------------------------------------------
-    def _request_preview(self, t: float) -> None:
-        if not self.tl.segments:
-            return
-        for jid, kind in list(self._jobs.items()):
-            if kind == "preview":
-                self.app.jobs.cancel(jid)
-        jid = self.app.jobs.submit("preview_frame", "Aperçu", {"timeline": self.tl.to_dict(), "t": t,
-                                                              "project_id": self.project_id})
-        self._jobs[jid] = "preview"
-
     def _export_still(self) -> None:
         if not self.tl.segments:
             QMessageBox.information(self, "Image", "La timeline est vide.")
@@ -884,15 +1238,6 @@ class StudioPage(QWidget):
         jid = self.app.jobs.submit("export_still", "Image fixe", {"timeline": self.tl.to_dict(), "t": t, "dest": path})
         self._jobs[jid] = "still"
         self.save_lbl.setText("Enregistrement de l'image…")
-
-    def _batch(self) -> None:
-        if not self.project_id:
-            return
-        from ..batch_dialog import BatchDialog
-        self.flush()
-        dlg = BatchDialog(self.app, self.project_id, self.tl, default_export_dir(), self)
-        if dlg.exec() and dlg.job_ids:
-            self.save_lbl.setText(f"{len(dlg.job_ids)} export(s) en file · dossier « {dlg.folder.name} »")
 
     def _optimize_audio(self) -> None:
         if not self.tl.segments:
@@ -1117,6 +1462,9 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        self.clip_view.on_job(job)
+        self.tr_view.on_job(job)
+        self.export_view.on_job(job)
         if job.kind == "waveform" and job.status in ("succeeded", "failed", "cancelled"):
             aid = getattr(self, "_wave_pending", {}).pop(job.id, None)
             if aid is not None and job.status != "succeeded":
@@ -1135,8 +1483,8 @@ class StudioPage(QWidget):
             self.transcript.on_job(job)
         if job.kind in ("dub", "dub_line", "separate") and job.status == "succeeded":
             self.panel.reload_voice()
-            if job.kind == "transcribe" and job.status == "succeeded":
-                self.highlights.refresh()
+        if job.kind == "transcribe" and job.status == "succeeded":
+            self.highlights.refresh()
         if job.kind == "find_highlights":
             self.highlights.on_job(job)
         if job.kind == "auto_clips" and job.status == "succeeded" and \
@@ -1150,12 +1498,7 @@ class StudioPage(QWidget):
         if not kind or job.status in ("pending", "running"):
             return
         self._jobs.pop(job.id, None)
-        if kind == "preview":
-            if job.status == "succeeded":
-                self.mplayer.show_render(job.result["path"])
-            elif job.status == "failed":
-                self.mplayer.render_failed(job.error)
-        elif kind == "optimize":
+        if kind == "optimize":
             self.panel.opt_btn.setEnabled(True)
             self.panel.opt_btn.setText("Optimiser l'audio")
             if job.status == "succeeded":
@@ -1286,6 +1629,10 @@ class StudioPage(QWidget):
             it.setToolTip(r["file_name"] or "")
             it.setData(Qt.UserRole, r["id"])
             self.clips.addItem(it)
+        if self.export_card.isVisibleTo(self) and self.project_id:
+            self.export_panel.load(self.project_id, self.tl)
+        if not self.guide.isHidden():
+            self._refresh_guide()
 
     def _clip_id(self) -> int | None:
         it = self.clips.currentItem()

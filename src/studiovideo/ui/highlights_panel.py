@@ -1,4 +1,4 @@
-"""Panneau « Moments forts » : clipping intelligent (§4 mode 1, §7)."""
+"""Panneau « Extraits » : clipping intelligent (§4 mode 1, §7)."""
 from __future__ import annotations
 
 import json
@@ -267,7 +267,7 @@ class HighlightsPanel(QWidget):
             return
         self.app.settings.set("highlights_engine", "llm" if eng.get("kind") != "local" else "local")
         a = self.app.library.get(self.asset_id)
-        self.job_id = self.app.jobs.submit("find_highlights", f"Moments forts · {a['file_name']}",
+        self.job_id = self.app.jobs.submit("find_highlights", f"Extraits · {a['file_name']}",
                                            {"asset_id": self.asset_id, "project_id": self.project_id,
                                             "request": self._request().__dict__, "engine": eng})
         self.status.setText("Analyse en cours…")
@@ -282,9 +282,9 @@ class HighlightsPanel(QWidget):
         if job.status in ("succeeded", "failed", "cancelled"):
             self.job_id = None
             if job.status == "failed":
-                QMessageBox.warning(self, "Moments forts", job.error[:800])
+                QMessageBox.warning(self, "Extraits", job.error[:800])
             elif job.status == "succeeded" and not job.result.get("count"):
-                QMessageBox.information(self, "Moments forts", "Aucun passage ne correspond à ces critères. "
+                QMessageBox.information(self, "Extraits", "Aucun passage ne correspond à ces critères. "
                                         "Élargissez les durées ou retirez des filtres.")
             self.refresh()
 

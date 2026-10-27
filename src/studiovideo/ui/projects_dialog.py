@@ -48,7 +48,7 @@ class ProjectsPanel(QWidget):
         self.b_concept = button("Concept…", "ghost", tooltip="Ranger dans un autre concept", on_click=self._concept)
         self.b_arch = button("Archiver", "ghost", on_click=self._archive)
         self.b_del = button("Supprimer", "danger", tooltip="Les fichiers ne sont jamais effacés : le montage et les "
-                            "clips sont retirés, les médias restent dans Extraits.", on_click=self._delete)
+                            "clips sont retirés, les médias restent dans Médias.", on_click=self._delete)
         for b in (self.b_open, self.b_rename, self.b_dup, self.b_concept, self.b_arch):
             row.addWidget(b)
         row.addStretch(1)
@@ -134,7 +134,7 @@ class ProjectsPanel(QWidget):
             return
         if QMessageBox.question(self, "Supprimer", f"Supprimer le projet « {p['name']} » ?\n\nSon montage, ses clips "
                                 "et l'historique de ses exports sont retirés. Les fichiers vidéo (sources et "
-                                "exports) restent sur le disque et les médias dans Extraits.") != QMessageBox.Yes:
+                                "exports) restent sur le disque et les médias dans Médias.") != QMessageBox.Yes:
             return
         try:
             self.app.projects.delete(pid)

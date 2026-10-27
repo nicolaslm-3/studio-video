@@ -30,12 +30,21 @@ DARK = {
 # Parcours de montage : libellé, icône, couleur (pastel vive), description courte (infobulle)
 PARCOURS = {
     "free_edit": ("Montage libre", "clapperboard", "#4F8EF7", "Monter librement une vidéo"),
-    "smart_clipping": ("Clipping intelligent", "sparkles", "#D35BC8", "Trouver et découper les meilleurs moments"),
+    "smart_clipping": ("Clipping", "sparkles", "#D35BC8", "Trouver et découper les meilleurs extraits"),
     "translation": ("Traduction et adaptation", "languages", "#26A69A", "Sous-titrer, traduire et doubler"),
     "original": ("Création originale", "wand-sparkles", "#F0894A", "Créer une vidéo à partir d'un texte"),
-    "campaign": ("Campagne", "megaphone", "#E5625C", "Respecter un brief de marque"),
-    "batch": ("Production en série", "layers", "#8B7CF6", "Exporter plusieurs vidéos et formats d'un coup"),
+    "texts": ("Textes", "type", "#8E6CEF", "Textes à l'écran, sous-titres et leur mise en forme"),
 }
+
+# Parcours dont l'icône est grisée dans le dock (toujours utilisables)
+DIMMED = {"original"}
+
+# Dernier onglet du dock : l'export (titre, description, réseaux, publication) de la vidéo du projet
+EXPORT_TAB = ("Export", "share-2", "#E5484D", "Titre, description, réseaux et publication")
+
+# Format d'un nouveau projet selon le parcours (modifiable ensuite en haut du Studio)
+DEFAULT_ASPECT = {"free_edit": "9:16", "smart_clipping": "9:16", "translation": "16:9", "original": "9:16",
+                  "texts": "9:16"}
 
 PLATFORMS = {"youtube": ("youtube", "#FF2D2D"), "tiktok": ("music", "#FE2C55"), "instagram": ("instagram", "#E1306C"),
              "facebook": ("facebook", "#1877F2"), "x": ("twitter", None)}
@@ -57,11 +66,26 @@ def _mix(a: str, b: str, t: float) -> str:
                   round(ca.blue() + (cb.blue() - ca.blue()) * t)).name()
 
 
+def tinted_svg(name: str, color_hex: str) -> str:
+    """Copie colorée d'une icône, en fichier (les feuilles de style Qt ne lisent qu'une image sur disque)."""
+    import tempfile
+    folder = Path(tempfile.gettempdir()) / "studiovideo-icons"
+    out = folder / f"{name}-{color_hex.lstrip('#')}.svg"
+    if not out.exists():
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            out.write_text(_svg(name).replace("currentColor", color_hex), encoding="utf-8")
+        except OSError:
+            return ""
+    return out.as_posix()
+
+
 def qss(c: dict[str, str]) -> str:
+    arrow = tinted_svg("chevron-down", c["muted"])
     return f"""
 * {{ outline: none; }}
 QWidget {{ background: {c['bg']}; color: {c['text']}; font-size: 13px; }}
-QToolTip {{ background: {c['text']}; color: {c['bg']}; border: none; border-radius: 8px; padding: 6px 10px; }}
+QToolTip {{ background: {c['raised']}; color: {c['text']}; border: 1px solid {c['accent']}; padding: 5px 9px; }}
 QLabel {{ background: transparent; }}
 QLabel[role="h1"] {{ font-size: 24px; font-weight: 600; }}
 QLabel[role="h2"] {{ font-size: 15px; font-weight: 600; }}
@@ -69,7 +93,7 @@ QLabel[role="muted"] {{ color: {c['muted']}; }}
 QLabel[role="faint"] {{ color: {c['faint']}; font-size: 12px; }}
 QLabel[role="badge"] {{ color: {c['accent']}; background: {c['accent_soft']}; border-radius: 9px; padding: 2px 9px; font-size: 11px; font-weight: 600; }}
 QLabel[role="error"] {{ color: {c['danger']}; }}
-QLabel[role="bubble"] {{ background: {c['text']}; color: {c['bg']}; border-radius: 9px; padding: 5px 11px; font-size: 12px; font-weight: 600; }}
+QLabel[role="bubble"] {{ background: transparent; color: {c['text']}; padding: 6px 12px; font-size: 12px; font-weight: 500; }}
 QFrame[role="card"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 16px; }}
 QFrame[role="card"]:hover[clickable="true"] {{ border-color: {c['faint']}; }}
 QFrame[role="dim"] {{ background: transparent; }}
@@ -102,13 +126,20 @@ QPushButton[kind="pill"] {{ background: {c['surface']}; border: 1px solid {c['bo
 QPushButton[kind="pill"]:checked {{ background: {c['accent']}; border-color: {c['accent']}; color: {c['accent_text']}; font-weight: 600; }}
 QToolButton {{ background: transparent; border: none; border-radius: 12px; padding: 6px; }}
 QToolButton:hover {{ background: {c['hover']}; }}
+QToolButton:checked {{ background: {c['accent_soft']}; }}
+QToolButton[kind="export"] {{ background: {EXPORT_TAB[2]}; border-radius: 10px; }}
+QToolButton[kind="export"]:hover {{ background: {_mix(EXPORT_TAB[2], '#000000', 0.12)}; }}
+QToolButton[kind="export"]:disabled {{ background: {_mix(c['raised'], EXPORT_TAB[2], 0.35)}; }}
+QToolButton[kind="soft"] {{ background: {c['accent_soft']}; border-radius: 10px; }}
+QToolButton[kind="soft"]:hover {{ background: {_mix(c['accent_soft'], c['accent'], 0.15)}; }}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QFontComboBox, QSpinBox, QDoubleSpinBox, QDateTimeEdit, QDateEdit, QTimeEdit {{
     background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 10px; padding: 6px 10px;
     selection-background-color: {c['accent']}; selection-color: {c['accent_text']}; }}
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QDateTimeEdit:hover {{ border-color: {c['faint']}; }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateTimeEdit:focus {{ border: 1px solid {c['accent']}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{ color: {c['faint']}; background: {c['surface']}; }}
-QComboBox::drop-down, QDateTimeEdit::drop-down {{ border: none; width: 24px; }}
+QComboBox::drop-down, QDateTimeEdit::drop-down {{ border: none; width: 26px; }}
+QComboBox::down-arrow, QDateTimeEdit::down-arrow {{ image: url({arrow}); width: 14px; height: 14px; }}
 QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ border: none; width: 16px; background: transparent; }}
 QComboBox QAbstractItemView {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 10px; padding: 4px;
     selection-background-color: {c['accent_soft']}; selection-color: {c['text']}; }}
@@ -144,8 +175,8 @@ QCheckBox::indicator {{ width: 17px; height: 17px; border: 1px solid {c['faint']
 QCheckBox::indicator:hover {{ border-color: {c['accent']}; }}
 QCheckBox::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; image: url({CHECK}); }}
 QCheckBox::indicator:disabled {{ border-color: {c['border']}; background: {c['surface']}; }}
-QRadioButton::indicator {{ width: 16px; height: 16px; border: 1px solid {c['faint']}; border-radius: 8px; background: {c['raised']}; }}
-QRadioButton::indicator:checked {{ border: 5px solid {c['accent']}; }}
+QRadioButton::indicator {{ width: 16px; height: 16px; border: 1px solid {c['faint']}; border-radius: 9px; background: {c['raised']}; }}
+QRadioButton::indicator:checked {{ width: 10px; height: 10px; border: 4px solid {c['accent']}; border-radius: 9px; }}
 QSplitter {{ background: transparent; }}
 QSplitter::handle {{ background: transparent; }}
 QStatusBar {{ background: {c['bg']}; color: {c['muted']}; }}
@@ -158,6 +189,36 @@ QMessageBox {{ background: {c['bg']}; }}
 QCalendarWidget QWidget {{ alternate-background-color: {c['surface']}; }}
 QCalendarWidget QToolButton {{ color: {c['text']}; font-weight: 600; }}
 QCalendarWidget QAbstractItemView {{ selection-background-color: {c['accent']}; selection-color: {c['accent_text']}; border-radius: 8px; }}
+QFrame[role="moment"] QLabel, QFrame[role="moment"] QCheckBox {{ background: transparent; }}
+QLabel[role="step"] {{ color: {c['muted']}; font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
+QLabel[role="title"] {{ font-size: 22px; font-weight: 700; }}
+QLabel[role="ready"], QFrame[role="moment"] QLabel[role="ready"] {{ color: {c['ok']}; background: {_mix(c['raised'], c['ok'], 0.16)}; border-radius: 8px; padding: 2px 8px; font-size: 11px; font-weight: 600; }}
+QPushButton[kind="chip"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 15px; padding: 7px 10px; font-weight: 600; }}
+QPushButton[kind="chip"]:hover {{ border-color: {c['faint']}; }}
+QPushButton[kind="chip"]:checked {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['text']}; }}
+QPushButton[kind="chip"]:disabled {{ color: {c['faint']}; background: {c['surface']}; }}
+QPushButton[kind="big"] {{ background: {c['accent']}; color: {c['accent_text']}; border: none; border-radius: 12px; padding: 14px; font-size: 15px; font-weight: 700; }}
+QPushButton[kind="big"]:hover {{ background: {_mix(c['accent'], c['text'], 0.12)}; }}
+QPushButton[kind="big"]:disabled {{ background: {_mix(c['raised'], c['accent'], 0.3)}; color: {_mix(c['text'], c['raised'], 0.45)}; }}
+QFrame[role="banner"] {{ background: {c['accent']}; border: none; border-radius: 16px; }}
+QFrame[role="banner"] QLabel {{ background: transparent; color: {c['accent_text']}; }}
+QPushButton[kind="banner"] {{ background: {c['accent_text']}; color: {c['accent']}; border: none; border-radius: 12px; padding: 10px 22px; font-size: 14px; font-weight: 700; }}
+QPushButton[kind="banner"]:hover {{ background: {_mix(c['accent_text'], c['accent'], 0.2)}; }}
+QFrame[role="moment"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 10px; }}
+QFrame[role="moment"]:hover {{ border-color: {c['faint']}; }}
+QFrame[role="moment"][selected="true"] {{ border: 2px solid {c['text']}; }}
+QFrame[role="stepbar"] {{ background: {c['border']}; border: none; border-radius: 2px; }}
+QFrame[role="stepbar"][state="done"] {{ background: {c['text']}; }}
+QFrame[role="stepbar"][state="current"] {{ background: {c['accent']}; }}
+QFrame[role="projitem"] {{ background: transparent; border: none; border-radius: 10px; }}
+QFrame[role="projitem"]:hover {{ background: {c['hover']}; }}
+QFrame[role="projitem"][selected="true"] {{ background: {c['raised']}; }}
+QFrame[role="projitem"] QLabel {{ background: transparent; }}
+QFrame[role="scrub"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 10px; }}
+QFrame[role="scrub"]:hover {{ border-color: {c['faint']}; }}
+QFrame[role="scrub"] QToolButton {{ background: transparent; border: none; color: {c['muted']}; font-size: 15px; font-weight: 700; padding: 4px 8px; }}
+QFrame[role="scrub"] QToolButton:hover {{ color: {c['text']}; }}
+QFrame[role="sep"] {{ background: {c['border']}; border: none; max-height: 1px; }}
 """
 
 

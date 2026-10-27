@@ -20,7 +20,10 @@ from ..media import ffmpeg
 from .model import TSegment, Transcript, Word
 
 log = logging.getLogger(__name__)
-_NOWIN = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+# Téléchargement HTTPS classique des modèles : le protocole Xet de Hugging Face passe par un serveur
+# (cas-server.xethub.hf.co) souvent bloqué par les pare-feux d'entreprise (« CAS Client Error »).
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+_NOWIN =subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 Progress = Callable[[float, str], None]
 

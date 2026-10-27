@@ -23,15 +23,17 @@ src/studiovideo/
 ├── ai/
 │   ├── highlights.py   moments forts : analyse locale, moteur LLM (Ollama / OpenAI), protection du contexte
 │   ├── lexicon.py      indices lexicaux FR / EN par catégorie
-│   └── translate.py    traduction : modèle de langage, DeepL, Google ; glossaire
+│   └── translate.py    traduction : DeepL, modèle de langage, Google, Microsoft, LibreTranslate, gratuits
+│                       (Google Traduction, MyMemory) ; « Automatique » avec reprise ; glossaire
 ├── edit/
 │   ├── model.py        timeline : extraits, textes, musique, format, image, audio, export
 │   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification
+│   ├── compose.py      mise en page : double cadrage d'une même source, deux vidéos, incrustation
 │   ├── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
 │   ├── subtitles.py    sous-titres : génération depuis la transcription, découpage, états d'animation
 │   ├── subrender.py    dessin des sous-titres et incrustation en une passe (concat d'images)
 │   ├── audiofix.py     « Optimiser l'audio » : mesures par extrait, choix des traitements, rapport
-│   └── batch.py        production en série : clips × formats × langues
+│   └── batch.py        export des clips : clips × formats × langues (espace Clipping)
 ├── transcribe/
 │   ├── model.py        transcription horodatée, corrections, exports TXT/SRT/VTT/JSON/ASS, import
 │   └── engines.py      moteurs interchangeables (faster-whisper), modèles, extraction audio
@@ -106,20 +108,27 @@ src/studiovideo/
 | Module | Rôle |
 |---|---|
 | `ai/tts.py`, `ai/piper.py` | Voix de synthèse : ElevenLabs (clé de l'utilisateur), Piper hors ligne (programme MIT téléchargé, voix vérifiées par MD5) |
-| `edit/dubbing.py`, `services/dubs.py` | Doublage phrase par phrase, calage temporel (accélération ≤ ×1,35), assemblage, reprise d'une phrase |
+| `edit/dubbing.py`, `services/dubs.py` | Doublage phrase par phrase, calage temporel (accélération ≤ ×1,35, ×1,5 pour rattraper un retard ; jamais de coupure : une phrase trop longue décale les suivantes, recalées dans les silences), assemblage, reprise d'une phrase |
+| `ai/tts.py` | Voix : ElevenLabs, OpenAI (clé du modèle de langage), Piper hors ligne (une voix par langue, choisie selon la langue de la traduction) |
 | `edit/separate.py` | Séparation voix / musique MDX-Net (ONNX), STFT numpy, par blocs de 60 s |
 | `ai/diarize.py` | Intervenants : empreintes WeSpeaker + regroupement hiérarchique |
 | `edit/textdetect.py` | Repérage des logos (contours permanents) et sous-titres incrustés (bandes intermittentes) |
-| `edit/reframe.py` | Recadrage intelligent : visages UltraFace, trajectoire lissée par plan, expression `crop` FFmpeg |
+| `edit/compose.py` | Mise en page (`VideoSettings.layout`) : zones et recadrage de chaque vue, géométrie partagée par l'export FFmpeg et l'aperçu en direct ; une même source n'est jamais entendue deux fois |
+| `edit/reframe.py` | Recadrage intelligent : visages UltraFace, choix de la personne qui parle (mouvement de la bouche, image recalée), trajectoire lissée par plan, expression `crop` FFmpeg |
 | `edit/silence.py` | Retrait des silences (silencedetect ou mots transcrits), alternance de zoom à chaque coupe |
 | `publish/copywriter.py` | Titre, description, hashtags et chapitres YouTube proposés depuis la transcription |
 | `services/archive.py` | Archive de projet `.studioproj` (export / import, renumérotation, médias reconnus par empreinte) |
-| `edit/campaign.py`, `services/campaigns.py` | Brief de campagne, contrôle de conformité des exports et des textes |
 | `edit/original.py` | Création originale : script en scènes, voix off, fabrication de la vidéo |
 | `publish/rules.py` | Limites de texte par plateforme, composition des légendes, contrôle des liens |
 | `publish/youtube.py`, `tiktok.py`, `meta.py`, `xapi.py` | Connexions OAuth (redirection locale, PKCE), envois reprenables, statistiques |
 | `services/analytics.py` | Relevés horodatés ; un indicateur absent n'est jamais remplacé par zéro |
-| `ui/guide.py` | Barre d'étapes des parcours guidés (Traduction, Campagne, Création originale) |
+| `ui/guide.py` | Barre d'étapes des parcours guidés (Clipping, Traduction, Création originale) |
+| `ui/export_view.py` | Onglet Export : aperçu compact (clic : lecture / pause), nom du fichier, dossier, titre et description communs ; une colonne par réseau (aperçu téléphone, compte avec sa photo, texte propre) ; publier / programmer / sur le PC seulement ; tous les emojis avec recherche français-anglais (`ui/assets/emojis.json`, données Unicode CLDR) |
+| `ui/simple_views.py` | Écrans simplifiés Clipping (extraits à cocher, critères, début et fin réglables à la souris, suivi de la tête sur bouton-icône, un projet par extrait coché, « Suivant » vers l'onglet suivant) et Traduction (vidéo, langues, voix, textes, style des sous-titres, « Préparer » les langues) |
+| `ui/engines.py` | Moteurs de traduction et de voix : choix du menu, alternatives, coûts et conseils, saisie et test des clés (icônes réglages de Traduction) |
+| `ui/shell.py` | Dock des onglets, bulles et infobulles aux couleurs du thème (`TipFilter`), bouton des tâches |
+| `edit/translation.py` | Vidéo traduite clé en main : styles de sous-titres, voix doublée, texte du haut ; utilisé par la tâche `translate_video` |
+| `ui/color_picker.py` | Choix de couleur intégré (panneau flottant aux couleurs du thème) |
 | `ui/pages/calendar.py`, `ui/pages/analytics.py` | Calendrier éditorial, comparaisons et rétention |
 
 Tous les modèles d'IA tournent sur le PC (onnxruntime, CTranslate2) et sont téléchargés à la demande avec

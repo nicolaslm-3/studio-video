@@ -36,6 +36,7 @@ class DayCell(QFrame):
         while self.lay.count():
             w = self.lay.takeAt(0).widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
         self.day = d.isoformat()

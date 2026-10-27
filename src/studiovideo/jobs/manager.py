@@ -19,7 +19,7 @@ import sys
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..db.database import Database
@@ -46,6 +46,7 @@ class JobInfo:
     critical: bool
     created_at: str
     result: dict
+    params: dict = field(default_factory=dict)
 
 
 class JobContext:
@@ -251,7 +252,7 @@ class JobManager:
         return JobInfo(id=r["id"], kind=r["kind"], label=r["label"], status=r["status"],
                        progress=r["progress"], message=r["message"], error=r["error"],
                        critical=bool(r["critical"]), created_at=r["created_at"],
-                       result=json.loads(r["result_json"] or "{}"))
+                       result=json.loads(r["result_json"] or "{}"), params=json.loads(r["params_json"] or "{}"))
 
     def active_count(self) -> int:
         return self.db.query_one("SELECT COUNT(*) n FROM job WHERE status IN ('pending','running')")["n"]

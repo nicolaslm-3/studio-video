@@ -230,6 +230,7 @@ class AnalyticsPage(QWidget):
         while self.cards.count():
             w = self.cards.takeAt(0).widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
         measured = [r for r in rows if r["metrics"]]

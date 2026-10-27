@@ -9,7 +9,8 @@ SRC = ROOT / "src"
 
 # Fichiers de migration SQL (indispensables : la base ne peut pas être créée sans eux)
 datas = [(str(SRC / "studiovideo" / "db" / "migrations" / "*.sql"), "studiovideo/db/migrations"),
-         (str(SRC / "studiovideo" / "ui" / "icons" / "*"), "studiovideo/ui/icons")]
+         (str(SRC / "studiovideo" / "ui" / "icons" / "*"), "studiovideo/ui/icons"),
+         (str(SRC / "studiovideo" / "ui" / "assets" / "*"), "studiovideo/ui/assets")]
 binaries = []
 for name in ("ffmpeg.exe", "ffprobe.exe"):
     p = ROOT / "vendor" / "ffmpeg" / name
@@ -24,14 +25,14 @@ if ws.exists():
 
 # Transcription : moteur CTranslate2 (DLL natives), faster-whisper (modèle VAD Silero), onnxruntime, PyAV.
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
-for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers"):
+for pkg in ("faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers", "yt_dlp_ejs"):
     try:
         datas += collect_data_files(pkg)
         binaries += collect_dynamic_libs(pkg)
     except Exception as exc:  # paquet absent : l'application le signalera comme indisponible
         print(f"[spec] {pkg} : {exc}")
 asr_hidden = []
-for pkg in ("faster_whisper", "ctranslate2", "huggingface_hub"):
+for pkg in ("faster_whisper", "ctranslate2", "huggingface_hub", "yt_dlp", "yt_dlp_ejs"):
     try:
         asr_hidden += collect_submodules(pkg)
     except Exception:

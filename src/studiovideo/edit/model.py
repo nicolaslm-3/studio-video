@@ -134,6 +134,8 @@ class VideoSettings:
     # {"x", "y", "w", "h" (0..1), "mode": "blur" | "delogo" | "box"}
     masks: list = field(default_factory=list)
     auto_reframe: bool = False  # à l'export : suivre les visages sur les extraits sans recadrage calculé
+    # mise en page (edit/compose.py) : plein écran, double cadrage d'une même source, deux vidéos, incrustation
+    layout: dict = field(default_factory=dict)
 
 
 @dataclass

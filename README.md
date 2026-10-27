@@ -13,9 +13,8 @@ l'interface : aucun bouton n'est simulé.
 |---|---|
 | Concepts éditoriaux, comptes sociaux, associations (plusieurs comptes par plateforme, un compte dans plusieurs concepts) | ✅ |
 | Publication maître et publications par destination, avec héritage et exceptions, confirmation des comptes hors concept et prévention des doublons (couche données, sans interface) | ✅ |
-| Projets : 6 parcours ; Montage libre, Clipping intelligent, Traduction (guidée), Campagne (brief + conformité), Production en série, Création originale : tous actifs | ✅ |
+| Projets : 4 parcours (dock en bas), chacun avec son espace de travail et ses étapes guidées : Montage libre (tous les outils), Clipping intelligent, Traduction et adaptation, Création originale | ✅ |
 | **V2** — Parcours Traduction guidé : importer → transcrire → traduire → doubler → monter (sous-titres et voix dans la langue) → exporter | ✅ |
-| **V2** — Campagne : brief client (formats, durées, mots requis/interdits, hashtags, mentions, partenariat, date limite) et contrôle automatique de chaque export et de chaque texte de publication | ✅ |
 | Import local non destructif : glisser-déposer, plusieurs fichiers, détection des doublons, analyse FFprobe, miniatures, contrôle d'espace disque | ✅ |
 | Import par URL (yt-dlp), avec conservation de la provenance | ✅ (si yt-dlp est installé) |
 | Bibliothèque : recherche, filtres, favoris, tags, détection des fichiers manquants | ✅ |
@@ -27,7 +26,7 @@ l'interface : aucun bouton n'est simulé.
 | Mise à jour automatique (WinSparkle + Inno Setup + GitHub), retour à la version précédente | ✅ (voir [docs/UPDATES.md](docs/UPDATES.md)) |
 | Timeline : extraits, coupe, déplacement, suppression, duplication, zoom, annuler/rétablir | ✅ |
 | Recadrage 9:16 / 16:9 / 1:1 / 4:5, zoom, position, rotation, miroir, fond flou ou bandes noires | ✅ |
-| Recadrage intelligent : le cadre suit les visages (export, aperçu, production en série) | ✅ |
+| Recadrage intelligent : le cadre suit les visages (export, aperçu, export des clips) | ✅ |
 | Corrections d'image : luminosité, contraste, saturation, température, netteté | ✅ |
 | Textes et accroches : police, taille, couleur, contour, fond, position, fondu | ✅ |
 | Audio : gain, passe-haut, réduction de bruit, normalisation EBU R128 en 2 passes, limiteur, fondus | ✅ |
@@ -49,9 +48,9 @@ l'interface : aucun bouton n'est simulé.
 | **V2** — Accepter / rejeter / favoris / timecodes ; clips et timeline depuis les propositions | ✅ |
 | **V2** — Montage par le texte (décocher des phrases, aperçu de la durée) | ✅ |
 | **V2** — « Optimiser l'audio » : équilibrage des extraits et des intervenants, débruitage, compression, présence, de-esser, musique sous la voix, rapport des traitements | ✅ |
-| **V2** — Production en série : clips × formats avec les réglages du montage, sous-titres et accroche automatiques | ✅ |
+| **V2** — Export des clips (Clipping) : clips × formats × langues avec les réglages du montage, sous-titres et accroche automatiques | ✅ |
 | **V2** — Traduction des transcriptions (13 langues) : modèle de langage (hors ligne avec Ollama), DeepL, Google ; glossaire ; corrections | ✅ |
-| **V2** — Sous-titres traduits (voix d'origine conservée) et export multilingue en série | ✅ |
+| **V2** — Sous-titres traduits (voix d'origine conservée) et export multilingue des clips | ✅ |
 | **V2** — Doublage : voix de synthèse par intervenant (ElevenLabs ; Piper si installé), calage sur les phrases, voix d'origine remplacée ou gardée en fond, reprise phrase par phrase | ✅ |
 | **V2** — Séparation voix / musique sur le PC (MDX-Net, ONNX) : voix isolée, doublage sur la musique et l'ambiance d'origine | ✅ |
 | **V2** — Identification des intervenants sur le PC (empreintes vocales WeSpeaker), reportée sur les traductions | ✅ |
@@ -75,7 +74,7 @@ l'interface : aucun bouton n'est simulé.
 
 ## Raccourcis
 
-`Ctrl+1…6` espaces · `Ctrl+N` nouveau projet · `Ctrl+I` importer · `Ctrl+J` tâches.
+`Ctrl+1…7` menu (Accueil… Paramètres) · `Ctrl+N` nouveau projet · `Ctrl+I` importer · `Ctrl+J` tâches.
 Dans le lecteur : `Espace` lecture, `←/→` image par image, `I` / `O` entrée / sortie,
 `P` prévisualiser, `C` créer un clip.
 

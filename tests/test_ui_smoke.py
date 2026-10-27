@@ -61,6 +61,9 @@ def test_studio_timeline_editing_persists(window, tmp_path):
     aid = ctx.importer().import_file(vid, project_id=pid).asset_id
     w.open_project(pid)
     st = w.studio
+    assert [(g.asset_id, g.src_in, g.src_out) for g in st.tl.segments] == [(aid, 0.0, 6.0)]   # vidéo placée d'office
+    assert ctx.montage.load(pid).duration == 6.0
+    st.tl.segments = []
     st.asset_id = aid
     st.player.in_s, st.player.out_s = 1.0, 5.0
     st._add_media_to_timeline()
@@ -401,6 +404,8 @@ def test_translation_guided_project(window, tmp_path):
     pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Trad guidée", ProjectMode.TRANSLATION)
     w.open_project(pid)
     st = w.studio
+    assert st.stack.currentWidget() is st.tr_view and st.topbar.isVisibleTo(st)   # écran Traduction, en-tête commun
+    st._toggle_full(True)                                       # « Tous les outils » : éditeur, étapes guidées
     assert not st.guide.isHidden() and st.guide.next_step().key == "import"
     con = ctx.db.connect()
     con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
@@ -422,75 +427,6 @@ def test_translation_guided_project(window, tmp_path):
     assert st.tl.voice.mode == "original"                                # pas de doublage : voix d'origine
     assert st.guide.next_step().key == "export"
     assert ctx.projects.load_data(pid)["target_lang"] == "en"
-
-
-def test_campaign_project_flow(window, tmp_path):
-    from studiovideo.domain.models import ProjectMode
-    from studiovideo.edit import campaign as cp
-    from studiovideo.edit.model import Timeline
-    from studiovideo.edit.subtitles import Cue
-    from studiovideo.transcribe.model import TSegment, Transcript
-    from studiovideo.ui.campaign_dialog import BriefDialog, ComplianceDialog
-    from studiovideo.ui.publication_dialog import PublicationDialog
-    w, ctx = window
-    c = ctx.concepts.create_concept("Marque")
-    tk = ctx.concepts.create_account(Platform.TIKTOK, "Marque")
-    ctx.concepts.link(c.id, tk.id)
-    pid = ctx.projects.create(c.id, "Lancement", ProjectMode.CAMPAIGN)
-    w.open_project(pid)
-    st = w.studio
-    assert st.guide.next_step().key == "brief"
-    d = BriefDialog(ctx, pid)
-    d.name.setText("Lancement Éclair")
-    d.aspects["9:16"].setChecked(True)
-    d.max_s.setValue(60)
-    d.subs.setChecked(True)
-    d.req.setText("Boisson Éclair")
-    d.forb.setText("concurrent")
-    d.tags.setText("#eclair")
-    d.disc.setText("#pub")
-    d._save()
-    b = ctx.campaigns.brief(pid)
-    assert b.required_hashtags == ["eclair"] and b.aspects == ["9:16"]
-    con = ctx.db.connect()
-    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
-                "duration_s, width, height) VALUES (1,?,'video','s.mp4','s.mp4','fc',1,90,1920,1080)", (pid,))
-    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
-    con.execute("INSERT INTO clip(project_id, source_asset_id, name, start_s, end_s) VALUES (?,?,'Clip 1',0,30)",
-                (pid, aid))
-    ctx.transcripts.store_original(aid, Transcript([TSegment(1, 4, "Goûtez la boisson éclair"),
-                                                    TSegment(40, 45, "le concurrent")], "fr"))
-    good, bad = tmp_path / "good.mp4", tmp_path / "bad.mp4"
-    for f in (good, bad):
-        f.write_bytes(b"x")
-    tl = Timeline()
-    tl.add_segment(aid, 0, 30)
-    tl.subtitles.cues, tl.subtitles.enabled = [Cue(0, 2, "Goûtez")], True
-    ctx.montage.record_export(pid, tl, {"path": str(good), "duration": 30.0}, None)
-    tl2 = Timeline()
-    tl2.set_aspect("16:9", 1080)
-    tl2.add_segment(aid, 35, 50)
-    ctx.montage.record_export(pid, tl2, {"path": str(bad), "duration": 15.0}, None)
-    st.refresh()
-    steps = {s.key: s.done for s in st.guide.steps}
-    assert steps["brief"] and steps["import"] and steps["clips"] and steps["export"] and not steps["check"]
-    rep = {r["path"]: r for r in ctx.campaigns.report(pid)}
-    assert rep[str(good)]["summary"] == "✓ Conforme"
-    bad_rules = {c.rule for c in rep[str(bad)]["checks"] if c.ok is False}
-    assert {"Format", "Sous-titres", "Mot requis « Boisson Éclair »", "Mot interdit « concurrent »"} <= bad_rules
-    dlg = ComplianceDialog(ctx, pid)
-    assert dlg.table.rowCount() == 2 and "Lancement Éclair" in dlg.text_report()
-    # publication de la vidéo conforme : le brief contrôle le texte
-    assert st.guide.next_step().key == "check"
-    vid = rep[str(good)]["variant_id"]
-    pd = PublicationDialog(ctx, variant_id=vid)
-    pd.title.setText("Nouveau goût")
-    pd.tags.setText("#eclair")
-    pd._check()
-    assert "Mention de partenariat" in pd.warn.text()
-    pd.tags.setText("#eclair #pub")
-    pd._check()
-    assert "Brief" not in pd.warn.text()
 
 
 def test_original_creation_flow(window):
@@ -546,6 +482,7 @@ def test_reframe_flow(window, monkeypatch):
                                                              "with_face": 32})
     w.open_project(pid)
     st = w.studio
+    st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
     st.tl.add_segment(aid, 0, 8)
     st.tl.format.fit = "blur"
     st._reframe(True)
@@ -627,6 +564,7 @@ def test_remove_silences_regenerates_subtitles(window):
                                                     TSegment(6, 7, "deux", [Word(6.2, 6.8, " deux")])], "fr"))
     w.open_project(pid)
     st = w.studio
+    st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
     seg = st.tl.add_segment(aid, 0, 8)
     st.tl.subtitles.cues = [Cue(6.2, 6.8, "deux")]
     st.tl.subtitles.enabled = True
@@ -695,6 +633,7 @@ def test_timeline_drag_trims_and_moves(window):
     aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     w.open_project(pid)
     st = w.studio
+    st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
     st.tl.add_segment(aid, 2, 6)
     st.tl.add_segment(aid, 10, 14)
     txt = st.tl.add_text("Titre", 1.0, 3.0)
@@ -758,6 +697,7 @@ def test_segment_fades_in_panel_and_preview(window):
     aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     w.open_project(pid)
     st = w.studio
+    st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
     seg = st.tl.add_segment(aid, 0, 4)
     st._changed(panel=True)
     st.panel.sel_segment = seg.id
@@ -835,22 +775,186 @@ def test_projects_dialog(window, monkeypatch):
 def test_dock_parcours_and_drafts(window):
     from studiovideo.ui import theme
     w, ctx = window
-    assert set(w.dock.buttons) == set(theme.PARCOURS)
-    w.start_parcours("translation")
-    sheet = w._sheet
-    sheet.formats.button(1).setChecked(True)                  # 16:9
-    assert sheet.aspect() == "16:9"
-    sheet._create()
+    assert set(w.dock.buttons) == set(theme.PARCOURS) | {"export"}
+    w.go(0)
+    w.start_parcours("translation")                             # aucun projet du parcours : projet vierge ouvert
     pid = w.studio.project_id
     p = ctx.projects.get(pid)
     assert p["mode"] == "translation" and p["concept_name"] == "Brouillons"
-    assert w.studio.tl.format.aspect == "16:9"
+    assert w.pages.currentWidget() is w.studio
+    assert w.studio.tl.format.aspect == theme.DEFAULT_ASPECT["translation"]
     assert w.dock.buttons["translation"].isChecked()
     assert theme.current["accent"].lower() == theme.PARCOURS["translation"][2].lower()
+    w.start_parcours("translation")                             # même parcours : rien ne change
+    assert w.studio.project_id == pid
+    assert set(w.studio.format_pick.buttons) == {"16:9", "1:1", "9:16"}     # format en trois icônes
+    w.studio.format_pick.buttons["1:1"].click()
+    assert w.studio.tl.format.aspect == "1:1" and ctx.projects.is_untouched(pid)
+    assert w.studio.format_pick.value() == "1:1"
+    w.start_parcours("original")                                # un projet traverse tous les parcours
+    assert w.studio.project_id == pid and ctx.projects.get(pid)["mode"] == "original"
+    assert w.dock.buttons["original"].isChecked() and w.studio.tl.format.aspect == "1:1"
+    bid = pid
+    ctx.db.connect().execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                             "audio_tracks, duration_s, width, height) VALUES (1,?,'video','d.mp4','d.mp4','fd',1,9,"
+                             "640,360)", (bid,))
+    w.start_parcours("smart_clipping")                          # même projet, même vidéo, autre interface
+    assert w.studio.project_id == bid and w.studio.stack.currentWidget() is w.studio.clip_view
+    assert "d.mp4" in w.studio.clip_view.meta.text()
+    w.start_parcours("translation")
+    assert w.studio.project_id == bid and w.studio.tr_view.left.currentIndex() == 1
+    w.go(0)
+    w.start_parcours("original")                                # hors Studio : le projet ouvert reprend
+    assert w.studio.project_id == bid and ctx.projects.get(bid)["mode"] == "original"
+    w.studio.new_blank.emit("original")                            # bouton « + » : projet vierge du même parcours
+    nid = w.studio.project_id
+    assert nid != bid and ctx.projects.get(nid)["mode"] == "original" and ctx.projects.is_untouched(nid)
+    w.close()                                                   # fermeture : projet vierge intact non conservé
+    assert ctx.projects.get(nid) is None and ctx.projects.get(bid) is not None
+    w.show()
     w.go(0)                                                     # hors Studio : plus de parcours actif
-    assert not w.dock.buttons["translation"].isChecked()
+    assert not w.dock.buttons["original"].isChecked()
     w.drawer.navigate.emit(6)
     assert w.pages.currentWidget() is w.concepts_page
+
+
+def test_workspaces_show_only_their_tools(window):
+    from studiovideo.ui.pages.studio import LAYOUTS
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("free_edit")                               # tous les outils
+    assert st.timeline_box.isVisibleTo(st) and st.panel.isVisibleTo(st) and not st.export_card.isVisibleTo(st)
+    assert all(st.panel.isTabVisible(i) for i in range(st.panel.count()))
+    assert not st.full_btn.isVisibleTo(st) and st.guide.isHidden()
+    assert list(w.dock.buttons) == ["free_edit", "smart_clipping", "translation", "original", "texts", "export"]
+    assert w.dock.buttons["original"].dimmed and not w.dock.buttons["texts"].dimmed   # Création originale grisée
+    w.start_parcours("smart_clipping")                          # Clipping : découpage seulement
+    assert st.stack.currentWidget() is st.clip_view and not st.full_btn.isVisibleTo(st)
+    w.start_parcours("translation")
+    assert st.stack.currentWidget() is st.tr_view and st.guide.isHidden()
+    assert st.full_btn.isVisibleTo(st) and "Tous les outils" in st.full_btn.toolTip()
+    st.tr_view.open_editor.emit()                               # « Tous les outils » : montage complet
+    assert st.stack.currentWidget() is st.editor and st.timeline_box.isVisibleTo(st)
+    assert not st.export_card.isVisibleTo(st)                   # l'export a son propre onglet
+    assert "Revenir" in st.full_btn.toolTip()
+    st.full_btn.click()                                         # retour à l'écran simplifié
+    assert st.stack.currentWidget() is st.tr_view
+    w.start_parcours("texts")                                   # Textes : textes, sous-titres et export
+    assert st.stack.currentWidget() is st.editor and st.guide.isHidden()
+    assert [st.panel.tab_name(i) for i in range(st.panel.count()) if st.panel.isTabVisible(i)] == \
+        ["Textes", "Sous-titres", "Export"]
+    assert [i for i in range(st.left_tabs.count()) if st.left_tabs.isTabVisible(i)] == [0]     # import à gauche
+    assert not st.timeline_box.isVisibleTo(st)
+    assert not any(b.isVisibleTo(st) for b in (st.full_btn, st.undo_btn, st.redo_btn))
+    assert st.mplayer.note.text() == ""                         # plus de phrase sous l'aperçu
+    for mode in ("original",):
+        w.start_parcours(mode)
+        lay = LAYOUTS[mode]
+        assert st.timeline_box.isVisibleTo(st) == lay["timeline"], mode
+        assert st.export_card.isVisibleTo(st) == lay["export"], mode
+        assert st.panel.isVisibleTo(st) == bool(lay["panel"]), mode
+        assert [i for i in range(st.left_tabs.count()) if st.left_tabs.isTabVisible(i)] == sorted(lay["left"]), mode
+        assert not st.guide.isHidden(), mode                    # chaque parcours spécialisé est guidé
+        assert st.full_btn.isVisibleTo(st), mode
+        st.full_btn.click()                                     # « Tous les outils » : montage complet
+        assert st.timeline_box.isVisibleTo(st) and st.panel.isVisibleTo(st), mode
+        assert all(st.panel.isTabVisible(i) for i in range(st.panel.count())), mode
+        st.full_btn.click()
+        assert st.timeline_box.isVisibleTo(st) == lay["timeline"], mode
+    st.viewer_tabs.setCurrentIndex(1)                           # onglet masqué : le Montage reste affiché
+    assert st.viewer_tabs.currentIndex() == 0
+    assert st.guide.next_step().key == "script"
+
+
+def test_import_bar_same_in_every_tab_and_attach_existing_video(window):
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("free_edit")
+    bar = (st.import_btn, st.link_edit, st.media_btn)
+    assert st.import_btn.text() == "" and st.export_quick.text() == ""         # icônes seules
+    assert st.export_quick.property("kind") == "export"         # fond rouge de l'onglet Export
+    assert st.link_edit.placeholderText() == "" and not st.link_icon.icon().isNull()   # icône de lien seule
+    assert not hasattr(st, "doc_action") and not hasattr(st, "format_combo")    # plus de menu « … »
+    assert st.jobs_btn.isVisibleTo(st)                           # tâches : en haut
+    st._autosave()
+    assert st.save_lbl.text() != "Enregistré"
+    w.start_parcours("smart_clipping")
+    assert st.clip_view.body.currentIndex() == 0                # pas encore de vidéo : zone d'import
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,NULL,'video','e.mp4','e.mp4','fe',1,90,1920,1080)")
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.attach_asset(aid)                                        # vidéo déjà importée (Médias)
+    assert st.asset_id == aid and st.clip_view.body.currentIndex() == 1
+    assert "e.mp4" in st.clip_view.meta.text()
+    assert [(g.asset_id, g.src_out) for g in st.tl.segments] == [(aid, 90)]       # devenue la vidéo du projet
+    assert not hasattr(st.tr_view, "link")                      # plus d'import propre à Traduction
+    for mode in ("translation", "original", "texts", "free_edit", "export"):
+        w.start_parcours(mode)
+        assert all(x.isVisibleTo(st) for x in bar) == (mode != "export"), mode   # Export : pas d'import
+        assert st.project_video()["id"] == aid, mode             # la même vidéo partout
+        if mode == "original":
+            assert st.media_list.isVisibleTo(st)                # médias importés visibles (images des scènes)
+    assert st.stack.currentWidget() is st.export_view and w.dock.buttons["export"].isChecked()
+    assert not st.export_quick.isVisibleTo(st)
+
+
+def test_transcribe_button_sends_spoken_language(window, monkeypatch):
+    from studiovideo.transcribe import engines
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("translation")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','t.mp4','t.mp4','ft',1,60,1920,1080)",
+                (st.project_id,))
+    st.refresh()
+    tp = st.transcript
+    assert tp.asset_id and tp.lang == ""                        # langue affichée : texte d'origine
+    monkeypatch.setattr(engines, "available", lambda: True)
+    tp.model.clear()
+    tp.model.addItem("Small", "small")
+    tp.src_lang.setCurrentIndex(tp.src_lang.findData("fr"))
+    sent = {}
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params, **k: sent.update(kind=kind, **params) or 1)
+    tp._transcribe()
+    assert sent["kind"] == "transcribe" and sent["language"] == "fr" and sent["model"] == "small"
+
+
+def test_color_picker_popover(window):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    from studiovideo.ui.color_picker import ColorButton
+    w, _ = window
+    b = ColorButton("#FF0000")
+    got = []
+    b.picked.connect(got.append)
+    b.setParent(w)
+    b.show()
+    b.click()
+    pop = b.pop
+    assert pop.isVisible() and pop.parent() is w                # pas d'héritage du fond coloré de la pastille
+    pop.hex.setText("#00ff00")
+    pop._hex_typed("#00ff00")
+    assert b.value == "#00FF00" and got[-1] == "#00FF00"        # changement en direct
+    pop.sv._at(pop.sv.rect().topLeft())                         # coin haut gauche : blanc
+    assert b.value == "#FFFFFF"
+    QApplication.sendEvent(pop, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert not pop.isVisible() and b.value == "#FF0000"         # Échap : couleur de départ
+
+
+def test_purge_untouched_blank_projects(tmp_path):
+    ctx = build_context(tmp_path / "data")
+    blank = ctx.projects.quick_create(ctx.concepts, "free_edit", blank=True)
+    kept = ctx.projects.quick_create(ctx.concepts, "free_edit", blank=True)
+    ctx.projects.rename(kept, "Mon film")                       # renommé : c'est une modification
+    normal = ctx.projects.quick_create(ctx.concepts, "free_edit")
+    assert ctx.projects.purge_untouched() == 1
+    assert ctx.projects.get(blank) is None
+    assert ctx.projects.get(kept) is not None and ctx.projects.get(normal) is not None
+    ctx.close()
 
 
 def test_drop_video_creates_draft_with_auto_clips(window, tmp_path):
@@ -901,6 +1005,7 @@ def test_separated_music_goes_to_music_track(window, tmp_path):
     aid = ctx.importer().import_file(v, project_id=pid).asset_id
     w.open_project(pid)
     st = w.studio
+    st.tl.segments = []                                          # vidéo placée d'office : on repart à vide
     st.tl.add_segment(aid, 1.0, 3.0)
     st._changed(panel=True)
     d = ctx.stems.directory(aid)
@@ -931,3 +1036,378 @@ def test_font_picker_and_speakers_menu(window):
     assert got and got[-1] == fp.currentData()
     fp.set_family("Police Inventée")                        # police absente : ajoutée et choisie
     assert fp.currentData() == "Police Inventée"
+
+
+def test_double_framing_panel_and_live_preview(window):
+    """Double cadrage : réglages dans l'onglet Cadrage, deux vues recadrées dans l'aperçu, vue déplaçable."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QColor, QImage
+    from PySide6.QtMultimedia import QVideoFrame
+
+    from studiovideo.edit import compose
+    w, ctx = window
+    pid = ctx.projects.create(ctx.concepts.list_concepts()[0].id, "Débat")
+    con = ctx.db.connect()
+    for name, fp in (("debat.mp4", "d1"), ("jeu.mp4", "d2")):
+        con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                    "audio_tracks, duration_s, width, height) VALUES (1,?,'video',?,?,?,1,8,1920,1080)",
+                    (pid, __file__, name, fp))
+    a1, a2 = [r["id"] for r in ctx.db.query("SELECT id FROM source_asset WHERE project_id = ? ORDER BY id", (pid,))]
+    w.open_project(pid)
+    st = w.studio
+    st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
+    st.tl.add_segment(a1, 0, 8)
+    st._changed(panel=True)
+    p = st.panel
+    assert not (not p.lay_box.isHidden())
+    p.lay_kind.setCurrentIndex(p.lay_kind.findData("split"))
+    lay = compose.norm(st.tl.video.layout)
+    assert lay["kind"] == "split" and (not p.lay_box.isHidden())
+    assert not (not p.lay_second.isHidden()) and (not p.lay_swap.isHidden())      # même vidéo : pas de 2e source
+    p.lay_ratio.setValue(60)
+    p.lay_view.setCurrentIndex(1)
+    p.lay_sl["zoom"].setValue(200)
+    lay = compose.norm(st.tl.video.layout)
+    assert lay["ratio"] == 0.6 and lay["views"][1]["zoom"] == 2.0 and lay["views"][0]["zoom"] == 1.3
+    view = st.mplayer.view
+    assert view.composite and all(v.outer.isVisible() for v in view.views)
+    img = QImage(192, 108, QImage.Format_RGB32)
+    img.fill(QColor("red"))
+    view.set_frame(0, QVideoFrame(img))                                         # une image décodée, deux vues
+    assert not view.views[0].pix.pixmap().isNull() and not view.views[1].pix.pixmap().isNull()
+    W, H = st.tl.format.width, st.tl.format.height
+    assert view.views[1].rect == (0, int(H * 0.6) // 2 * 2, W, H - int(H * 0.6) // 2 * 2)
+    # fidélité : le point source au centre de la vue est celui que FFmpeg place au centre
+    SW, SH, x, y = compose.view_crop(1920, 1080, W, view.views[1].rect[3], lay["views"][1])
+    m = view.views[1].pix.transform()
+    c = m.map(QPointF((x + W / 2) * 192 / SW, (y + view.views[1].rect[3] / 2) * 108 / SH))
+    assert abs(c.x() - W / 2) < 1 and abs(c.y() - (view.views[1].rect[1] + view.views[1].rect[3] / 2)) < 1
+    before = compose.norm(st.tl.video.layout)["views"][0]["cx"]
+    view._drag = (0, QPointF(500, 300), *compose.view_crop(1920, 1080, W, view.views[0].rect[3],
+                                                          lay["views"][0])[2:])
+
+    class Ev:
+        def __init__(self, x, y):
+            self._p = view.mapFromScene(QPointF(x, y))
+
+        def position(self):
+            return QPointF(self._p)
+    view.mouseMoveEvent(Ev(400, 300))                                           # glisser vers la gauche
+    view.mouseReleaseEvent(None)
+    after = compose.norm(st.tl.video.layout)["views"][0]["cx"]
+    assert after > before                                                       # le cadre part vers la droite
+    assert abs(p.lay_sl["cx"].value() / 100 - compose.norm(st.tl.video.layout)["views"][
+        p.lay_view.currentIndex()]["cx"]) < 0.011                               # panneau à jour
+    p.lay_kind.setCurrentIndex(p.lay_kind.findData("split2"))
+    lay = compose.norm(st.tl.video.layout)
+    assert lay["asset2"] == a2 and (not p.lay_second.isHidden()) and (not p.lay_audio.isHidden())
+    assert view.second_size == (1920, 1080)
+    p.lay_kind.setCurrentIndex(p.lay_kind.findData("single"))
+    assert not view.composite and not (not p.lay_box.isHidden())
+    st._autosave()
+    assert ctx.projects.load_data(pid)["timeline"]["video"]["layout"]["kind"] == "single"
+
+
+def test_clipping_screen_moments_and_generation(window, monkeypatch):
+    """Écran Clipping : critères demandés pendant la transcription (explication au survol), extraits à cocher,
+    début et fin à la souris, suivi de la tête sur demande, un projet par extrait coché, puis Export."""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QContextMenuEvent, QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    from studiovideo.ai.highlights import Candidate, Request
+    from studiovideo.jobs.manager import JobInfo
+    from studiovideo.transcribe.model import TSegment, Transcript
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("smart_clipping")
+    cv, pid = st.clip_view, st.project_id
+    assert "Importe" in cv.b_title.text() and cv.b_action.isVisibleTo(cv)
+    assert cv.import_extra() == {"auto_clips": True}            # import : transcription puis extraits, d'office
+    assert st._import_extra() == {"auto_clips": True}           # même réglage depuis l'en-tête commun
+    assert [lb.text() for lb in cv.step_lbls] == ["Vidéo", "Transcription", "Sélection", "Vidéo"]
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'debat.mp4','fd',1,300,1920,1080)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.refresh()
+    assert [(g.asset_id, g.src_out) for g in st.tl.segments] == [(aid, 300)]      # vidéo entière dans le montage
+    assert cv.body.currentIndex() == 1 and cv.left_stack.currentIndex() == 1   # question des critères
+    assert "Politique" in cv.ask_note.text() and not cv.ask_go.isEnabled()     # pas encore transcrite
+    assert "rire" in cv.ask_crit.cats["humour"].toolTip() and "contradiction" in cv.ask_crit.cats["debat"].toolTip()
+    cv.ask_crit.cats["humour"].setChecked(True)                 # choisi pendant la transcription
+    assert ctx.projects.load_data(pid)["clip_criteria"]["categories"] == ["humour"]
+    assert cv.crit.cats["humour"].isChecked()                   # même choix dans la colonne de droite
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 5, "Bonjour", [])], "fr", "t"))
+    sent = []
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params)) or
+                        900 + len(sent))
+    cv.refresh()
+    assert "Cherche les extraits" in cv.b_title.text() and cv.ask_go.isEnabled()
+    cv._find()
+    assert sent[-1][0] == "find_highlights" and sent[-1][1]["request"]["categories"] == ["humour"]
+    ids = ctx.candidates.replace_proposals(pid, aid, [
+        Candidate(start=10, end=40, subject="la dette", category="debat", score=91, rationale="Désaccord net",
+                  hook="Ils ne sont pas d'accord"),
+        Candidate(start=60, end=95, subject="le chômage", category="politique", score=64, rationale="Chiffres",
+                  hook=""),
+        Candidate(start=120, end=150, subject="les retraites", category="politique", score=60, rationale="Débat",
+                  hook="Et les retraites ?")], Request())
+    sent.clear()
+    cv.refresh()
+    assert list(cv.cards) == ids and cv.left_stack.currentIndex() == 0 and "Coche" in cv.b_title.text()
+    assert not cv.gen.isEnabled()
+    texts = [lb.text() for lb in cv.cards[ids[0]].findChildren(type(cv.meta))]
+    assert "la dette" in texts and not any("/10" in t for t in texts)          # pas de note sur 10
+    assert sent == [] and not cv.follow.isChecked()             # suivi de la tête : désactivé par défaut
+    assert cv.follow.text() == "" and "parle" in cv.follow.toolTip()         # icône seule, phrase au survol
+    lay = cv.player.ctr                                         # à gauche des zones TikTok / Reels, même taille
+    assert lay.indexOf(cv.follow) == lay.indexOf(cv.player.zone_btn) - 1
+    assert cv.follow.size() == cv.player.zone_btn.size()
+    assert not hasattr(cv, "title_edit") and not hasattr(cv, "caption") and not hasattr(cv, "hook")
+    assert cv.meta.parent() is not cv.banner.parent()           # « Vidéo source » : en bas de la colonne d'outils
+    assert "Vidéo source" in cv.meta.text()
+    cv.follow.click()                                           # bouton : analyse des visages
+    assert ctx.projects.load_data(pid)["clip_criteria"]["reframe"] is True
+    assert [k for k, _ in sent] == ["reframe"] and sent[0][1]["candidate_id"] == ids[0]
+    assert "visages" in cv.frame_note.text()
+    cv.follow.click()
+    cv.cards[ids[1]].box.setChecked(True)                       # cocher = garder
+    cv.cards[ids[2]].box.setChecked(True)
+    cv.refresh()
+    assert cv.gen.isEnabled() and cv.gen.text() == "Créer 2 vidéo(s)" and "Crée 2" in cv.b_title.text()
+    cv._select(ids[1])
+    assert cv.in_s.value() == 60 and cv.out_s.value() == 95 and cv.fin_lbl.text() == "Fin · 35 s"
+    assert cv.player.tl.format.aspect == "9:16" and cv.player.tl.duration == 35   # aperçu du clip seul
+
+    def mouse(kind, x):
+        ev = QMouseEvent(kind, QPointF(5, 5), QPointF(x, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        QApplication.sendEvent(cv.in_s.val, ev)
+    mouse(QEvent.MouseButtonPress, 100)                         # glisser vers la droite : le début avance
+    mouse(QEvent.MouseMove, 140)
+    mouse(QEvent.MouseButtonRelease, 140)
+    assert abs(ctx.candidates.get(ids[1])["start_s"] - 62.0) < 1e-6        # 40 px = 20 crans de 0,1 s
+    cv.out_s.plus.click()                                       # + : 0,5 s de plus
+    assert abs(ctx.candidates.get(ids[1])["end_s"] - 95.5) < 1e-6
+    cv.player.t = 3.0                                           # « Début ici » selon la lecture
+    cv.here_in.click()
+    assert abs(ctx.candidates.get(ids[1])["start_s"] - 65.0) < 1e-6
+    ctx.candidates.set_hook(ids[1], "Le chômage en chiffres")
+    cv._create()                                                # un projet par extrait coché
+    data = ctx.projects.load_data(pid)
+    assert data["clip_of"] == ids[1] and data["clip_projects"][str(ids[1])] == pid
+    seg = st.tl.segments[0]
+    assert (seg.asset_id, seg.src_in, seg.src_out) == (aid, 65.0, 95.5)    # la vidéo du projet = l'extrait
+    assert st.tl.texts[0].text == "Le chômage en chiffres" and st.tl.format.aspect == "9:16"
+    other = data["clip_projects"][str(ids[2])]
+    assert other != pid and ctx.projects.get(other)["name"] == "les retraites"
+    ot = ctx.montage.load(other)
+    assert (ot.segments[0].src_in, ot.segments[0].src_out) == (120, 150) and ot.texts[0].text == "Et les retraites ?"
+    assert [r["state"] for r in ctx.candidates.list(other)] == ["accepted"]      # son extrait, déjà choisi
+    cv.refresh()
+    assert "prête" in cv.b_title.text() and not cv.gen.isVisibleTo(cv) and cv.next.isVisibleTo(cv)
+    assert cv.next.go.text() == "Suivant : Traduction et adaptation"
+    tags = {c: [lb.text() for lb in card.findChildren(type(cv.meta))] for c, card in cv.cards.items()}
+    assert "Vidéo de ce projet" in tags[ids[1]] and "Vidéo créée" in tags[ids[2]]
+    cv.out_s.minus.click()                                      # l'extrait réglé : la vidéo du projet suit
+    assert st.tl.segments[0].src_out == 95.0
+    cv.on_job(JobInfo(id=950, kind="reframe", label="", status="succeeded", progress=1, message="", error="",
+                      critical=False, created_at="", result={"keys": [[65.0, 0.3], [95.0, 0.7]]},
+                      params={"project_id": pid, "candidate_id": ids[1], "src_in": 65.0, "src_out": 95.0,
+                              "asset_id": aid}))
+    assert ctx.projects.load_data(pid)["clip_reframe"][str(ids[1])]["keys"] == [[65.0, 0.3], [95.0, 0.7]]
+    calls = []                                                  # clic droit sur un projet : renommer, supprimer
+    monkeypatch.setattr(st, "project_menu", lambda *a: calls.append(a))
+    item = cv.projects.itemAt(0).widget()
+    QApplication.sendEvent(item, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(3, 3), QPoint(30, 30)))
+    assert calls and calls[0][0] == item.pid and calls[0][1] == "smart_clipping"
+    acts = cv.next.more.menu().actions()                        # la flèche : les autres onglets
+    assert [a.text() for a in acts] == ["Traduction et adaptation", "Textes", "Montage libre", "Export"]
+    acts[3].trigger()                                           # vers Export
+    assert st.stack.currentWidget() is st.export_view and w.dock.buttons["export"].isChecked()
+    w.start_parcours("smart_clipping")
+    cv.next.go.click()                                          # « Suivant » : la même vidéo, dans Traduction
+    assert w.dock.buttons["translation"].isChecked() and st.stack.currentWidget() is st.tr_view
+    assert st.tr_view.player.tl.duration == 30.0 and st.tr_view.player.tl.format.aspect == "9:16"
+
+
+def test_delete_and_rename_project_from_list(window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("smart_clipping")
+    a = st.project_id
+    ctx.projects.rename(a, "Premier")
+    st.new_blank.emit("smart_clipping")
+    b = st.project_id
+    ctx.projects.rename(b, "Second")
+    ctx.db.connect().execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                             "audio_tracks, duration_s, width, height) VALUES (1,?,'video','x.mp4','x.mp4','fx',1,9,"
+                             "640,360)", (b,))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    assert st.delete_project(b, "smart_clipping")               # projet ouvert supprimé : le suivant s'ouvre
+    assert ctx.projects.get(b) is None and st.project_id == a
+    assert st.stack.currentWidget() is st.clip_view
+    names = [st.clip_view.projects.itemAt(i).widget() for i in range(st.clip_view.projects.count())]
+    assert [it.pid for it in names] == [a]
+
+
+def test_translation_screen_generate(window, monkeypatch):
+    """Écran Traduction : langues, style des sous-titres, aperçu sur la vidéo du projet, « Préparer · N
+    langues » (sans export : l'onglet Export fait la vidéo de la langue choisie)."""
+    from studiovideo.jobs.manager import JobInfo
+    from studiovideo.transcribe.model import TSegment, Transcript
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("translation")
+    tv, pid = st.tr_view, st.project_id
+    assert tv.left.currentIndex() == 0 and not tv.go.isEnabled()          # pas de vidéo
+    assert not hasattr(tv, "caption")                                     # légende : onglet Export
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'court.mp4','fc',1,30,1080,1920)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 4, "Bonjour à tous", [])], "fr", "t"))
+    st.refresh()
+    assert st.tl.format.aspect == "9:16"                                  # format de la vidéo d'origine
+    assert tv.left.currentIndex() == 1 and not tv.chips["fr"].isEnabled()      # langue d'origine
+    assert "Français détecté" in tv.video_lbl.text()
+    assert tv.engine.currentData() == "auto" and "Automatique" in tv.engine.currentText()   # gratuit par défaut
+    ctx.settings.set("llm", {"kind": "ollama", "model": "m"})
+    tv.refresh()
+    assert [tv.engine.itemData(i) for i in range(tv.engine.count())][:2] == ["auto", "llm"]
+    tv.chips["de"].setChecked(True)
+    assert tv.go.isEnabled() and tv.go.text() == "Préparer  ·  2 langues"      # anglais coché par défaut
+    next(b for b in tv.presets.buttons() if b.property("preset") == "yellow").setChecked(True)
+    tv.top_text.setText("Recette facile")
+    tv._preview()
+    assert tv.player.tl.subtitles.style.color == "#FFD54A" and tv.player.tl.format.aspect == "9:16"
+    assert tv.player.tl.texts[0].text == "Recette facile"
+    assert ctx.projects.load_data(pid)["translate_ui"]["preset"] == "yellow"   # choix gardés dans le projet
+    sent = []
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
+                        or 77)
+    tv._go()
+    kind, params, kw = sent[0]
+    assert kind == "translate_video" and params["languages"] == ["en", "de"] and params["export"] is False
+    assert params["preset"] == "yellow" and params["top_text"] == "Recette facile" and params["voice"] is None
+    assert params["timeline"]["segments"][0]["asset_id"] == aid                # le montage du projet
+    assert tv.go.text() == "Annuler"
+    tv.on_job(JobInfo(id=77, kind="translate_video", label="", status="succeeded", progress=1, message="", error="",
+                      critical=False, created_at="", params=params,
+                      result={"ready": ["en", "de"], "top_texts": {"en": "Easy recipe", "de": "Einfaches Rezept"},
+                              "masks": [], "dubbed": False, "keep_music": True}))
+    tr = ctx.projects.load_data(pid)["translations"]
+    assert tr["ready"] == ["de", "en"] and tr["top_texts"]["en"] == "Easy recipe" and tr["preset"] == "yellow"
+    tv.refresh()
+    assert tv.next.isVisibleTo(tv) and tv.next.go.text() == "Suivant : Textes"   # vers l'onglet suivant
+
+
+def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path):
+    """Onglet Export : titre et description communs, un texte par réseau (TikTok : titre en tête de la
+    description), aperçu téléphone, puis export et brouillon / programmation / publication."""
+    from PySide6.QtCore import QDateTime
+
+    from studiovideo.domain.models import Platform
+    from studiovideo.jobs.manager import JobInfo
+    from studiovideo.transcribe.model import TSegment, Transcript
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("free_edit")
+    pid = st.project_id
+    p = ctx.projects.get(pid)
+    yt = ctx.concepts.create_account(Platform.YOUTUBE, "machaine")
+    tk = ctx.concepts.create_account(Platform.TIKTOK, "moncompte")
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'x.mp4','fx',1,20,1080,1920)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.refresh()
+    st.export_quick.click()                                     # « Exporter » mène à l'onglet Export
+    ev = st.export_view
+    assert st.stack.currentWidget() is ev and w.dock.buttons["export"].isChecked()
+    assert list(ev.nets) == ["youtube", "tiktok", "facebook", "instagram"]    # une colonne par réseau
+    assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet
+    assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
+    assert not ev.version_row.isVisibleTo(ev)                   # pas de langue préparée : pas de choix
+    assert ev.file_name.text() == p["name"] and ev.act_local.isChecked()      # par défaut : sur le PC
+    assert not hasattr(ev, "act_draft") and not hasattr(ev, "tabs")
+    assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
+    acc = ev.nets["youtube"].account
+    assert acc.count() == 1 and not acc.itemIcon(0).isNull()    # pastille du compte
+    ev.title.setText("Le vrai chiffre")
+    ev.desc.setPlainText("Ce qu'on ne vous dit pas #politique")
+    yt_tab, tk_tab = ev.nets["youtube"], ev.nets["tiktok"]
+    assert yt_tab.title.text() == "Le vrai chiffre" and yt_tab.text.toPlainText() == "Ce qu'on ne vous dit pas #politique"
+    assert tk_tab.title_row.isHidden() and tk_tab.text.toPlainText() == \
+        "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"               # TikTok : titre puis description
+    assert not ev.nets["facebook"].on.isEnabled()               # pas de compte Facebook : signalé
+    assert ev.nets["facebook"].no_account.isVisibleTo(ev.nets["facebook"])
+    tk_tab.text.setPlainText("Texte rien que pour TikTok 🔥")      # texte propre au réseau
+    ev.desc.setPlainText("Nouvelle description")
+    assert tk_tab.text.toPlainText() == "Texte rien que pour TikTok 🔥" and tk_tab.reset.isVisibleTo(tk_tab)
+    assert yt_tab.text.toPlainText() == "Nouvelle description"
+    ev.nets["youtube"].text.setFocus()
+    from studiovideo.ui.export_view import EmojiButton
+    eb = next(b for b in ev.findChildren(EmojiButton) if b.target is ev.title)
+    eb.insert("🔥")                                              # menu d'emojis
+    assert "🔥" in ev.title.text()
+    ui = ctx.projects.load_data(pid)["export_ui"]
+    assert ui["nets"]["tiktok"]["custom"] and ui["nets"]["tiktok"]["account"] == tk.id
+    sent = []
+    real_submit = ctx.jobs.submit
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
+                        or 500 + len(sent))
+    ev.file_name.setText("Mon export : final")                  # nom et dossier choisis
+    ev.folder = str(tmp_path)
+    ev._changed()
+    ev._go()                                                    # sur le PC seulement : aucune publication
+    kind, params, kw = sent[-1]
+    assert kind == "export_timeline" and params["dest"] == str(tmp_path / "Mon export   final.mp4")
+    pend = ctx.projects.load_data(pid)["export_pending"]
+    assert pend["action"] == "local" and pend["nets"] == {}
+    (tmp_path / "Mon export   final.mp4").write_bytes(b"x")
+    ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
+                      error="", critical=True, created_at="", params=params,
+                      result={"path": str(tmp_path / "Mon export   final.mp4")}))
+    data = ctx.projects.load_data(pid)
+    assert "enregistrée" in data["export_last"]["summary"] and "master_id" not in data["export_last"]
+    assert ev.open_dir.isVisibleTo(ev)
+    ev.file_name.setText("")
+    ev.folder = str(tmp_path)
+    ev.act_schedule.setChecked(True)
+    ev.when.setDateTime(QDateTime.currentDateTime().addDays(2))
+    assert ev.go.text().startswith("Exporter et programmer") and ev.go.isEnabled()
+    ev._go()
+    kind, params, kw = sent[-1]
+    assert kind == "export_timeline" and kw.get("critical") and params["project_id"] == pid
+    pend = ctx.projects.load_data(pid)["export_pending"]
+    assert pend["action"] == "schedule" and set(pend["nets"]) == {"youtube", "tiktok"}
+    out = tmp_path / "v.mp4"
+    out.write_bytes(b"x")
+    vid = ctx.montage.record_export(pid, st.tl, {"path": str(out)}, None)
+    ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
+                      error="", critical=True, created_at="", params=params,
+                      result={"path": str(out), "variant_id": vid}))
+    data = ctx.projects.load_data(pid)
+    assert "export_pending" not in data and "programmée" in data["export_last"]["summary"]
+    pubs = {pb.account.platform.value: pb for pb in ctx.publications.list_for_master(data["export_last"]["master_id"])}
+    assert set(pubs) == {"youtube", "tiktok"}
+    assert pubs["youtube"].title.startswith("Le vrai chiffre") and pubs["youtube"].description == "Nouvelle description"
+    assert pubs["tiktok"].description == "Texte rien que pour TikTok 🔥" and pubs["tiktok"].title == ""
+    assert all(pb.status.value == "scheduled_local" for pb in pubs.values())     # programmées (Calendrier)
+    assert p["concept_id"] and yt.id
+    monkeypatch.setattr(ctx.jobs, "submit", real_submit)
+
+
+def test_llm_model_is_a_dropdown(window, monkeypatch):
+    from studiovideo.ai import highlights as hl
+    w, ctx = window
+    sp = w.settings_page
+    monkeypatch.setattr(hl, "check_llm", lambda kind, url="", key="": ["gpt-4o-mini", "tts-1", "gpt-4o"])
+    assert not sp.llm_model.isEditable()                        # rien à taper
+    sp.llm_kind.setCurrentIndex(sp.llm_kind.findData("openai"))   # la liste se remplit d'elle-même
+    assert [sp.llm_model.itemText(i) for i in range(sp.llm_model.count())] == ["gpt-4o", "gpt-4o-mini"]
+    sp.llm_model.setCurrentText("gpt-4o-mini")
+    sp._llm_save()
+    assert ctx.settings.get("llm", None)["model"] == "gpt-4o-mini"

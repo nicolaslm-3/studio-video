@@ -172,3 +172,34 @@ def test_cancel_during_process_launch_is_not_lost(app, monkeypatch):
     holder["jid"] = app.jobs.submit("proc2", "Processus")
     assert wait(app.jobs, holder["jid"]).status == "cancelled"
     assert time.time() - t0 < 5
+
+
+@needs_ffmpeg
+def test_import_starts_transcription_automatically(app, sample_video, monkeypatch, tmp_path):
+    from studiovideo.transcribe import engines
+
+    def copy(n):
+        p = tmp_path / f"v{n}.mp4"
+        p.write_bytes(sample_video.read_bytes() + bytes(n))
+        return str(p)
+
+    def imp(n):
+        j = wait(app.jobs, app.jobs.submit("import_file", "Import", {"path": copy(n)}))
+        assert j.status == "succeeded", j.error
+        return j
+
+    got = []
+    app.jobs.register("transcribe", lambda ctx, p: got.append(p) or {"asset_id": p["asset_id"], "segments": 0})
+    monkeypatch.setattr(engines, "available", lambda: True)
+    monkeypatch.setattr(engines, "installed_models", lambda root: [])
+    j = imp(1)
+    assert "aucun modèle" in j.result["warning"] and not got          # signalé à l'utilisateur, rien d'inventé
+    monkeypatch.setattr(engines, "installed_models", lambda root: ["tiny", "base"])
+    j = imp(2)
+    assert "warning" not in j.result
+    t = wait(app.jobs, next(x for x in app.jobs.list() if x.kind == "transcribe").id)
+    assert t.status == "succeeded" and t.params["asset_id"] == j.result["asset_id"]
+    assert got[-1]["model"] == "base" and got[-1]["auto"] and got[-1].get("language") is None   # langue détectée
+    app.settings.set("auto_transcribe", False)
+    imp(3)
+    assert app.jobs.wait_idle(timeout=5) and len(got) == 1

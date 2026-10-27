@@ -69,7 +69,7 @@ class PlayerWidget(QWidget):
         ctr.addWidget(tool("step-back", "Image précédente (←)", lambda: self.step(-1)))
         ctr.addWidget(self.play_btn)
         ctr.addWidget(tool("step-forward", "Image suivante (→)", lambda: self.step(1)))
-        self.tc = label("0:00.000 / 0:00", "muted")
+        self.tc = label("0:00.0 / 0:00", "muted")
         self.tc.setMinimumWidth(118)
         ctr.addSpacing(6)
         ctr.addWidget(self.tc)

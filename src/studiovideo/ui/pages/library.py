@@ -36,7 +36,7 @@ class LibraryPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(36, 30, 36, 8)
         lay.setSpacing(14)
-        head = PageHeader("Extraits")
+        head = PageHeader("Médias")
         head.add_action(button("URL", "ghost", "Importer depuis une adresse web", on_click=lambda: import_url(self.app, self),
                                icon="link"))
         head.add_action(button("Importer", "primary", "Importer des fichiers (Ctrl+I)",
@@ -203,6 +203,7 @@ class LibraryPage(QWidget):
             it = lay.takeAt(0)
             w = it.widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
             elif it.layout():
@@ -255,7 +256,7 @@ class LibraryPage(QWidget):
         m.addAction("Afficher dans l'explorateur", lambda: reveal(self.app.library.get(aid)["path"]))
         m.addAction("Modifier les tags…", lambda: self._tags(aid))
         m.addSeparator()
-        m.addAction("Retirer d'Extraits", lambda: self._remove(aid))
+        m.addAction("Retirer de Médias", lambda: self._remove(aid))
         m.exec(self.table.viewport().mapToGlobal(pos))
 
     def _relink(self, aid: int) -> None:
@@ -303,7 +304,7 @@ class LibraryPage(QWidget):
             self.refresh()
 
     def _remove(self, aid: int) -> None:
-        if QMessageBox.question(self, "Retirer", "Retirer ce média d'Extraits ?\n"
+        if QMessageBox.question(self, "Retirer", "Retirer ce média de Médias ?\n"
                                 "Le fichier sur le disque ne sera pas supprimé.") == QMessageBox.Yes:
             self.app.library.remove(aid)
             self.refresh()

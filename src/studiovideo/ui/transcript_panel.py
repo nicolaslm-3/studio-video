@@ -43,12 +43,12 @@ class TranscriptPanel(QWidget):
         row = QHBoxLayout()
         self.model = QComboBox()
         self.model.setToolTip("Modèle de reconnaissance vocale (téléchargeable dans Paramètres)")
-        self.lang = QComboBox()
-        self.lang.addItem("Langue auto", None)
+        self.src_lang = QComboBox()                  # langue parlée (self.lang : langue affichée)
+        self.src_lang.addItem("Langue auto", None)
         for code, name in LANGUAGES:
-            self.lang.addItem(name, code)
+            self.src_lang.addItem(name, code)
         row.addWidget(self.model, 1)
-        row.addWidget(self.lang, 1)
+        row.addWidget(self.src_lang, 1)
         lay.addLayout(row)
         row2 = QHBoxLayout()
         self.go = button("Transcrire", "primary", on_click=self._transcribe)
@@ -259,7 +259,7 @@ class TranscriptPanel(QWidget):
         self.app.settings.set("whisper_model", model)
         self.job_id = self.app.jobs.submit("transcribe", f"Transcription · {a['file_name']}",
                                            {"asset_id": self.asset_id, "model": model,
-                                            "language": self.lang.currentData()})
+                                            "language": self.src_lang.currentData()})
         self.status.setText("Transcription en cours… (suivi dans le panneau des tâches)")
         self._update_buttons()
 
@@ -296,6 +296,10 @@ class TranscriptPanel(QWidget):
                 self.set_asset(self.asset_id)
                 self.changed.emit(job.result.get("asset_id") if job.result else self.asset_id)
             return
+        if job.kind == "transcribe" and self.job_id is None and job.status in ("pending", "running") \
+                and job.params.get("asset_id") == self.asset_id:
+            self.job_id = job.id                    # transcription lancée d'office à l'import : suivie ici
+            self._update_buttons()
         if job.id != self.job_id:
             return
         if job.status == "running":
@@ -305,6 +309,9 @@ class TranscriptPanel(QWidget):
             self.job_id = None
             if job.status == "failed":
                 QMessageBox.warning(self, "Transcription", job.error[:800])
+            elif (job.result or {}).get("segments") == 0:
+                self.status.setText("Aucune parole exploitable n'a été détectée dans ce média.")
+                return
             aid = job.result.get("asset_id") if job.result else None
             if aid:
                 self.changed.emit(aid)

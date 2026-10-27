@@ -22,7 +22,7 @@ def _account(row: sqlite3.Row) -> SocialAccount:
     return SocialAccount(id=row["id"], workspace_id=row["workspace_id"],
                          platform=Platform(row["platform"]), name=row["name"],
                          public_url=row["public_url"], language=row["language"],
-                         connection_status=row["connection_status"])
+                         connection_status=row["connection_status"], avatar_path=row["avatar_path"] or "")
 
 
 class ConceptService:

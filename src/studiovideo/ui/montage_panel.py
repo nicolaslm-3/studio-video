@@ -5,14 +5,16 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import (QLabel, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QMessageBox,
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (QLabel, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QMessageBox,
                                QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
                                QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from ..core import AppContext
+from ..edit import compose
 from ..edit.model import ASPECTS, Timeline
 from ..media.ffmpeg import fmt_timecode
+from .color_picker import ColorButton
 from .widgets import tool, button, label
 
 FIT_MODES = [("fill", "Remplir (recadré)"), ("blur", "Image entière + fond flou"), ("fit", "Image entière + bandes noires")]
@@ -34,26 +36,6 @@ def _set(obj, path: str, value) -> None:
     for p in head:
         obj = getattr(obj, p)
     setattr(obj, last, value)
-
-
-class ColorButton(QPushButton):
-    picked = Signal(str)
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(40, 24)
-        self.value = "#FFFFFF"
-        self.clicked.connect(self._pick)
-
-    def set(self, v: str) -> None:
-        self.value = v
-        self.setStyleSheet(f"background:{v}; border:1px solid rgba(128,128,128,.6); border-radius:5px;")
-
-    def _pick(self) -> None:
-        c = QColorDialog.getColor(QColor(self.value), self, "Couleur")
-        if c.isValid():
-            self.set(c.name())
-            self.picked.emit(c.name())
 
 
 POPULAR_FONTS = ["Segoe UI", "Segoe UI Black", "Arial", "Arial Black", "Impact", "Bahnschrift", "Montserrat",
@@ -315,6 +297,7 @@ class MontagePanel(QTabWidget):
             self._load_music_choices()
             self._load_voice_choices()
             self._load_masks()
+            self._load_layout()
             self.reload_reframe()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
@@ -538,6 +521,7 @@ class MontagePanel(QTabWidget):
         f.addRow("Images / seconde", b.combo("format.fps", [(24.0, "24"), (25.0, "25"), (30.0, "30"),
                                                             (50.0, "50"), (60.0, "60")]))
         f.addRow("Remplissage", b.combo("format.fit", FIT_MODES))
+        self._layout_section(f)
         f.addRow(label("Cadrage", "h2"))
         f.addRow("Zoom", b.slider("video.zoom", 1.0, 3.0))
         f.addRow("Position horizontale", b.slider("video.offset_x", -1.0, 1.0))
@@ -603,6 +587,208 @@ class MontagePanel(QTabWidget):
         f.addRow(label("Le miroir ou un filtre ne rendent pas un contenu « original » : vérifiez vos droits "
                        "sur les sources.", "faint", wrap=True))
         return w
+
+    # -- mise en page (double cadrage, deux vidéos, incrustation) ------------------------
+    def _layout_section(self, f: QFormLayout) -> None:
+        f.addRow(label("Mise en page", "h2"))
+        self.lay_kind = QComboBox()
+        for k, n in compose.KINDS.items():
+            self.lay_kind.addItem(n, k)
+        self.lay_kind.setToolTip("Double cadrage : la même vidéo en deux vues indépendantes (ex. intervenant A en "
+                                 "haut, B en bas), synchronisées, avec un seul son.")
+        self.lay_kind.currentIndexChanged.connect(self._lay_kind)
+        f.addRow("Disposition", self.lay_kind)
+        self.lay_box = QWidget()
+        g = QFormLayout(self.lay_box)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.lay_view = QComboBox()
+        self.lay_view.currentIndexChanged.connect(lambda _i: self._reload_layout())
+        g.addRow("Vue réglée", self.lay_view)
+        self.lay_sl = {}
+        for key, name, lo, hi in (("zoom", "Zoom de la vue", 100, 400), ("cx", "Position horizontale", 0, 100),
+                                  ("cy", "Position verticale", 0, 100)):
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(lo, hi)
+            sl.valueChanged.connect(lambda v, k=key: self._lay_view_set(k, v))
+            self.lay_sl[key] = sl
+            g.addRow(name, sl)
+        self.lay_ratio = QSpinBox()
+        self.lay_ratio.setRange(int(compose.RATIO_MIN * 100), int(compose.RATIO_MAX * 100))
+        self.lay_ratio.setSuffix(" % en haut")
+        self.lay_ratio.setKeyboardTracking(False)
+        self.lay_ratio.valueChanged.connect(lambda v: self._lay_set("ratio", v / 100))
+        self.lay_ratio_row = QWidget()
+        rr = QHBoxLayout(self.lay_ratio_row)
+        rr.setContentsMargins(0, 0, 0, 0)
+        rr.addWidget(self.lay_ratio, 1)
+        for a in (50, 60, 40):
+            rr.addWidget(button(f"{a}/{100 - a}", "ghost", on_click=lambda a=a: self.lay_ratio.setValue(a)))
+        g.addRow("Partage", self.lay_ratio_row)
+        self.lay_swap = button("Inverser haut et bas",
+                               on_click=lambda: self._lay_set("swap", not self._lay()["swap"], reload=True))
+        g.addRow(self.lay_swap)
+        self.lay_second = QComboBox()
+        self.lay_second.currentIndexChanged.connect(
+            lambda _i: self._lay_set("asset2", self.lay_second.currentData(), reload=True))
+        g.addRow("Seconde vidéo", self.lay_second)
+        self.lay_offset = QDoubleSpinBox()
+        self.lay_offset.setRange(-36000, 36000)
+        self.lay_offset.setDecimals(2)
+        self.lay_offset.setSingleStep(0.1)
+        self.lay_offset.setSuffix(" s")
+        self.lay_offset.setKeyboardTracking(False)
+        self.lay_offset.setToolTip("Décalage de la seconde vidéo par rapport à la principale")
+        self.lay_offset.valueChanged.connect(lambda v: self._lay_set("offset", round(v, 2)))
+        g.addRow("Décalage", self.lay_offset)
+        self.lay_audio = QComboBox()
+        for k, n in compose.AUDIO.items():
+            self.lay_audio.addItem(n, k)
+        self.lay_audio.currentIndexChanged.connect(lambda _i: self._lay_set("audio", self.lay_audio.currentData()))
+        g.addRow("Son conservé", self.lay_audio)
+        self.lay_pip = {}
+        for key, name, lo, hi in (("w", "Largeur de l'incrustation", 10, 100),
+                                  ("h", "Hauteur de l'incrustation", 6, 100),
+                                  ("x", "Incrustation : gauche", 0, 90), ("y", "Incrustation : haut", 0, 94)):
+            sp = QSpinBox()
+            sp.setRange(lo, hi)
+            sp.setSuffix(" %")
+            sp.setKeyboardTracking(False)
+            sp.valueChanged.connect(lambda v, k=key: self._lay_pip_set(k, v))
+            self.lay_pip[key] = sp
+            g.addRow(name, sp)
+        self.lay_border = QSpinBox()
+        self.lay_border.setRange(0, 40)
+        self.lay_border.setSuffix(" px")
+        self.lay_border.setKeyboardTracking(False)
+        self.lay_border.valueChanged.connect(lambda v: self._lay_set("border", int(v)))
+        self.lay_border_col = ColorButton("#FFFFFF")
+        self.lay_border_col.picked.connect(lambda c: self._lay_set("border_color", c))
+        self.lay_border_row = QWidget()
+        br = QHBoxLayout(self.lay_border_row)
+        br.setContentsMargins(0, 0, 0, 0)
+        br.addWidget(self.lay_border, 1)
+        br.addWidget(self.lay_border_col)
+        g.addRow("Contour", self.lay_border_row)
+        self.lay_note = label("", "faint", wrap=True)
+        g.addRow(self.lay_note)
+        f.addRow(self.lay_box)
+
+    def _lay(self) -> dict:
+        return compose.norm(self.tl.video.layout)
+
+    def _reload_layout(self) -> None:
+        was = self._loading
+        self._loading = True
+        try:
+            self._load_layout()
+        finally:
+            self._loading = was
+
+    def _lay_commit(self, lay: dict, reload: bool = False) -> None:
+        self.tl.video.layout = compose.norm(lay)
+        if reload:
+            self._reload_layout()
+        self.changed.emit("video.layout")
+
+    def _lay_set(self, key: str, value, reload: bool = False) -> None:
+        if self._loading:
+            return
+        lay = self._lay()
+        lay[key] = value
+        self._lay_commit(lay, reload)
+
+    def _lay_kind(self) -> None:
+        if self._loading:
+            return
+        lay = self._lay()
+        lay["kind"] = self.lay_kind.currentData()
+        if lay["kind"] == "split2" and lay["asset2"] is None:
+            used = {s.asset_id for s in self.tl.segments}
+            others = [aid for aid, _n in self._project_videos() if aid not in used]
+            lay["asset2"] = others[0] if others else None
+        if lay["kind"] == "pip" and lay["views"][0] == compose.DEFAULT["views"][0]:
+            lay["views"][0] = {"cx": 0.5, "cy": 0.5, "zoom": 1.0}        # vidéo principale : plan d'ensemble
+        self._lay_commit(lay, reload=True)
+
+    def _lay_view_set(self, key: str, v: int) -> None:
+        if self._loading:
+            return
+        lay = self._lay()
+        lay["views"][max(0, self.lay_view.currentIndex())][key] = v / 100
+        self._lay_commit(lay)
+
+    def _lay_pip_set(self, key: str, v: int) -> None:
+        if self._loading:
+            return
+        lay = self._lay()
+        lay["pip"][key] = v / 100
+        self._lay_commit(lay)
+
+    def _project_videos(self) -> list[tuple[int, str]]:
+        if not self.project_id:
+            return []
+        return [(r["id"], r["file_name"]) for r in self.app.db.query(
+            "SELECT id, file_name FROM source_asset WHERE project_id = ? AND kind = 'video' ORDER BY id",
+            (self.project_id,))]
+
+    def _show_row(self, w: QWidget, on: bool) -> None:
+        w.setVisible(on)
+        lb = self.lay_box.layout().labelForField(w)
+        if lb:
+            lb.setVisible(on)
+
+    def _load_layout(self) -> None:
+        # appelé avec _loading = True : aucun réglage n'est réécrit pendant le remplissage
+        lay = self._lay()
+        kind = lay["kind"]
+        self.lay_kind.setCurrentIndex(max(0, self.lay_kind.findData(kind)))
+        self.lay_box.setVisible(kind != "single")
+        if kind == "single":
+            return
+        two = kind in ("split2", "pip")
+        if kind == "pip":
+            names = ["Vidéo principale", "Incrustation"]
+        else:
+            names = ["Vue du bas", "Vue du haut"] if lay["swap"] else ["Vue du haut", "Vue du bas"]
+            if kind == "split2":
+                names[1] += " (seconde vidéo)"
+        cur = max(0, self.lay_view.currentIndex())
+        self.lay_view.blockSignals(True)
+        self.lay_view.clear()
+        self.lay_view.addItems(names)
+        self.lay_view.setCurrentIndex(min(cur, 1))
+        self.lay_view.blockSignals(False)
+        v = lay["views"][self.lay_view.currentIndex()]
+        for key, sl in self.lay_sl.items():
+            sl.setValue(int(round(v[key] * 100)))
+        self._show_row(self.lay_ratio_row, kind != "pip")
+        self.lay_swap.setVisible(kind != "pip")
+        self.lay_ratio.setValue(int(round(lay["ratio"] * 100)))
+        for w in (self.lay_second, self.lay_offset, self.lay_audio):
+            self._show_row(w, two)
+        self.lay_second.blockSignals(True)
+        self.lay_second.clear()
+        if kind == "pip":
+            self.lay_second.addItem("La même vidéo (gros plan)", None)
+        for aid, name in self._project_videos():
+            self.lay_second.addItem(name, aid)
+        self.lay_second.setCurrentIndex(max(0, self.lay_second.findData(lay["asset2"])))
+        self.lay_second.blockSignals(False)
+        self.lay_offset.setValue(float(lay["offset"] or 0))
+        self.lay_audio.setCurrentIndex(max(0, self.lay_audio.findData(lay["audio"])))
+        for key, sp in self.lay_pip.items():
+            self._show_row(sp, kind == "pip")
+            sp.setValue(int(round(lay["pip"][key] * 100)))
+        self._show_row(self.lay_border_row, kind == "pip")
+        self.lay_border.setValue(int(lay["border"] or 0))
+        self.lay_border_col.set(lay["border_color"] or "#FFFFFF")
+        note = "Glissez une vue dans l'aperçu pour la déplacer, molette pour zoomer."
+        if kind == "split2" and lay["asset2"] is None:
+            note = "Importez une seconde vidéo dans ce projet pour l'afficher en bas. " + note
+        elif not compose.uses_second(lay):
+            note += " La vidéo est lue une seule fois : le son n'est pas doublé."
+        self.lay_note.setText(note)
 
     # -- zones masquées ------------------------------------------------------------
     def _load_masks(self) -> None:

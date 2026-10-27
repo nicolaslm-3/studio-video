@@ -116,16 +116,28 @@ class Database:
         applied = []
         for version, name, sql in pending:
             log.info("Migration %s", name)
+            # Une migration qui reconstruit une table (contrainte CHECK modifiée) commence par
+            # « -- sans-cles-etrangeres » : clés étrangères suspendues le temps de la migration (sinon supprimer
+            # l'ancienne table viderait ou détacherait les lignes qui en dépendent), vérifiées avant validation.
+            no_fk = sql.lstrip().startswith("-- sans-cles-etrangeres")
             with self._write_lock:
+                if no_fk:
+                    conn.execute("PRAGMA foreign_keys = OFF")
                 try:
                     # executescript commit implicitement : on encadre explicitement.
-                    conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+                    conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {version};")
+                    if no_fk and conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                        raise sqlite3.IntegrityError("références cassées après reconstruction")
+                    conn.execute("COMMIT")
                 except Exception as exc:
                     try:
                         conn.execute("ROLLBACK")
                     except sqlite3.OperationalError:
                         pass
                     raise MigrationError(f"Échec de la migration {name} : {exc}") from exc
+                finally:
+                    if no_fk:
+                        conn.execute("PRAGMA foreign_keys = ON")
             applied.append(version)
         return applied
 

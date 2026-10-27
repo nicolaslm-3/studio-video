@@ -19,7 +19,6 @@ from .services.publications import PublicationService
 from .services.settings import SettingsService
 from .services.transcripts import TranscriptService
 from .services.analytics import AnalyticsService
-from .services.campaigns import CampaignService
 from .services.dubs import DubService, StemService
 
 log = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ class AppContext:
     dubs: DubService | None = None
     stems: StemService | None = None
     analytics: AnalyticsService | None = None
-    campaigns: CampaignService | None = None
 
     def importer(self) -> MediaImporter:
         return MediaImporter(self.db, self.paths, self.workspace_id)
@@ -65,7 +63,6 @@ def build_context(root: Path | None = None, max_workers: int | None = None) -> A
                      candidates=CandidateService(db), workspace_id=ws,
                      dubs=DubService(db, paths.dubs), stems=StemService(paths.root / "stems"),
                      analytics=AnalyticsService(db))
-    ctx.campaigns = CampaignService(db, ctx.projects, ctx.transcripts)
     _register_handlers(ctx)
     return ctx
 
@@ -80,8 +77,34 @@ def _register_handlers(app: AppContext) -> None:
         if params.get("auto_clips") and res.kind == "video" and params.get("project_id"):
             app.jobs.submit("auto_clips", f"Extraits automatiques · {Path(params['path']).name}",
                             {"asset_id": res.asset_id, "project_id": params["project_id"]})
-            out["auto_clips"] = True
+            out["auto_clips"] = True       # cette tâche transcrit elle-même avant de chercher les moments
+        elif (w := _auto_transcribe(res.asset_id)):
+            out["warning"] = w
         return out
+
+    def _auto_transcribe(asset_id: int) -> str | None:
+        """Chaque vidéo ou son importé est transcrit d'office, en arrière-plan (langue détectée).
+        Renvoie un avertissement à afficher quand c'est impossible, sinon None."""
+        from .transcribe import engines
+        a = app.library.get(asset_id)
+        if (a is None or a["kind"] not in ("video", "audio") or not a["audio_tracks"]
+                or not app.settings.get("auto_transcribe", True) or app.transcripts.has(asset_id)):
+            return None
+        busy = app.db.query_one("SELECT COUNT(*) n FROM job WHERE kind='transcribe' AND status IN "
+                                "('pending','running') AND json_extract(params_json, '$.asset_id') = ?",
+                                (asset_id,))["n"]
+        if busy:
+            return None
+        have = engines.installed_models(app.paths.models) if engines.available() else []
+        if not have:
+            return ("transcription automatique impossible : aucun modèle de transcription installé "
+                    "(Paramètres → Matériel et moteurs).")
+        pref = app.settings.get("whisper_model", None)
+        model = pref if pref in have else next((m for m in ("small", "base", "medium", "large-v3-turbo", "tiny")
+                                                if m in have), have[0])
+        app.jobs.submit("transcribe", f"Transcription · {a['file_name']}",
+                        {"asset_id": asset_id, "model": model, "auto": True})
+        return None
 
     def _maybe_proxy(asset_id: int) -> None:
         from .media import proxy
@@ -121,7 +144,14 @@ def _register_handlers(app: AppContext) -> None:
         res = app.importer().import_file(path, project_id=params.get("project_id"),
                                          origin_url=params["url"],
                                          provenance=f"{meta.get('extractor')}:{meta.get('uploader') or ''}")
-        return {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings, "meta": meta}
+        out = {"asset_id": res.asset_id, "kind": res.kind, "warnings": res.warnings, "meta": meta}
+        if params.get("auto_clips") and res.kind == "video" and params.get("project_id"):
+            app.jobs.submit("auto_clips", f"Extraits automatiques · {Path(path).name}",
+                            {"asset_id": res.asset_id, "project_id": params["project_id"]})
+            out["auto_clips"] = True
+        elif (w := _auto_transcribe(res.asset_id)):
+            out["warning"] = w
+        return out
 
     def export_timeline(ctx: JobContext, params: dict) -> dict:
         from .edit import render
@@ -142,6 +172,8 @@ def _register_handlers(app: AppContext) -> None:
             return ctx.run_process(cmd, on_line)
         report = render.export(tl, sources, music, dest, run, ctx.progress)
         report["variant_id"] = app.montage.record_export(params["project_id"], tl, report, ctx.job_id)
+        if (params.get("caption") or "").strip():          # légende de publication, à côté de la vidéo
+            dest.with_suffix(".txt").write_text(params["caption"].strip(), encoding="utf-8")
         return report
 
     def preview(ctx: JobContext, params: dict) -> dict:
@@ -189,6 +221,9 @@ def _register_handlers(app: AppContext) -> None:
             ctx.check()
             raise
         if not tr.segments:
+            if params.get("auto"):          # import : pas un échec, et surtout aucun texte inventé
+                return {"asset_id": a["id"], "segments": 0, "language": tr.language, "words": 0,
+                        "warning": "aucune parole exploitable n'a été détectée."}
             raise RuntimeError("Aucune parole détectée dans ce média.")
         app.transcripts.store_original(a["id"], tr)
         return {"asset_id": a["id"], "segments": len(tr.segments), "language": tr.language,
@@ -269,7 +304,7 @@ def _register_handlers(app: AppContext) -> None:
         return {"count": len(ids), "asset_id": aid, "engine": getattr(engine, "name", "local")}
 
     def auto_clips(ctx: JobContext, params: dict) -> dict:
-        """Vidéo glissée sans projet : transcription (si un modèle est installé) puis moments forts, d'office."""
+        """Vidéo importée en Clipping : transcription (si un modèle est installé) puis extraits, d'office."""
         from .transcribe import engines
         aid, pid = params["asset_id"], params["project_id"]
         a = app.library.get(aid)
@@ -281,23 +316,158 @@ def _register_handlers(app: AppContext) -> None:
             if not have:
                 return {"asset_id": aid, "project_id": pid, "count": 0,
                         "skipped": "Aucun modèle de transcription installé : téléchargez-en un dans Paramètres "
-                                   "→ Matériel et moteurs, puis lancez « Moments forts »."}
+                                   "→ Matériel et moteurs, puis lancez la recherche d'extraits."}
             pref = ["small", "base", "medium", "large-v3-turbo", "tiny"]
             model = next((m for m in pref if m in have), have[0])
             ctx.progress(0.01, "Transcription")
             transcribe(ctx, {"asset_id": aid, "model": model})
             transcribed = True
-        dur = float(a["duration_s"] or 0)
-        req = {"count": 8}
-        if dur and dur < 180:                          # vidéo courte : extraits plus courts
-            req.update(min_duration=max(4.0, dur * 0.12), max_duration=max(8.0, dur * 0.45),
-                       target_duration=max(6.0, dur * 0.25), count=max(2, min(6, int(dur // 15))))
+        # critères choisis pendant la transcription (écran Clipping) ; aucun coché : politique
+        from .ai.highlights import criteria_request
+        crit = app.projects.load_data(pid).get("clip_criteria") if app.projects.get(pid) else None
+        req = criteria_request(crit, float(a["duration_s"] or 0)).__dict__
         llm = app.settings.get("llm", None) or {}
         eng = ({"kind": llm["kind"], "model": llm.get("model", ""), "base_url": llm.get("base_url", "")}
                if llm.get("kind") in ("ollama", "openai") and llm.get("model") else {"kind": "local"})
-        ctx.progress(0.5, "Recherche des moments forts")
+        ctx.progress(0.5, "Recherche des extraits")
         res = find_highlights(ctx, {"asset_id": aid, "project_id": pid, "request": req, "engine": eng})
         return {**res, "project_id": pid, "transcribed": transcribed}
+
+    class _Sub:
+        """Contexte d'une étape : la progression de 0 à 1 de l'étape occupe [a, b] de la tâche entière."""
+
+        def __init__(self, ctx: JobContext, a: float, b: float, label: str = ""):
+            self._ctx, self.a, self.b, self.label = ctx, a, b, label
+
+        def progress(self, fraction: float, message: str = "") -> None:
+            f = max(0.0, min(1.0, fraction))
+            self._ctx.progress(self.a + (self.b - self.a) * f, f"{self.label}{message}")
+
+        def __getattr__(self, name):
+            return getattr(self._ctx, name)
+
+    def _ensure_transcript(ctx: JobContext, aid: int) -> None:
+        """Transcription disponible : attend celle lancée à l'import si elle tourne, sinon la fait ici."""
+        import time
+
+        from .transcribe import engines
+        while not app.transcripts.has(aid):
+            rows = app.db.query("SELECT id, status FROM job WHERE kind='transcribe' AND status IN "
+                                "('pending','running') AND json_extract(params_json, '$.asset_id') = ?", (aid,))
+            running = [r for r in rows if r["status"] == "running"]
+            if not running:
+                for r in rows:                  # en file derrière cette tâche : on la fait ici, sans attendre
+                    app.jobs.cancel(r["id"])
+                break
+            ctx.check()
+            ctx.progress(0.02, "Transcription en cours (lancée à l'import)…")
+            time.sleep(0.5)
+        if app.transcripts.has(aid):
+            return
+        have = engines.installed_models(app.paths.models) if engines.available() else []
+        if not have:
+            raise ValueError("Aucun modèle de transcription installé (Paramètres → Matériel et moteurs).")
+        pref = app.settings.get("whisper_model", None)
+        model = pref if pref in have else next((m for m in ("small", "base", "medium", "large-v3-turbo", "tiny")
+                                                if m in have), have[0])
+        transcribe(_Sub(ctx, 0.0, 0.2, "Transcription · "), {"asset_id": aid, "model": model})
+
+    def translate_video(ctx: JobContext, params: dict) -> dict:
+        """Espace Traduction, en un clic : pour chaque langue, traduction, doublage facultatif, sous-titres
+        dans le style choisi, texte du haut et légende traduits, puis export MP4 vérifié.
+
+        export=False : prépare seulement (traduction, voix, texte du haut traduit, zones à masquer) ; la vidéo
+        de la langue choisie est ensuite exportée depuis l'onglet Export, sur le montage du projet."""
+        import re
+
+        from .ai import translate as tr_mod
+        from .edit import translation
+        from .edit.model import Timeline
+        from .services import secrets
+        aid, pid = params["asset_id"], params["project_id"]
+        a = app.library.get(aid)
+        if a is None:
+            raise ValueError("Média introuvable dans la bibliothèque.")
+        if not a["audio_tracks"]:
+            raise ValueError("Cette vidéo n'a pas de son : rien à traduire.")
+        _ensure_transcript(ctx, aid)
+        src = app.transcripts.get(aid)
+        if src is None or not src.segments:
+            raise ValueError("Aucune parole exploitable n'a été détectée : rien à traduire.")
+        langs = [lg for lg in params.get("languages") or [] if lg != src.language]
+        skipped = [lg for lg in params.get("languages") or [] if lg == src.language]
+        if not langs:
+            raise ValueError("La vidéo est déjà dans la langue choisie.")
+        voice = params.get("voice") or None
+        keep_music = bool(params.get("keep_music", True))
+        names = tr_mod.LANG_NAMES
+        masks = []
+        if params.get("erase_texts") and a["kind"] == "video":
+            masks = detect_text(_Sub(ctx, 0.2, 0.25, "Textes d'origine · "), {"asset_id": aid})["zones"]
+        if voice and keep_music and not app.stems.has(aid):
+            separate_job(_Sub(ctx, 0.25, 0.4, "Séparation voix / musique · "), {"asset_id": aid})
+        eng = _tr_cfg(params.get("engine"))
+        translator = tr_mod.make_translator(eng, secrets.get_secret)
+        used: list[str] = []
+        notes: list[str] = []
+        template = Timeline.from_dict(params["timeline"])
+        folder = Path(params["folder"])
+        stem = re.sub(r'[\\/:*?"<>|]+', " ", Path(a["file_name"]).stem).strip()[:60] or "video"
+        files, errors = [], []
+        do_export = params.get("export", True)
+        top_texts: dict[str, str] = {}
+        span = 0.6 / len(langs)
+        for k, lang in enumerate(langs):
+            a0 = 0.4 + k * span
+            tag = f"{lang.upper()} · "
+            try:
+                if app.transcripts.translation(aid, lang) is None:
+                    r = translate(_Sub(ctx, a0, a0 + span * 0.3, tag), {"asset_id": aid, "language": lang,
+                                                                        "engine": eng,
+                                                                        "glossary": params.get("glossary") or []})
+                    used += [e for e in r.get("engines", []) if e not in used]
+                    notes += [n for n in r.get("failures", []) if n not in notes]
+                if voice:
+                    vid = _voice_for(voice, lang)
+                    dub(_Sub(ctx, a0 + span * 0.3, a0 + span * 0.6, tag + "voix · "),
+                        {"asset_id": aid, "language": lang, "engine": voice.get("engine") or "elevenlabs",
+                         "voices": {}, "default_voice": vid})
+                top = (params.get("top_text") or "").strip()
+                if top:
+                    top = translator.translate([top], src.language, lang)[0]
+                top_texts[lang] = top
+                if not do_export:
+                    files.append(lang)
+                    continue
+                tl = translation.translated_timeline(
+                    template, aid, float(a["duration_s"] or src.segments[-1].end), lang,
+                    app.transcripts.translation(aid, lang), params.get("preset") or "white",
+                    aspect=params.get("aspect"), top_text=top,
+                    masks=masks, dubbed=bool(voice), keep_music=keep_music,
+                    text_style=app.montage.text_style_for(pid))
+                dest = folder / f"{stem}_{lang}.mp4"
+                export_timeline(_Sub(ctx, a0 + span * 0.6, a0 + span, tag + "export · "),
+                                {"timeline": tl.to_dict(), "dest": str(dest), "project_id": pid})
+                caption = (params.get("caption") or "").strip()
+                if caption:
+                    dest.with_suffix(".txt").write_text(translator.translate([caption], src.language, lang)[0],
+                                                        encoding="utf-8")
+                files.append(str(dest))
+            except Exception as exc:                          # une langue en échec n'arrête pas les autres
+                ctx.check()
+                errors.append(f"{lang.upper()} : {(str(exc).splitlines() or [repr(exc)])[0][:400]}")
+        if not files:
+            raise RuntimeError(("Aucune vidéo produite.\n" if do_export else "Aucune langue préparée.\n")
+                               + "\n".join(errors))
+        ready = files if not do_export else [lg for lg in langs if not any(e.startswith(lg.upper() + " ")
+                                                                            for e in errors)]
+        out = {"files": files if do_export else [], "folder": str(folder), "languages": langs, "errors": errors,
+               "skipped": skipped, "asset_id": aid, "project_id": pid, "ready": ready,
+               "top_texts": top_texts, "masks": masks, "dubbed": bool(voice), "keep_music": keep_music,
+               "engines": [tr_mod.ENGINES.get(e.split(":")[0], (e,))[0] for e in used], "notes": notes}
+        if errors:
+            out["warning"] = f"{len(errors)} langue(s) en échec : " + " ; ".join(errors)
+        return out
 
     def optimize_audio(ctx: JobContext, params: dict) -> dict:
         from .edit import audiofix
@@ -308,6 +478,28 @@ def _register_handlers(app: AppContext) -> None:
         return {"audio": p.audio, "music": p.music, "seg_volumes": p.seg_volumes, "report": p.report,
                 "warnings": p.warnings}
 
+    def _tr_cfg(engine) -> dict:
+        """Réglages d'un moteur de traduction : choix (« auto » par défaut) et réglages enregistrés."""
+        from .ai.translate import settings_cfg
+        return settings_cfg(app.settings.get, engine)
+
+    def _voice_for(voice: dict, lang: str) -> str:
+        """Voix de la langue : ElevenLabs et OpenAI parlent toutes les langues avec la même voix ; Piper a une
+        voix par langue (la voix choisie si elle est de cette langue, sinon une voix installée de la langue)."""
+        if voice.get("engine") != "piper":
+            return voice["id"]
+        from .ai import piper
+        from .ai.translate import LANG_NAMES
+        have = piper.installed_voices(app.paths.models)
+        if voice["id"] in have and voice["id"].split("_")[0] == lang:
+            return voice["id"]
+        same = [v for v in have if v.split("_")[0] == lang]
+        if not same:
+            raise ValueError(f"aucune voix hors ligne en {LANG_NAMES.get(lang, lang)} : téléchargez-en une "
+                             "(Réglages → Voix) ou choisissez une voix ElevenLabs ou OpenAI, qui parlent toutes "
+                             "les langues.")
+        return same[0]
+
     def translate(ctx: JobContext, params: dict) -> dict:
         from .ai import translate as tr_mod
         from .services import secrets
@@ -315,19 +507,19 @@ def _register_handlers(app: AppContext) -> None:
         src_tr = app.transcripts.get(aid)
         if src_tr is None:
             raise ValueError("Transcrivez d'abord ce média.")
-        cfg = dict(params.get("engine") or {})
-        cfg["llm"] = app.settings.get("llm", None) or {}
-        translator = tr_mod.make_translator(cfg, secrets.get_secret)
+        translator = tr_mod.make_translator(_tr_cfg(params.get("engine")), secrets.get_secret)
         out = tr_mod.translate_transcript(src_tr, translator, dst, params.get("glossary") or [], ctx.progress,
                                           is_cancelled=lambda: ctx.cancelled)
         ctx.check()
         app.transcripts.store_translation(aid, out)
-        return {"asset_id": aid, "language": dst, "segments": len(out.segments)}
+        used = getattr(translator, "used", None) or [translator.name]
+        return {"asset_id": aid, "language": dst, "segments": len(out.segments), "engines": used,
+                "failures": getattr(translator, "failures", [])}
 
     def _tts(kind: str):
         from .ai import tts
         from .services import secrets
-        return tts.make_engine(kind, secrets.get_secret, app.paths.models)
+        return tts.make_engine(kind, secrets.get_secret, app.paths.models, app.settings.get("llm", None) or {})
 
     def dub(ctx: JobContext, params: dict) -> dict:
         """Doublage complet d'une traduction (§10.2, §11)."""
@@ -422,8 +614,27 @@ def _register_handlers(app: AppContext) -> None:
         n = len(set(labels))
         return {"asset_id": aid, "speakers": n, "segments": len(labels), "translations": synced}
 
+    def _save_avatar(account_id: int, url: str) -> None:
+        """Photo de profil du compte (si le réseau la donne) : copiée dans les données, pour les menus."""
+        if not url:
+            return
+        import urllib.request
+        dest = app.paths.root / "avatars" / f"account_{account_id}.jpg"
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "StudioVideo"}),
+                                        timeout=20) as r:
+                data = r.read(5 * 2**20)
+            if len(data) < 100:
+                return
+            dest.write_bytes(data)
+        except OSError:
+            return                                # sans photo : le menu affiche l'initiale du compte
+        with app.db.transaction() as c:
+            c.execute("UPDATE social_account SET avatar_path = ? WHERE id = ?", (str(dest), account_id))
+
     def connect_account(ctx: JobContext, params: dict) -> dict:
-        """Connexion d'un compte à sa plateforme (V3). YouTube uniquement pour l'instant."""
+        """Connexion d'un compte à sa plateforme (V3)."""
         import webbrowser
 
         from .publish import youtube
@@ -444,6 +655,7 @@ def _register_handlers(app: AppContext) -> None:
                           (tok.get("open_id", ""), tok.get("scope", tiktok.SCOPES), user,
                            f"https://www.tiktok.com/@{user}", acc.id))
             app.db.audit("account.connect", f"account={acc.id} tiktok={tok.get('open_id', '')}")
+            _save_avatar(acc.id, info.get("creator_avatar_url") or "")
             return {"account_id": acc.id, "channel": "@" + user if user else (info.get("creator_nickname") or "TikTok"),
                     "channel_id": tok.get("open_id", "")}
         if acc.platform.value in ("instagram", "facebook"):
@@ -488,6 +700,7 @@ def _register_handlers(app: AppContext) -> None:
             c.execute("UPDATE social_account SET connection_status = 'connected', remote_id = ?, scopes = ? "
                       "WHERE id = ?", (ch["id"], tok.get("scope", youtube.SCOPES), acc.id))
         app.db.audit("account.connect", f"account={acc.id} youtube={ch['id']}")
+        _save_avatar(acc.id, ch.get("thumbnail") or "")
         return {"account_id": acc.id, "channel": ch["title"], "channel_id": ch["id"]}
 
     def publish_upload(ctx: JobContext, params: dict) -> dict:
@@ -1000,6 +1213,7 @@ def _register_handlers(app: AppContext) -> None:
     app.jobs.register("optimize_audio", optimize_audio)
     app.jobs.register("find_highlights", find_highlights)
     app.jobs.register("auto_clips", auto_clips)
+    app.jobs.register("translate_video", translate_video)
     app.jobs.register("transcribe", transcribe)
     app.jobs.register("download_model", download_model)
     app.jobs.register("import_file", import_file)

@@ -1,8 +1,13 @@
 """Recadrage intelligent (§8.3) : le cadre suit les visages quand on passe du 16:9 au 9:16 (ou 1:1, 4:5).
 
 - Détection : UltraFace RFB-320 (licence MIT, 1,2 Mo, ONNX), téléchargé une fois, exécuté sur le PC.
-- Suivi : un visage par instant (le plus grand et le plus net, en privilégiant la continuité),
-  zone morte (le cadre ne bouge pas pour de petits déplacements), vitesse limitée, et changement de plan
+- Qui parle : à plusieurs à l'image, le cadre suit la personne dont la bouche bouge le plus (image recalée
+  d'abord, pour qu'un mouvement de caméra ou de tête ne compte pas), avec un temps de maintien pour ne pas
+  sauter d'un visage à l'autre à chaque syllabe ; après un changement de plan, le cadre se replace aussitôt
+  sur celui qui parle dans les secondes qui suivent. Limite : quelqu'un qui écoute en bougeant la main
+  devant la bouche peut être pris pour celui qui parle.
+- Suivi : un visage par instant (celui qui parle, sinon le plus grand et le plus net, en privilégiant la
+  continuité), zone morte (le cadre ne bouge pas pour de petits déplacements), vitesse limitée, et changement de plan
   franc quand le visage suivi change brusquement de place pendant plus d'une demi-seconde.
 - Résultat : des points clés (temps source, centre horizontal 0..1), simplifiés, rendus par FFmpeg en
   interpolation linéaire et rejoués dans l'aperçu.
@@ -91,20 +96,107 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou: float = 0.3) -> list[tuple]:
     return out
 
 
-def sample_frames(path: Path, start: float, end: float, fps: float = 4.0) -> tuple[list[float], np.ndarray]:
-    dur = max(0.1, end - start)
-    p = subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-nostdin", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
-                        "-i", str(path), "-vf", f"fps={fps:g},scale={IW}:{IH}:flags=area,format=rgb24",
-                        "-f", "rawvideo", "-"], capture_output=True, creationflags=_NOWIN)
-    if p.returncode != 0:
-        raise ReframeError(f"Lecture des images impossible : {p.stderr[-300:].decode('utf-8', 'replace')}")
-    n = len(p.stdout) // (IW * IH * 3)
-    frames = np.frombuffer(p.stdout[:n * IW * IH * 3], np.uint8).reshape(n, IH, IW, 3)
-    return [start + i / fps for i in range(n)], frames
+def mouth_activity(prev: np.ndarray | None, cur: np.ndarray, box: tuple, shift: int = 4) -> float:
+    """Mouvement du bas du visage entre deux images (niveaux de gris), une fois l'image précédente recalée
+    (décalage de ±`shift` pixels qui la fait le mieux coïncider) : un mouvement de caméra, un zoom ou une tête
+    qui se déplace sont ainsi compensés, il reste la bouche qui s'ouvre et se ferme. Mesure relative, à
+    comparer entre les visages d'un même instant."""
+    if prev is None:
+        return 0.0
+    h, w = cur.shape
+    x1, y1, x2, y2 = box[:4]
+    bw, bh = x2 - x1, y2 - y1
+    xa, xb = max(shift, int((x1 + 0.2 * bw) * w)), min(w - shift, int((x1 + 0.8 * bw) * w))
+    ya, yb = max(shift, int((y1 + 0.6 * bh) * h)), min(h - shift, int((y1 + 1.0 * bh) * h))
+    if xb - xa < 2 or yb - ya < 2:
+        return 0.0
+    c = cur[ya:yb, xa:xb]
+    return min(float(np.abs(c - prev[ya + dy:yb + dy, xa + dx:xb + dx]).mean())
+               for dy in range(-shift, shift + 1, 2) for dx in range(-shift, shift + 1, 2))
+
+
+def speaker_centers(times: list[float], detections: list[list[tuple]], activity: list[list[float]],
+                    window: float = 1.2, hold: float = 0.8, ratio: float = 1.35,
+                    min_level: float = 3.0) -> list[float | None]:
+    """Centre horizontal de la personne qui parle, image par image (None : aucun visage).
+
+    Les visages sont suivis d'une image à l'autre par proximité. Pour chacun, le mouvement de la bouche est
+    moyenné sur `window` secondes ; on passe à un autre visage s'il parle nettement plus (`ratio`) pendant
+    au moins `hold` secondes. Sans parole visible, on reste sur le même visage ; s'il quitte l'image
+    (changement de plan), on passe aussitôt à celui qui parle à l'image, sinon au plus grand."""
+    n = len(times)
+    if n == 0:
+        return []
+    step = (times[-1] - times[0]) / max(1, n - 1) or 0.25
+    tracks: list[dict] = []                         # {"x": dernier centre, "last": dernière image, "act": {i: a}}
+    ids: list[list[int]] = []
+    for i, dets in enumerate(detections):
+        row: list[int] = []
+        for k, d in enumerate(dets):
+            c = (d[0] + d[2]) / 2
+            near = [t for t in range(len(tracks)) if t not in row and i - tracks[t]["last"] <= 3 / step
+                    and abs(tracks[t]["x"] - c) < 0.12]
+            if near:
+                tid = min(near, key=lambda t: abs(tracks[t]["x"] - c))
+            else:
+                tid = len(tracks)
+                tracks.append({"x": c, "last": i, "act": {}})
+            tracks[tid].update(x=c, last=i)
+            tracks[tid]["act"][i] = activity[i][k] if i < len(activity) and k < len(activity[i]) else 0.0
+            row.append(tid)
+        ids.append(row)
+    half = max(1, int(round(window / step / 2)))
+    smooth = np.zeros((len(tracks), n))
+    for tid, tr in enumerate(tracks):
+        raw = np.zeros(n)
+        for i, a in tr["act"].items():
+            raw[i] = a
+        smooth[tid] = np.convolve(np.pad(raw, (half, half)), np.ones(2 * half + 1) / (2 * half + 1), mode="valid")
+    need = max(1, int(round(hold / step)))
+    look = max(1, int(round(2.0 / step)))
+    out: list[float | None] = []
+    cur, challenger, streak, miss = None, None, 0, 0
+    pos: dict[int, float] = {}
+    for i in range(n):
+        here = ids[i]
+        for k, tid in enumerate(here):
+            d = detections[i][k]
+            pos[tid] = (d[0] + d[2]) / 2
+        if not here:
+            out.append(pos.get(cur) if cur is not None else None)
+            continue
+        best = max(here, key=lambda t: smooth[t, i])
+        miss = miss + 1 if cur is not None and cur not in here else 0
+        if cur is None or miss >= 2:                # premier visage, ou visage suivi sorti de l'image
+            # nouveau plan : celui qui parle le plus dans les secondes qui suivent (un seul instant trompe :
+            # une main portée au visage bouge autant qu'une bouche)
+            def ahead_level(t: int) -> float:
+                vals = [a for j, a in tracks[t]["act"].items() if i <= j <= i + look]
+                return sum(vals) / len(vals) if vals else 0.0
+            lead = max(here, key=ahead_level)
+            if ahead_level(lead) >= min_level or len(here) == 1:
+                cur = lead
+            else:                                   # personne ne parle encore : le plus grand visage
+                cur = max(here, key=lambda t: _area(detections[i][here.index(t)]))
+            challenger, streak, miss = None, 0, 0
+        elif best != cur and smooth[best, i] >= min_level and smooth[best, i] > ratio * smooth[cur, i]:
+            streak = streak + 1 if challenger == best else 1
+            challenger = best
+            if streak >= need:
+                cur, challenger, streak = best, None, 0
+        else:
+            challenger, streak = None, 0
+        out.append(pos[cur])
+    return out
+
+
+def _area(d: tuple) -> float:
+    return (d[2] - d[0]) * (d[3] - d[1])
 
 
 def track(times: list[float], detections: list[list[tuple]], dead_zone: float = 0.06,
-          max_speed: float = 0.35, jump: float = 0.2) -> list[tuple[float, float]]:
+          max_speed: float = 0.35, jump: float = 0.2,
+          centers: list[float | None] | None = None) -> list[tuple[float, float]]:
     """Trajectoire du cadre (temps source, centre horizontal 0..1), calculée sur tout l'extrait.
 
     - plans séparés aux sauts brusques du visage suivi (changement de plan) : coupe franche du cadre ;
@@ -115,7 +207,10 @@ def track(times: list[float], detections: list[list[tuple]], dead_zone: float = 
         return []
     raw: list[float | None] = []
     prev = None
-    for dets in detections:
+    for k, dets in enumerate(detections):
+        if centers is not None:                     # visage choisi en amont (la personne qui parle)
+            raw.append(centers[k] if dets else None)
+            continue
         if not dets:
             raw.append(None)
             continue
@@ -179,21 +274,56 @@ def simplify(points: list[tuple[float, float]], tol: float = 0.01) -> list[tuple
     return [(round(float(p[i, 0]), 3), round(float(p[i, 1]), 4)) for i in keep]
 
 
+def stream_frames(path: Path, start: float, end: float, fps: float = 8.0, w: int = 2 * IW, h: int = 2 * IH):
+    """Images (temps source, rgb h×w) lues une à une : la mémoire reste faible même sur un long extrait."""
+    dur = max(0.1, end - start)
+    p = subprocess.Popen([ffmpeg.ffmpeg_bin(), "-v", "error", "-nostdin", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+                          "-i", str(path), "-vf", f"fps={fps:g},scale={w}:{h}:flags=area,format=rgb24",
+                          "-f", "rawvideo", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         creationflags=_NOWIN)
+    size, i = w * h * 3, 0
+    try:
+        while True:
+            buf = p.stdout.read(size)
+            if len(buf) < size:
+                break
+            yield start + i / fps, np.frombuffer(buf, np.uint8).reshape(h, w, 3)
+            i += 1
+    finally:
+        p.stdout.close()
+        err = p.stderr.read()
+        p.stderr.close()
+        p.wait()
+    if p.returncode != 0 and i == 0:
+        raise ReframeError(f"Lecture des images impossible : {err[-300:].decode('utf-8', 'replace')}")
+
+
 def analyze(path: Path, start: float, end: float, models_dir: Path,
             progress: Callable[[float, str], None] = lambda f, m: None,
-            is_cancelled: Callable[[], bool] = lambda: False) -> dict:
+            is_cancelled: Callable[[], bool] = lambda: False, fps: float = 8.0) -> dict:
     det = FaceDetector(models_dir)
     progress(0.1, "Lecture des images")
-    times, frames = sample_frames(path, start, end)
-    found = []
-    for i, f in enumerate(frames):
+    total = max(1, int((end - start) * fps))
+    times: list[float] = []
+    found: list[list[tuple]] = []
+    acts: list[list[float]] = []
+    prev = None
+    for i, (t, f) in enumerate(stream_frames(path, start, end, fps)):
         if is_cancelled():
             raise ReframeError("Annulé.")
-        found.append(det.detect(f))
-        if i % 8 == 0:
-            progress(0.15 + 0.8 * i / max(1, len(frames)), f"Visages : image {i + 1}/{len(frames)}")
+        dets = det.detect(np.ascontiguousarray(f[::2, ::2]))
+        gray = f.mean(axis=2, dtype=np.float32)
+        if prev is not None and float(np.abs(gray[::8, ::8] - prev[::8, ::8]).mean()) > 40:
+            prev = None                             # changement de plan : pas de mouvement à mesurer
+        times.append(t)
+        found.append(dets)
+        acts.append([mouth_activity(prev, gray, d) for d in dets])
+        prev = gray
+        if i % 16 == 0:
+            progress(0.15 + 0.8 * min(1.0, i / total), f"Visages : image {i + 1}/{total}")
     with_face = sum(bool(d) for d in found)
-    return {"keys": track(times, found), "frames": len(frames), "with_face": with_face}
+    centers = speaker_centers(times, found, acts)
+    return {"keys": track(times, found, centers=centers), "frames": len(times), "with_face": with_face}
 
 
 def cx_at(keys: list, t: float) -> float:

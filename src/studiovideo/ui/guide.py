@@ -34,6 +34,7 @@ class GuideBar(QFrame):
         while self.lay.count():
             w = self.lay.takeAt(0).widget()
             if w:
+                w.hide()                  # sinon son affichage différé en fait une fenêtre
                 w.setParent(None)
                 w.deleteLater()
         self.lay.addWidget(label(title, "h2"))

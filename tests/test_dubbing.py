@@ -71,7 +71,7 @@ def server(monkeypatch):
 
 
 def translated():
-    # 2e phrase volontairement trop longue pour son créneau : elle doit être accélérée (≤ ×1,35)
+    # 2e phrase plus longue que son créneau : elle prend le silence qui suit (0,5 s) sans être accélérée
     return Transcript([TSegment(0.5, 2.0, "Hello everyone.", [], "Alice"),            # 0.9 s dans 1.5 s
                        TSegment(2.5, 4.0, "We talk about video edits!", [], "Alice"),  # 1.56 s dans 1.5 s
                        TSegment(4.5, 6.5, "Let us go now, my friends.", [], "Bob")], "en", "test")
@@ -91,9 +91,11 @@ def test_build_fits_slots_and_regenerates(server, tmp_path):
     man = dubbing.build(translated(), eng, {"Bob": "v_bob"}, "v_alice", 1, 7.0, tmp_path)
     assert [ln.voice for ln in man.lines] == ["v_alice", "v_alice", "v_bob"]
     assert Fake.calls[0][1]["model_id"] == "eleven_multilingual_v2"
-    assert man.lines[0].tempo == 1.0 and 1.0 < man.lines[1].tempo <= dubbing.MAX_TEMPO
-    for ln in man.lines:                      # aucune phrase ne chevauche la suivante
-        assert ln.placed_end <= ln.end + 0.6
+    assert man.lines[0].tempo == 1.0 and man.lines[1].tempo == 1.0
+    for a, b in zip(man.lines, man.lines[1:]):   # aucune phrase ne chevauche la suivante, aucune n'est coupée
+        assert a.placed_end <= b.placed_start and a.placed_start >= a.start
+    for ln in man.lines:
+        assert abs((ln.placed_end - ln.placed_start) - ln.raw_duration / ln.tempo) < 0.05
     track = tmp_path / man.track
     assert abs(wav_duration(track) - 8.0) < 0.05
     with wave.open(str(track)) as w:

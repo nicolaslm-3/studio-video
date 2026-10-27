@@ -50,6 +50,48 @@ class Request:
     intensity: int = 2                                        # 1 calme … 3 intense
 
 
+# -- critères de l'écran Clipping (enregistrés dans le projet : `clip_criteria`) -------------------------
+CLIP_DURATIONS = {"court": ("15 à 30 s", 15.0, 30.0, 22.0), "moyen": ("30 à 60 s", 30.0, 60.0, 42.0),
+                  "long": ("60 à 90 s", 60.0, 90.0, 75.0)}
+DEFAULT_CRITERIA = {"categories": [], "duration": "moyen", "count": 8, "reframe": False}
+
+# Comment chaque critère est cherché (affiché au survol), fidèle à `LocalEngine.propose` et au modèle de langage.
+CATEGORY_HELP_COMMON = ("Pour tous : la transcription est découpée en passages de la durée choisie qui commencent et finissent "
+           "sur une phrase complète ; bonus si la parole est dense et la durée proche de la cible, malus si une "
+           "phrase est coupée ou si une réserve (« mais », « cependant ») suit. Les meilleurs passages sont gardés "
+           "sans chevauchement, avec des sujets variés. Avec un modèle de langage (Réglages), il lit le texte et "
+           "choisit lui-même, en suivant ce critère.")
+CATEGORY_HELP = {
+    "humour": "Humour : mots du rire et de la blague (« mdr », « c'est une blague », « n'importe quoi »…), "
+              "points d'exclamation, et pic de voix nettement au-dessus de la moyenne de la vidéo (rires, éclats).",
+    "debat": "Débat et désaccord : expressions de contradiction (« je ne suis pas d'accord », « c'est faux », "
+             "« laissez-moi finir »…), nombreux changements de personne qui parle et questions posées.",
+    "politique": "Politique : vocabulaire politique et économique (gouvernement, ministre, loi, réforme, budget, "
+                 "retraites, impôts, élection…). Plus il y a de termes différents, plus le passage remonte.",
+    "emotion": "Émotion : mots forts (honte, scandale, colère, peur, fier, bouleversant…), points d'exclamation, "
+               "et voix plus intense que la moyenne de la vidéo.",
+    "pedagogie": "Pédagogie : marques d'explication (« par exemple », « c'est-à-dire », « la raison », « en "
+                 "résumé », « astuce »…), et passages qui posent une question puis y répondent.",
+    "potentiel": "Potentiel d'intérêt : accroches qui retiennent l'attention (« personne ne vous dit », « la "
+                 "vérité », « le pire », « saviez-vous »…) ; bonus fort si le passage commence par une question, "
+                 "et s'il donne un chiffre dès la première phrase.",
+}
+DEFAULT_CATEGORY = "politique"          # aucun critère coché : politique
+
+
+def criteria_request(criteria: dict | None, video_duration: float) -> Request:
+    """Demande de recherche d'extraits à partir des critères choisis (catégories, durée, nombre)."""
+    c = {**DEFAULT_CRITERIA, **(criteria or {})}
+    _n, a, b, t = CLIP_DURATIONS.get(c["duration"], CLIP_DURATIONS["moyen"])
+    dur = float(video_duration or 0)
+    count = int(c["count"])
+    if dur and dur < b * 1.5:                           # vidéo courte : extraits plus courts, moins nombreux
+        a, b, t = max(4.0, dur * 0.12), max(8.0, dur * 0.45), max(6.0, dur * 0.25)
+        count = max(2, min(count, int(dur // 15) or 2))
+    return Request(count=count, min_duration=a, max_duration=b, target_duration=t,
+                   categories=list(c["categories"]) or [DEFAULT_CATEGORY])
+
+
 @dataclass
 class Candidate:
     start: float
@@ -326,9 +368,32 @@ def _http_json(url: str, payload: dict, headers: dict | None = None, timeout: fl
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise LLMError(f"Le service a répondu {exc.code} : {exc.read()[:300]!r}") from exc
+        model = payload.get("model", "") if isinstance(payload, dict) else ""
+        raise LLMError(http_error_text(exc.code, exc.read(), model)) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise LLMError(f"Service injoignable ({url}) : {exc}") from exc
+
+
+def http_error_text(code: int, body: bytes, model: str = "") -> str:
+    """Erreur du service de modèle de langage, en clair (au lieu de la réponse brute)."""
+    try:
+        err = json.loads(body.decode("utf-8", "replace"))
+        err = err.get("error", err)
+        detail = (err.get("message") if isinstance(err, dict) else str(err)) or ""
+    except ValueError:
+        detail = body.decode("utf-8", "replace")
+    detail = " ".join(detail.split())[:200]
+    if code == 404 and ("model" in detail.lower() or "not found" in detail.lower()):
+        return (f"Le modèle « {model} » n'existe pas chez ce service, ou votre clé n'y a pas accès. Corrigez son "
+                "nom dans Réglages → Modèle de langage (choisissez-en un dans la liste).")
+    if code in (401, 403):
+        return "Clé API refusée par le service : vérifiez-la dans Réglages → Modèle de langage."
+    if code == 429 and any(w in detail.lower() for w in ("credit", "quota", "billing")):
+        return ("Plus de crédit sur ce compte (quota épuisé) : ajoutez du crédit chez le fournisseur ou choisissez "
+                "un autre moteur.")
+    if code == 429:
+        return "Le service refuse pour l'instant (trop de demandes) : réessayez dans quelques minutes."
+    return f"Le service a répondu {code}" + (f" : {detail}" if detail else ".")
 
 
 PROMPT = """Tu es monteur vidéo pour les réseaux sociaux. Voici une transcription horodatée (secondes) :
@@ -455,6 +520,20 @@ def check_llm(kind: str, base_url: str = "", api_key: str = "") -> list[str]:
             return [m["id"] for m in json.loads(r.read().decode()).get("data", [])]
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise LLMError(f"Service injoignable : {exc}") from exc
+
+
+_NOT_CHAT = ("embed", "tts", "whisper", "transcribe", "audio", "realtime", "dall-e", "image", "moderation",
+             "search", "davinci", "babbage", "computer-use", "sora")
+
+
+def chat_models(models: list[str], base_url: str = "", kind: str = "openai") -> list[str]:
+    """Modèles utilisables pour écrire du texte, triés (OpenAI liste aussi voix, images, embeddings…)."""
+    if kind == "openai" and not base_url:
+        models = [m for m in models if m.startswith(("gpt-", "o1", "o3", "o4", "chatgpt"))
+                  and not any(x in m for x in _NOT_CHAT)]
+    else:
+        models = [m for m in models if not any(x in m.lower() for x in ("embed", "tts", "whisper"))]
+    return sorted(set(models))
 
 
 class Engine(Protocol):

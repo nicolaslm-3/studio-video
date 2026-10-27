@@ -139,11 +139,11 @@ def make_thumbnail(src: Path, dest: Path, at_s: float = 1.0, width: int = 480) -
 
 
 def fmt_timecode(seconds: float | None, with_ms: bool = False) -> str:
+    """« 1:23 » ; with_ms : au dixième de seconde, « 1:23.4 » (le millième n'apporte rien à l'écran)."""
     if seconds is None:
         return "—"
-    ms = int(round((seconds - int(seconds)) * 1000))
-    s = int(seconds)
+    s, d = divmod(int(round(max(0.0, seconds) * 10)), 10) if with_ms else (int(max(0.0, seconds)), 0)
     h, rem = divmod(s, 3600)
     m, s = divmod(rem, 60)
     base = f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
-    return f"{base}.{ms:03d}" if with_ms else base
+    return f"{base}.{d:d}" if with_ms else base

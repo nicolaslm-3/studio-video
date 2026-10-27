@@ -49,19 +49,17 @@ class ProjectMode(str, Enum):
     SMART_CLIPPING = "smart_clipping"
     TRANSLATION = "translation"
     ORIGINAL = "original"
-    CAMPAIGN = "campaign"
     FREE_EDIT = "free_edit"
-    BATCH = "batch"
+    TEXTS = "texts"
 
     @property
     def label(self) -> str:
         return {
-            "smart_clipping": "Clipping intelligent",
+            "smart_clipping": "Clipping",
             "translation": "Traduction et adaptation",
             "original": "Création originale",
-            "campaign": "Campagne de clipping",
             "free_edit": "Montage libre",
-            "batch": "Production en série",
+            "texts": "Textes",
         }[self.value]
 
 
@@ -85,6 +83,7 @@ class SocialAccount:
     public_url: str = ""
     language: str = "fr"
     connection_status: str = "disconnected"
+    avatar_path: str = ""                    # photo de profil enregistrée à la connexion (si le réseau la donne)
 
     @property
     def display(self) -> str:

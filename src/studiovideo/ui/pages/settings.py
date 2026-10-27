@@ -45,6 +45,20 @@ def _fit_height(t: QTableWidget) -> None:
     t.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
 
+
+class _ModelCombo(QComboBox):
+    """Menu déroulant des modèles : la liste est demandée au service à la première ouverture."""
+
+    def __init__(self, loader):
+        super().__init__()
+        self.loader, self.loaded = loader, False
+        self.setMinimumWidth(260)
+
+    def showPopup(self) -> None:
+        if not self.loaded:
+            self.loader()
+        super().showPopup()
+
 class SettingsPage(QWidget):
     edit_concept = Signal(object)
     theme_changed = Signal(str)
@@ -463,6 +477,10 @@ class SettingsPage(QWidget):
         self.proxies_cb.setChecked(bool(self.app.settings.get("proxies", True)))
         self.proxies_cb.toggled.connect(lambda v: self.app.settings.set("proxies", bool(v)))
         form.addRow("Aperçus", self.proxies_cb)
+        self.auto_tr_cb = QCheckBox("Transcrire automatiquement chaque vidéo importée (langue détectée)")
+        self.auto_tr_cb.setChecked(bool(self.app.settings.get("auto_transcribe", True)))
+        self.auto_tr_cb.toggled.connect(lambda v: self.app.settings.set("auto_transcribe", bool(v)))
+        form.addRow("Transcription", self.auto_tr_cb)
         card.lay.addLayout(form)
         card.lay.addWidget(label("Le nombre de traitements parallèles s'applique au prochain démarrage.",
                                  "faint"))
@@ -500,7 +518,7 @@ class SettingsPage(QWidget):
         wf = Card()
         wf.lay.addWidget(label("Dossier surveillé", "h2"))
         wf.lay.addWidget(label("Les vidéos, sons et images déposés dans ce dossier (ou un de ses sous-dossiers "
-                               "directs) sont importés automatiquement dans Extraits, une fois la copie "
+                               "directs) sont importés automatiquement dans Médias, une fois la copie "
                                "terminée. Les doublons sont ignorés ; les fichiers ne sont ni déplacés ni modifiés.",
                                "muted", wrap=True))
         self.watch_lbl = label("", wrap=True)
@@ -736,7 +754,7 @@ class SettingsPage(QWidget):
         card = Card()
         card.lay.addWidget(label("Modèle de langage (facultatif)", "h2"))
         card.lay.addWidget(label(
-            "Utilisé par « Moments forts » pour mieux comprendre le sens des échanges. Sans lui, l'analyse locale "
+            "Utilisé par « Extraits » pour mieux comprendre le sens des échanges. Sans lui, l'analyse locale "
             "fonctionne hors ligne. Ollama tourne sur votre PC (rien ne sort) ; une API distante reçoit le texte "
             "de la transcription analysée.", "muted", wrap=True))
         cfg = self.app.settings.get("llm", None) or {}
@@ -748,9 +766,9 @@ class SettingsPage(QWidget):
         self.llm_kind.setCurrentIndex(max(0, self.llm_kind.findData(cfg.get("kind", "none"))))
         self.llm_url = QLineEdit(cfg.get("base_url", ""))
         self.llm_url.setPlaceholderText("Adresse (vide = valeur par défaut)")
-        self.llm_model = QComboBox()
-        self.llm_model.setEditable(True)
-        self.llm_model.setCurrentText(cfg.get("model", ""))
+        self.llm_model = _ModelCombo(self._llm_load_models)   # liste des modèles du service, rien à taper
+        if cfg.get("model"):
+            self.llm_model.addItem(cfg["model"])
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
         self.llm_key.setPlaceholderText("Clé API (enregistrée dans le coffre Windows)" if secrets.available()
@@ -762,7 +780,7 @@ class SettingsPage(QWidget):
         form.addRow("Clé API", self.llm_key)
         card.lay.addLayout(form)
         row = QHBoxLayout()
-        row.addWidget(button("Tester la connexion", on_click=self._llm_test))
+        row.addWidget(button("Actualiser la liste des modèles", on_click=self._llm_test))
         row.addWidget(button("Enregistrer", "primary", on_click=self._llm_save))
         row.addStretch(1)
         card.lay.addLayout(row)
@@ -770,7 +788,9 @@ class SettingsPage(QWidget):
         card.lay.addWidget(self.llm_status)
         card.lay.addWidget(label("Traduction (facultatif)", "h2"))
         card.lay.addWidget(label("Clés personnelles pour DeepL ou Google Cloud Translation. Le modèle de langage "
-                                 "ci-dessus peut aussi traduire (hors ligne avec Ollama).", "muted", wrap=True))
+                                 "ci-dessus peut aussi traduire (hors ligne avec Ollama). Tous les moteurs, gratuits "
+                                 "compris, se règlent aussi depuis l'icône réglages de l'onglet Traduction.", "muted",
+                                 wrap=True))
         tf = QFormLayout()
         self.deepl_key = QLineEdit()
         self.google_key = QLineEdit()
@@ -787,10 +807,19 @@ class SettingsPage(QWidget):
         card.lay.addLayout(tf)
         card.lay.addWidget(button("Enregistrer les clés de traduction et de voix", on_click=self._save_translation_keys))
         self.llm_kind.currentIndexChanged.connect(self._llm_kind_changed)
+        self.llm_kind.currentIndexChanged.connect(lambda _i: self._llm_load_models())
+        self.llm_url.editingFinished.connect(self._llm_load_models)
+        self.llm_key.editingFinished.connect(self._llm_load_models)
         self._llm_kind_changed()
         return card
 
     def _save_translation_keys(self) -> None:
+        el = self.eleven_key.text().strip()
+        if el and not el.startswith("sk_"):
+            QMessageBox.warning(self, "Clé ElevenLabs", "Ceci ressemble à l'identifiant de la clé, pas à la clé : une "
+                                "clé ElevenLabs commence par « sk_ » et n'est affichée qu'au moment de sa création "
+                                "(ElevenLabs → Developers → API Keys → Create). Elle n'a pas été enregistrée.")
+            return
         try:
             for w, name in ((self.deepl_key, "deepl_api_key"), (self.google_key, "google_api_key"),
                             (self.eleven_key, "elevenlabs_api_key")):
@@ -809,32 +838,42 @@ class SettingsPage(QWidget):
             w.setEnabled(k != "none")
         self.llm_key.setEnabled(k == "openai" and secrets.available())
 
-    def _llm_test(self) -> None:
+    def _llm_load_models(self, quiet: bool = False) -> bool:
+        """Remplit la liste des modèles en interrogeant le service (Ollama ou API compatible OpenAI)."""
         from PySide6.QtWidgets import QApplication
 
-        from ...ai.highlights import LLMError, check_llm
+        from ...ai.highlights import LLMError, chat_models, check_llm
         k = self.llm_kind.currentData()
         if k == "none":
-            return
-        self.llm_status.setText("Connexion…")
-        QApplication.processEvents()
+            return False
+        if not quiet:
+            self.llm_status.setText("Recherche des modèles disponibles…")
+            QApplication.processEvents()
         key = self.llm_key.text().strip() or (secrets.get_secret("llm_api_key") or "")
         try:
-            models = check_llm(k, self.llm_url.text().strip(), key)
+            models = chat_models(check_llm(k, self.llm_url.text().strip(), key if k == "openai" else ""),
+                                 self.llm_url.text().strip(), k)
         except LLMError as exc:
             self.llm_status.setText(f"⚠ {exc}")
-            return
+            return False
         cur = self.llm_model.currentText()
         self.llm_model.clear()
         self.llm_model.addItems(models)
-        self.llm_model.setCurrentText(cur or (models[0] if models else ""))
-        self.llm_status.setText(f"Connexion réussie · {len(models)} modèle(s) disponible(s).")
+        if cur in models:
+            self.llm_model.setCurrentText(cur)
+        self.llm_model.loaded = True
+        self.llm_status.setText(f"{len(models)} modèle(s) disponible(s) : choisissez-en un, puis Enregistrer."
+                                if models else "⚠ Aucun modèle disponible chez ce service.")
+        return True
+
+    def _llm_test(self) -> None:
+        self._llm_load_models()
 
     def _llm_save(self) -> None:
         k = self.llm_kind.currentData()
         cfg = {"kind": k, "base_url": self.llm_url.text().strip(), "model": self.llm_model.currentText().strip()}
         if k != "none" and not cfg["model"]:
-            self.llm_status.setText("⚠ Indiquez le nom du modèle (bouton « Tester la connexion » pour la liste).")
+            self.llm_status.setText("⚠ Choisissez un modèle dans la liste.")
             return
         if k == "openai" and self.llm_key.text().strip():
             try:
@@ -843,8 +882,22 @@ class SettingsPage(QWidget):
                 self.llm_status.setText(f"⚠ {exc}")
                 return
             self.llm_key.clear()
+        note = "Enregistré."
+        if k != "none":
+            # nom de modèle vérifié auprès du service : une faute de frappe ferait échouer chaque traduction
+            from ...ai.highlights import LLMError, check_llm
+            try:
+                models = check_llm(k, cfg["base_url"], (secrets.get_secret("llm_api_key") or "") if k == "openai"
+                                   else "")
+            except LLMError as exc:
+                models, note = None, f"Enregistré, mais le service n'a pas pu être vérifié : {exc}"
+            if models is not None and cfg["model"] not in models:
+                self._llm_load_models(quiet=True)
+                self.llm_status.setText(f"⚠ Le modèle « {cfg['model']} » n'existe pas chez ce service : choisissez-en "
+                                        "un dans la liste.")
+                return
         self.app.settings.set("llm", cfg)
-        self.llm_status.setText("Enregistré.")
+        self.llm_status.setText(note)
         self.llm_changed.emit()
 
     def _model_rows(self) -> list[tuple]:

@@ -16,8 +16,11 @@ FILE_FILTER = ("Médias et documents (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.mts
                "Tous les fichiers (*)")
 
 
-def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id: int | None = None) -> int:
-    """Soumet une tâche d'import par fichier. Demande confirmation pour les doublons."""
+def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id: int | None = None,
+                 extra: dict | None = None) -> int:
+    """Soumet une tâche d'import par fichier. Demande confirmation pour les doublons.
+
+    extra : paramètres ajoutés à chaque tâche (ex. {"auto_clips": True} : extraits cherchés d'office)."""
     if not ffmpeg.available():
         QMessageBox.critical(parent, "Import", "FFmpeg est introuvable : l'analyse des médias est impossible.")
         return 0
@@ -26,7 +29,8 @@ def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id:
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            n += import_paths(app, parent, [str(x) for x in sorted(path.iterdir()) if x.is_file()], project_id)
+            n += import_paths(app, parent, [str(x) for x in sorted(path.iterdir()) if x.is_file()], project_id,
+                              extra)
             continue
         if not path.is_file():
             continue
@@ -38,37 +42,43 @@ def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id:
             continue
         if dup:
             r = QMessageBox.question(parent, "Média déjà importé",
-                                     f"« {path.name} » est déjà dans Extraits.\nL'importer une seconde fois ?",
+                                     f"« {path.name} » est déjà dans Médias.\nL'importer une seconde fois ?",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 continue
             allow = True
         app.jobs.submit("import_file", f"Import · {path.name}",
-                        {"path": str(path), "project_id": project_id, "allow_duplicate": allow})
+                        {"path": str(path), "project_id": project_id, "allow_duplicate": allow, **(extra or {})})
         n += 1
     return n
 
 
-def pick_and_import(app: AppContext, parent: QWidget, project_id: int | None = None) -> int:
-    files, _ = QFileDialog.getOpenFileNames(parent, "Importer des médias", "", FILE_FILTER)
-    return import_paths(app, parent, files, project_id) if files else 0
+def pick_and_import(app: AppContext, parent: QWidget, project_id: int | None = None, extra: dict | None = None,
+                    file_filter: str = FILE_FILTER) -> int:
+    files, _ = QFileDialog.getOpenFileNames(parent, "Importer des médias", "", file_filter)
+    return import_paths(app, parent, files, project_id, extra) if files else 0
 
 
-def import_url(app: AppContext, parent: QWidget, project_id: int | None = None) -> bool:
+def import_url(app: AppContext, parent: QWidget, project_id: int | None = None, url: str | None = None,
+               extra: dict | None = None) -> bool:
+    """Téléchargement par lien ; sans `url`, l'adresse est demandée."""
     if not downloader.available():
         QMessageBox.information(parent, "Import par URL",
                                 "Le module de téléchargement (yt-dlp) n'est pas installé dans cette version.")
         return False
-    url, ok = QInputDialog.getText(parent, "Importer depuis une URL",
-                                   "Adresse de la vidéo (YouTube, TikTok, Instagram, Facebook, X, lien direct…)\n"
-                                   "Le téléchargement n'est pas garanti pour toutes les adresses.")
+    ok = True
+    if url is None:
+        url, ok = QInputDialog.getText(parent, "Importer depuis une URL",
+                                       "Adresse de la vidéo (YouTube, TikTok, Instagram, Facebook, X, lien direct…)\n"
+                                       "Le téléchargement n'est pas garanti pour toutes les adresses.")
     url = url.strip()
     if not ok or not url:
         return False
     if not url.lower().startswith(("http://", "https://")):
         QMessageBox.warning(parent, "Import par URL", "L'adresse doit commencer par http:// ou https://")
         return False
-    app.jobs.submit("import_url", f"Téléchargement · {url[:60]}", {"url": url, "project_id": project_id})
+    app.jobs.submit("import_url", f"Téléchargement · {url[:60]}",
+                    {"url": url, "project_id": project_id, **(extra or {})})
     return True
 
 

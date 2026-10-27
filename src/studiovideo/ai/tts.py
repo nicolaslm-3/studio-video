@@ -1,9 +1,11 @@
 """Synthèse vocale (cahier des charges §11) : moteurs interchangeables.
 
-- ElevenLabs (clé API personnelle) : voix réalistes, multilingues.
-- Piper (local, facultatif) : voix hors ligne, si le module et une voix sont installés.
+- ElevenLabs (clé API personnelle) : voix réalistes, multilingues (une même voix parle toutes les langues).
+- OpenAI (clé du modèle de langage) : voix naturelles, multilingues, payant à l'usage.
+- Piper (local, gratuit) : voix hors ligne, une voix par langue, si le moteur et la voix sont installés.
 Chaque moteur écrit un fichier WAV mono pour une phrase.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +20,20 @@ from pathlib import Path
 from typing import Protocol
 
 _NOWIN = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+# Moteurs de voix : (nom, qualité, coût, ce qu'il faut, adresse)
+ENGINES = {
+    "elevenlabs": ("ElevenLabs", "La plus réaliste ; une même voix parle toutes les langues",
+                   "Forfait gratuit d'environ 10 minutes de voix par mois, puis abonnement",
+                   "Une clé API ElevenLabs (elle commence par « sk_ »)",
+                   "https://elevenlabs.io/app/settings/api-keys"),
+    "openai": ("OpenAI", "Très naturelle, multilingue (11 voix)", "Payant à l'usage (environ 1,5 centime par minute)",
+               "La clé OpenAI de Réglages → Modèle de langage, avec du crédit",
+               "https://platform.openai.com/settings/organization/billing"),
+    "piper": ("Piper (hors ligne)", "Correcte, un peu robotique", "Gratuit, sur ce PC, sans Internet",
+              "Une voix téléchargée dans la langue de la traduction (Réglages → Voix)", ""),
+}
+OPENAI_VOICES = ("alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse")
 
 
 class TTSError(RuntimeError):
@@ -73,9 +89,17 @@ class ElevenLabsTTS:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except urllib.error.HTTPError as exc:
-            detail = exc.read()[:300].decode("utf-8", "replace")
-            if exc.code == 401:
-                raise TTSError("Clé ElevenLabs refusée.") from exc
+            detail = exc.read()[:400].decode("utf-8", "replace")
+            if "api_key_id_used_as_api_key" in detail:
+                raise TTSError("Vous avez collé l'identifiant de la clé ElevenLabs, pas la clé elle-même : la clé "
+                               "commence par « sk_ » et n'est affichée qu'à sa création (ElevenLabs → Developers → "
+                               "API Keys → Create). Collez-la dans Réglages.") from exc
+            if exc.code == 401 or "invalid_api_key" in detail:
+                raise TTSError("Clé ElevenLabs refusée : vérifiez-la dans Réglages (elle commence par « sk_ »).") \
+                    from exc
+            if "quota_exceeded" in detail or "credits" in detail.lower():
+                raise TTSError("Plus de crédit ElevenLabs ce mois-ci : attendez le renouvellement, passez à un "
+                               "forfait supérieur ou choisissez une autre voix.") from exc
             if exc.code == 429:
                 raise TTSError("Quota ElevenLabs atteint ou trop de requêtes.") from exc
             raise TTSError(f"ElevenLabs a répondu {exc.code} : {detail}") from exc
@@ -87,6 +111,16 @@ class ElevenLabsTTS:
         return [Voice(v["voice_id"], v.get("name", v["voice_id"]), v.get("category", ""))
                 for v in data.get("voices", [])]
 
+    def credits(self) -> tuple[int, int] | None:
+        """(caractères utilisés, caractères du forfait) ce mois-ci ; None si la clé n'a pas ce droit."""
+        try:
+            d = json.loads(self._req("/v1/user/subscription", timeout=20).decode())
+        except TTSError as exc:
+            if "sk_" in str(exc) or "refusée" in str(exc):
+                raise
+            return None
+        return int(d.get("character_count") or 0), int(d.get("character_limit") or 0)
+
     def synth(self, text: str, voice: str, language: str, dest: Path, speed: float = 1.0) -> Path:
         body = {"text": text, "model_id": self.model,
                 "voice_settings": {"stability": 0.5, "similarity_boost": 0.75,
@@ -97,6 +131,37 @@ class ElevenLabsTTS:
         if len(pcm) < 200:
             raise TTSError("Audio vide reçu d'ElevenLabs.")
         return write_wav(dest, pcm, self.RATE)
+
+
+class OpenAITTS:
+    """Voix OpenAI (même clé que le modèle de langage OpenAI)."""
+    name = "openai"
+
+    def __init__(self, api_key: str, base_url: str = "", model: str = "gpt-4o-mini-tts"):
+        if not api_key:
+            raise TTSError("Clé OpenAI absente (Réglages → Modèle de langage, type « API compatible OpenAI »).")
+        self.key, self.model = api_key, model
+        self.url = (base_url or "https://api.openai.com").rstrip("/")
+
+    def voices(self) -> list[Voice]:
+        return [Voice(v, v.capitalize(), "multilingue") for v in OPENAI_VOICES]
+
+    def synth(self, text: str, voice: str, language: str, dest: Path, speed: float = 1.0) -> Path:
+        body = {"model": self.model, "voice": voice, "input": text, "response_format": "pcm",   # 24 kHz, 16 bits
+                "speed": max(0.5, min(2.0, speed))}
+        req = urllib.request.Request(self.url + "/v1/audio/speech", data=json.dumps(body).encode(), headers={
+            "Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = r.read()
+        except urllib.error.HTTPError as exc:
+            from .highlights import http_error_text
+            raise TTSError("Voix OpenAI : " + http_error_text(exc.code, exc.read(), self.model)) from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise TTSError(f"OpenAI injoignable : {exc}") from exc
+        if len(data) < 200:
+            raise TTSError("Audio vide reçu d'OpenAI.")
+        return write_wav(dest, data[: len(data) // 2 * 2], 24000)
 
 
 class PiperTTS:
@@ -135,11 +200,14 @@ class PiperTTS:
         return dest
 
 
-def make_engine(kind: str, secret, models_dir: Path) -> TTSEngine:
+def make_engine(kind: str, secret, models_dir: Path, llm: dict | None = None) -> TTSEngine:
     if kind == "elevenlabs":
         import os
         return ElevenLabsTTS(secret("elevenlabs_api_key") or "",
                              base_url=os.environ.get("STUDIOVIDEO_ELEVENLABS_URL", ""))
+    if kind == "openai":
+        llm = llm or {}
+        return OpenAITTS(secret("llm_api_key") or "", llm.get("base_url", "") if llm.get("kind") == "openai" else "")
     if kind == "piper":
         return PiperTTS(models_dir)
     raise TTSError(f"Moteur de voix inconnu : {kind}")

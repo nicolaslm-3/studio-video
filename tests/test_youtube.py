@@ -121,7 +121,8 @@ def test_metadata_scheduling():
 def test_connect_and_resumable_upload(google, tmp_path):
     tok = youtube.connect("client", "secret", _browser, timeout=10)
     assert tok["refresh_token"] == "REFRESH"
-    assert youtube.channel(youtube.access_token("client", "secret", "REFRESH")) == {"id": "UC123", "title": "Ma chaîne"}
+    assert youtube.channel(youtube.access_token("client", "secret", "REFRESH")) == {"id": "UC123", "title": "Ma chaîne",
+                                                                                   "thumbnail": ""}
     with pytest.raises(youtube.YouTubeError, match="révoquée"):
         youtube.access_token("client", "secret", "OLD")
     video = tmp_path / "v.mp4"

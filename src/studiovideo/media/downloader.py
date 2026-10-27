@@ -7,6 +7,7 @@ L'URL et la provenance sont conservées avec le média.
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +34,13 @@ def yt_dlp_version() -> str | None:
         return None
 
 
+def js_runtimes() -> dict:
+    """Moteurs JavaScript présents sur le PC : YouTube en exige un (défis de signature), sinon il coupe le
+    téléchargement en cours de route (erreur 403)."""
+    found = {name: {"path": path} for name in ("deno", "node", "bun") if (path := shutil.which(name))}
+    return found or {"deno": {}}
+
+
 def download(url: str, dest_dir: Path, progress: Callable[[float, str], None] | None = None,
              is_cancelled: Callable[[], bool] | None = None) -> tuple[Path, dict]:
     """Télécharge `url` dans `dest_dir`. Retourne (fichier, métadonnées utiles)."""
@@ -53,13 +61,15 @@ def download(url: str, dest_dir: Path, progress: Callable[[float, str], None] | 
 
     opts = {
         "outtmpl": str(dest_dir / "%(extractor)s-%(id)s.%(ext)s"),
-        "format": "bv*+ba/b",
+        "format": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",   # 1080p suffit au montage
         "merge_output_format": "mp4",
         "noplaylist": True,
         "continuedl": True,          # reprise d'un téléchargement interrompu
         "progress_hooks": [hook],
         "quiet": True,
+        "noprogress": True,
         "no_warnings": True,
+        "js_runtimes": js_runtimes(),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -76,6 +86,9 @@ def download(url: str, dest_dir: Path, progress: Callable[[float, str], None] | 
             hint = "Contenu non disponible dans votre pays."
         elif "Unsupported URL" in msg:
             hint = "Cette adresse n'est pas prise en charge."
+        elif "403" in msg and set(js_runtimes()) == {"deno"} and not shutil.which("deno"):
+            hint = ("La plateforme a refusé le téléchargement : installez Node.js (nodejs.org), dont YouTube a "
+                    "besoin, puis réessayez.")
         else:
             hint = "Le téléchargement a échoué. Une mise à jour de yt-dlp peut être nécessaire."
         raise RuntimeError(f"{hint}\nDétail : {msg[:400]}") from exc

@@ -76,3 +76,25 @@ class CandidateService:
                      json.dumps({"hook": k["hook"]}, ensure_ascii=False))).lastrowid)
                 c.execute("UPDATE clip_candidate SET state = 'accepted' WHERE id = ?", (cid,))
         return out
+
+    def set_hook(self, cid: int, hook: str) -> None:
+        self.db.connect().execute("UPDATE clip_candidate SET hook = ? WHERE id = ?", (hook.strip(), cid))
+
+    def clips_for(self, cids: list[int]) -> list[dict]:
+        """Un clip par proposition (créé au besoin, bornes et accroche remises à jour) : dicts prêts à exporter."""
+        out = []
+        new = [cid for cid in cids if not self.db.query_one("SELECT id FROM clip WHERE candidate_id = ?", (cid,))]
+        if new:
+            self.to_clips(new)
+        with self.db.transaction() as c:
+            for cid in cids:
+                k = c.execute("SELECT * FROM clip_candidate WHERE id = ?", (cid,)).fetchone()
+                row = c.execute("SELECT * FROM clip WHERE candidate_id = ? ORDER BY id LIMIT 1", (cid,)).fetchone()
+                if not k or not row:
+                    continue
+                c.execute("UPDATE clip SET start_s = ?, end_s = ?, edit_json = ? WHERE id = ?",
+                          (k["start_s"], k["end_s"], json.dumps({"hook": k["hook"]}, ensure_ascii=False), row["id"]))
+                c.execute("UPDATE clip_candidate SET state = 'accepted' WHERE id = ?", (cid,))
+                out.append({"id": row["id"], "candidate_id": cid, "asset_id": k["source_asset_id"],
+                            "start": k["start_s"], "end": k["end_s"], "name": row["name"], "hook": k["hook"] or ""})
+        return out
