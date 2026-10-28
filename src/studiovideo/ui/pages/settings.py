@@ -114,7 +114,7 @@ class SettingsPage(QWidget):
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
         right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. « Se connecter à ce compte » ouvre "
-                                  "son navigateur dédié (Edge) : il y reste connecté, et l'Atelier de publication y "
+                                  "son propre profil de ton navigateur : il y reste connecté, et l'Atelier de publication y "
                                   "ouvre la page d'envoi. La connexion par API reste possible dans les réglages du "
                                   "compte (Avancé).", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)

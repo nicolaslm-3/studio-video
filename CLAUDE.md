@@ -100,7 +100,8 @@ programmation : calendrier (jour choisi dans un rond), heures et minutes par 5,
 puis publier / programmer / brouillon sur les réseaux via `PublicationService` (brouillon : YouTube privé, boîte de
 réception TikTok, Page Facebook ; Instagram à la main), ou « Sur mon PC seulement » (aucune publication).
 « Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte, adresse publique, **navigateur
-dédié** (« Se connecter à ce compte » : Edge lancé normalement avec le profil `browser/<id>`, l'utilisateur se connecte
+dédié** (« Se connecter à ce compte » : navigateur par défaut de Windows — sinon Edge — lancé normalement avec le profil
+`browser/<navigateur>/<id>`, l'utilisateur se connecte
 lui-même, la session est reconnue à la fermeture, `publish/browser.py`) ; la connexion par API (application développeur,
 OAuth) est repliée dans « Avancé : connexion par API », jamais supprimée ; il n'y a plus d'onglet Paramètres →
 Publication. **Sans API** : **Atelier de publication** (`ui/publish_workshop.py`, ouvert d'office après « Publier

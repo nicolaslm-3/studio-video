@@ -123,7 +123,7 @@ class AccountSetupDialog(QDialog):
         from .simple_views import _row
         self.nav_state = label("", "badge")
         nl.addLayout(_row(label("Navigateur dédié", "h2"), "stretch", self.nav_state))
-        nl.addWidget(label("Le compte reste connecté dans son propre navigateur (Edge) : la page d'envoi de l'Atelier "
+        nl.addWidget(label("Le compte reste connecté dans son propre profil de ton navigateur : la page d'envoi de l'Atelier "
                            "de publication s'y ouvre déjà connectée. Tu te connectes toi-même, puis tu fermes la "
                            "fenêtre ; le logiciel ne voit jamais ton mot de passe.", "muted", wrap=True, hint=False))
         self.login_btn = button("Se connecter à ce compte", "primary", icon="log-in", on_click=self._browser_login)

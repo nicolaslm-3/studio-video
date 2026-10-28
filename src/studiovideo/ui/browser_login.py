@@ -1,5 +1,5 @@
-"""« Se connecter à ce compte » : le navigateur dédié du compte (Edge, sinon Chrome) s'ouvre normalement sur la page
-de connexion du réseau ; l'utilisateur se connecte lui-même puis ferme la fenêtre. Le logiciel vérifie ensuite que
+"""« Se connecter à ce compte » : le navigateur dédié du compte (navigateur par défaut, sinon Edge) s'ouvre
+normalement sur la page de connexion du réseau ; l'utilisateur se connecte lui-même puis ferme la fenêtre. Le logiciel vérifie ensuite que
 le profil contient bien une session (`publish/browser.py`). Il ne voit jamais le mot de passe."""
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _now() -> str:
 
 
 def profile(app: AppContext, account_id: int):
-    return browser.profile_dir(app.paths.root, account_id)
+    return browser.profile_dir(app.paths.root, account_id, browser.find_browser())
 
 
 def check_session(app: AppContext, account_id: int) -> bool | None:
@@ -46,12 +46,14 @@ def state_text(app: AppContext, account_id: int) -> str:
 
 
 def open_page(app: AppContext, account_id: int, url: str, fallback=None) -> str:
-    """Ouvre `url` dans le profil du compte. Sans Edge ni Chrome : navigateur par défaut (`fallback`), et le dit."""
+    """Ouvre `url` dans le profil du compte. Sans navigateur capable d'un profil séparé : navigateur par défaut
+    (`fallback`), et le dit."""
     exe = browser.find_browser()
     if exe is None:
         if fallback:
             fallback(url)
-        return "Edge et Chrome introuvables : page ouverte dans le navigateur par défaut (pas dans le profil du compte)."
+        return "Aucun navigateur ne peut ouvrir le profil du compte : page ouverte dans le navigateur par défaut, " \
+               "sans la session du compte."
     browser.launch(exe, profile(app, account_id), url)
     return ""
 
@@ -74,8 +76,8 @@ class BrowserLogin(QObject):
         """Lance le navigateur ; renvoie un message d'erreur, ou "" si la fenêtre s'ouvre."""
         exe = browser.find_browser()
         if exe is None:
-            return "Ni Edge ni Chrome n'ont été trouvés sur ce PC : la connexion dans un navigateur dédié est " \
-                   "impossible."
+            return "Aucun navigateur capable d'un profil séparé (Brave, Chrome, Edge, Firefox…) sur ce PC : la " \
+                   "connexion dans un navigateur dédié est impossible."
         acc = self.app.concepts.get_account(self.account_id)
         browser.launch(exe, self.profile, browser.LOGIN_URLS.get(acc.platform.value, "about:blank"))
         self.timer.start()

@@ -26,11 +26,13 @@ def chrome_time(epoch):
 
 
 def test_profile_and_command(tmp_path):
-    p = browser.profile_dir(tmp_path, 7)
-    assert p == tmp_path / "browser" / "7"
+    p = browser.profile_dir(tmp_path, 7, tmp_path / "brave.exe")
+    assert p == tmp_path / "browser" / "brave" / "7"
     cmd = browser.command(tmp_path / "msedge.exe", p, "https://www.tiktok.com/login")
     assert cmd[1] == f"--user-data-dir={p}" and cmd[-1] == "https://www.tiktok.com/login"
     assert "--no-first-run" in cmd
+    ff = browser.command(tmp_path / "firefox.exe", p, "https://x.com")
+    assert ff[1:3] == ["-profile", str(p)] and ff[-1] == "https://x.com"
     assert set(browser.LOGIN_URLS) == set(browser.SESSION_COOKIES) == {"youtube", "tiktok", "instagram",
                                                                           "facebook", "x"}
 
@@ -42,6 +44,31 @@ def test_find_browser_override(tmp_path, monkeypatch):
     exe.write_bytes(b"")
     assert browser.find_browser() == exe
     assert browser.browser_name(exe) == "Edge"
+    assert browser.browser_name(tmp_path / "brave.exe") == "Brave"
+
+
+def test_default_browser_first(tmp_path, monkeypatch):
+    brave = tmp_path / "brave.exe"
+    brave.write_bytes(b"")
+    monkeypatch.delenv("STUDIOVIDEO_BROWSER", raising=False)
+    monkeypatch.setattr(browser, "default_browser", lambda: brave)
+    assert browser.find_browser() == brave                       # navigateur par défaut de Windows
+    odd = tmp_path / "safari.exe"
+    odd.write_bytes(b"")
+    monkeypatch.setattr(browser, "default_browser", lambda: odd)
+    assert browser.find_browser() != odd                         # sans profil séparé possible : Edge en secours
+
+
+def test_firefox_session(tmp_path):
+    prof = tmp_path / "ff"
+    prof.mkdir()
+    con = sqlite3.connect(prof / "cookies.sqlite")
+    con.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT, expiry INTEGER)")
+    con.execute("INSERT INTO moz_cookies VALUES ('.tiktok.com', 'sessionid', '', ?)", (int(time.time()) + 3600,))
+    con.commit()
+    con.close()
+    assert browser.session_found(prof, "tiktok") is True
+    assert browser.session_found(prof, "instagram") is False
 
 
 def test_session_found_reads_names_only(tmp_path, monkeypatch):

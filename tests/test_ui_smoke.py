@@ -255,7 +255,7 @@ def test_calendar_publication_flow(window, monkeypatch, tmp_path):
     assert QApplication.clipboard().text() == "Mon sketch"            # titre copié d'office
     a._open()
     assert opened == ["https://www.youtube.com/upload"]
-    assert "introuvables" in a.msg.text()
+    assert "profil du compte" in a.msg.text()
     assert ctx.publications.get(pubs[yt.id].id)["status"] == "manual_action"
     a.url.setText("https://www.tiktok.com/@x/video/1")
     a._confirm()
