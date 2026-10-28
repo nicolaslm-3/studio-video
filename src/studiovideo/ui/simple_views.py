@@ -327,15 +327,23 @@ class ClippingView(_View):
 
         self.body = QStackedWidget()
         ml.addWidget(self.body, 1)
-        # page 0 : pas encore de vidéo
+        # page 0 : pas encore de vidéo — une zone de dépôt, petite, au centre
         dz = DropZone("Glisse ta vidéo ici")
         dz.dropped.connect(self.dropped)
-        self.body.addWidget(dz)
+        dz.setFixedSize(420, 200)
+        drop_page = QWidget()
+        dl = QVBoxLayout(drop_page)
+        dl.addStretch(1)
+        dl.addWidget(dz, 0, Qt.AlignHCenter)
+        dl.addStretch(2)
+        self.drop_zone = dz
+        self.body.addWidget(drop_page)
         # page 1 : extraits + clip final
         work = QWidget()
         wl = QHBoxLayout(work)
         wl.setContentsMargins(0, 0, 0, 0)
         wl.setSpacing(34)                                  # de l'air entre les extraits et les outils
+        wl.addStretch(1)                                   # les deux colonnes au centre, de l'espace sur les bords
         left = QVBoxLayout()
         left.setSpacing(8)
         self.full_slot = QVBoxLayout()                     # en haut : la vidéo complète
@@ -393,7 +401,6 @@ class ClippingView(_View):
         lw.setLayout(left)
         lw.setFixedWidth(460)                             # extraits moins larges
         wl.addWidget(lw)
-        wl.addStretch(1)
 
         # colonne de droite : l'aperçu (le plus grand possible), début et fin, « Créer »
         right = QVBoxLayout()
@@ -402,6 +409,7 @@ class ClippingView(_View):
         self.player = MontagePlayer()
         self.player.note.setMaximumHeight(0)              # pas de note technique sous l'aperçu
         self.player.setMinimumHeight(380)
+        self.player.fit_top = True                        # l'aperçu commence en haut de la colonne
         right.addWidget(self.player, 1)
         self.follow = tool("focus", "Suivre la personne qui parle : la vidéo est analysée et le cadre suit le "
                                     "visage de celui qui parle (vidéo horizontale mise en vertical). Désactivé : "
@@ -427,12 +435,13 @@ class ClippingView(_View):
         right.addWidget(self.edit_box)
         self.gen = button("Créer les vidéos", "primary", on_click=self._create)
         right.addLayout(_row("stretch", self.gen))
+        right.addStretch(0)                               # la place en trop sous la colonne, jamais au-dessus
         rw = QWidget()
         rw.setLayout(right)
         rw.setMinimumWidth(320)
         rw.setMaximumWidth(500)                           # colonne d'outils plus étroite, l'aperçu en hauteur
-        wl.addWidget(rw, 1)
-        wl.addStretch(1)                                  # centrée entre les extraits et le bord de la fenêtre
+        wl.addWidget(rw, 10)                              # s'élargit d'abord (jusqu'à 500), puis les bords
+        wl.addStretch(1)
         self.body.addWidget(work)
         root.addWidget(main, 1)
 
@@ -592,8 +601,7 @@ class ClippingView(_View):
     def _update_banner(self, v, rows, made: dict[int, int], data: dict) -> None:
         from ..transcribe import engines
         if not v:
-            return self._banner("Importe une vidéo", "Un débat, un live, un podcast, un match… Glisse le fichier "
-                                "ou colle un lien.", "Importer", self.browse, 0)
+            return self._banner("")                         # la zone de dépôt, au centre, suffit
         aid = v["id"]
         if not self.app.transcripts.has(aid):
             for kind, key, val in (("auto_clips", "project_id", self.pid), ("transcribe", "asset_id", aid)):
@@ -637,7 +645,10 @@ class ClippingView(_View):
 
     # -- extrait sélectionné ------------------------------------------------------------
     def _select(self, cid: int | None, keep: bool = False) -> None:
-        """Extrait (ou vidéo complète) affiché ; `keep` : rafraîchissement, l'aperçu n'est refait que s'il change."""
+        """Extrait (ou vidéo complète) affiché ; `keep` : rafraîchissement, l'aperçu n'est refait que s'il change.
+        Un extrait choisi se lit depuis son début."""
+        if not keep:
+            self.player.rewind()
         self.sel = cid
         for k, c in self.cards.items():
             c.set_selected(k == cid)
@@ -1322,9 +1333,13 @@ class TranslationView(_View):
         choices = dict(translation_choices(self.app))
         eng = self._engine()
         name = choices.get(eng) or trm.ENGINES.get(eng, (eng,))[0]
-        self.subs_row.set_engine(name.replace(" (recommandé)", ""), "Moteur de traduction (aussi pour la voix) : "
-                                 "clic pour en choisir un autre")
         ready = eng in choices and (eng != "auto" or len(choices) > 1)
+        if self.voice and self.voice.get("engine") == "eleven_dub" and self.do_voice.isChecked():
+            # doublage ElevenLabs : ses sous-titres (sa traduction) servent ; l'autre moteur seulement en secours
+            name, ready = "ElevenLabs (avec le doublage)", True
+        self.subs_row.set_engine(name.replace(" (recommandé)", ""), "Moteur de traduction (aussi pour la voix) : "
+                                 "clic pour en choisir un autre. Avec le doublage ElevenLabs, les sous-titres sont "
+                                 "ceux d'ElevenLabs.")
         self.subs_row.set_ok(ready, "Prêt" if ready else "Ce moteur n'est pas réglé : roue crantée")
         ok, why = self._voice_ready()
         self.voice_row.set_engine(self.voice["name"] if self.voice else "Choisir une voix…",

@@ -449,26 +449,37 @@ def _register_handlers(app: AppContext) -> None:
             st = status[lang] = {"subtitles": "ok" if subs_on else "off", "voice": "off"}
             dubbed = False
             try:
+                if eleven_dub:
+                    # doublage ElevenLabs : sa traduction (ses sous-titres) sert aux sous-titres de la langue
+                    try:
+                        rd = eleven_dub_job(_Sub(ctx, a0, a0 + span * 0.6, tag + "voix · "),
+                                            {"asset_id": aid, "language": lang, "source": src.language})
+                        st["voice"] = "ok"
+                        dubbed = True
+                        if rd.get("subtitles"):
+                            used += [e for e in ["elevenlabs"] if e not in used]
+                        elif rd.get("subtitles_error"):
+                            notes.append(f"{lang.upper()} : sous-titres d'ElevenLabs indisponibles "
+                                         f"({rd['subtitles_error']}), traduction par un autre moteur")
+                    except Exception as exc:
+                        ctx.check()
+                        st["voice"] = (str(exc).splitlines() or [repr(exc)])[0][:300]
                 if app.transcripts.translation(aid, lang) is None:
                     r = translate(_Sub(ctx, a0, a0 + span * 0.3, tag + "traduction du texte · "),
                                   {"asset_id": aid, "language": lang, "engine": eng,
                                    "glossary": params.get("glossary") or []})
                     used += [e for e in r.get("engines", []) if e not in used]
                     notes += [n for n in r.get("failures", []) if n not in notes]
-                if voice:
+                if voice and not eleven_dub:
                     # la voix peut échouer seule : la langue garde alors ses sous-titres traduits
                     try:
-                        if eleven_dub:
-                            rd = eleven_dub_job(_Sub(ctx, a0 + span * 0.3, a0 + span * 0.6, tag + "voix · "),
-                                                {"asset_id": aid, "language": lang, "source": src.language})
-                        else:
-                            vid = _voice_for(voice, lang)
-                            from .ai.tts import ENGINES as TTS
-                            ek = voice.get("engine") or "elevenlabs"
-                            rd = dub(_Sub(ctx, a0 + span * 0.3, a0 + span * 0.6, tag + "voix · "),
-                                     {"asset_id": aid, "language": lang, "engine": ek, "voices": {},
-                                      "default_voice": vid,
-                                      "label": f"{TTS.get(ek, (ek,))[0]} · {voice.get('name') or vid}"})
+                        vid = _voice_for(voice, lang)
+                        from .ai.tts import ENGINES as TTS
+                        ek = voice.get("engine") or "elevenlabs"
+                        rd = dub(_Sub(ctx, a0 + span * 0.3, a0 + span * 0.6, tag + "voix · "),
+                                 {"asset_id": aid, "language": lang, "engine": ek, "voices": {},
+                                  "default_voice": vid,
+                                  "label": f"{TTS.get(ek, (ek,))[0]} · {voice.get('name') or vid}"})
                         st["voice"] = "ok"
                         dubbed = True
                         if rd.get("errors"):
@@ -567,7 +578,13 @@ def _register_handlers(app: AppContext) -> None:
         src_tr = app.transcripts.get(aid)
         if src_tr is None:
             raise ValueError("Transcrivez d'abord ce média.")
-        translator = tr_mod.make_translator(_tr_cfg(params.get("engine")), secrets.get_secret)
+        cfg = _tr_cfg(params.get("engine"))
+        if cfg["engine"] == "elevenlabs":                 # ElevenLabs traduit à partir du son de la vidéo
+            r = eleven_dub_job(ctx, {"asset_id": aid, "language": dst, "source": src_tr.language,
+                                     "keep_voice": False})
+            return {"asset_id": aid, "language": dst, "segments": r["subtitles"], "engines": ["elevenlabs"],
+                    "failures": []}
+        translator = tr_mod.make_translator(cfg, secrets.get_secret)
         out = tr_mod.translate_transcript(src_tr, translator, dst, params.get("glossary") or [], ctx.progress,
                                           is_cancelled=lambda: ctx.cancelled)
         ctx.check()
@@ -610,7 +627,9 @@ def _register_handlers(app: AppContext) -> None:
 
     def eleven_dub_job(ctx: JobContext, params: dict) -> dict:
         """Doublage par ElevenLabs à partir du son de la vidéo (sa transcription, sa traduction, voix d'origine
-        reproduite) : la piste rendue devient la voix doublée de la langue, à la place du son d'origine."""
+        reproduite) : la piste rendue devient la voix doublée de la langue, à la place du son d'origine. Ses
+        sous-titres (le texte traduit par ElevenLabs, minuté) deviennent la traduction de la vidéo dans cette langue.
+        keep_voice=False : seulement la traduction (moteur de traduction « ElevenLabs »), la voix n'est pas gardée."""
         import shutil
         import subprocess
         import tempfile
@@ -638,19 +657,42 @@ def _register_handlers(app: AppContext) -> None:
             wav = engines.extract_audio(Path(a["path"]), Path(d) / "son.wav")
             mp3 = Path(d) / "son.mp3"
             ff("-i", str(wav), "-b:a", "96k", str(mp3))
+            key = secrets.get_secret("elevenlabs_api_key") or ""
+            info: dict = {}
             try:
-                data = elevenlabs.dub(secrets.get_secret("elevenlabs_api_key") or "", mp3, lang,
-                                      params.get("source") or None, ctx.progress, lambda: ctx.cancelled)
+                data = elevenlabs.dub(key, mp3, lang, params.get("source") or None, ctx.progress,
+                                      lambda: ctx.cancelled, info=info)
             except InterruptedError:
                 ctx.check()
                 raise
             got = Path(d) / "double.mp3"
             got.write_bytes(data)
             ff("-i", str(got), "-vn", "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(tmp / "dub.wav"))
+        subs, subs_error = 0, ""
+        try:
+            ctx.progress(0.96, "sous-titres du doublage")
+            cues = elevenlabs.parse_srt(elevenlabs.dub_subtitles(key, info["dubbing_id"], lang))
+            if cues:
+                from .ai.translate import _spread
+                from .transcribe.model import TSegment, Transcript
+                segs = [TSegment(s, e, t, _spread(t.split(), s, e)) for s, e, t in cues]
+                app.transcripts.store_translation(aid, Transcript(segs, lang, "traduction:elevenlabs"),
+                                                  label="ElevenLabs")
+                subs = len(segs)
+            else:
+                subs_error = "ElevenLabs n'a pas renvoyé de sous-titres"
+        except (elevenlabs.ElevenLabsError, KeyError, ValueError) as exc:
+            subs_error = str(exc).splitlines()[0][:200] if str(exc) else "sous-titres indisponibles"
+        if not params.get("keep_voice", True):
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not subs:
+                raise ValueError("Traduction par ElevenLabs impossible : " + (subs_error or "pas de sous-titres"))
+            return {"asset_id": aid, "language": lang, "subtitles": subs, "engines": ["elevenlabs"]}
         man = dubbing.DubManifest(aid, lang, "elevenlabs-dubbing", {}, float(a["duration_s"] or 0), [], "dub.wav")
         tmp.rename(work)
         app.dubs.store(man, work, label="ElevenLabs · doublage de la vidéo")
-        return {"asset_id": aid, "language": lang, "lines": 0, "errors": [], "accelerated": []}
+        return {"asset_id": aid, "language": lang, "lines": 0, "errors": [], "accelerated": [], "subtitles": subs,
+                "subtitles_error": subs_error}
 
     def dub_line(ctx: JobContext, params: dict) -> dict:
         from .edit import dubbing
@@ -1084,8 +1126,7 @@ def _register_handlers(app: AppContext) -> None:
             acc = app.concepts.get_account(acc_id)
             refresh_tok = secrets.get_secret(f"tiktok_refresh_{acc_id}")
             if acc.connection_status != "connected" or not refresh_tok:
-                errors.append(f"{acc.display} : compte non connecté (chiffres à saisir à la main)")
-                continue
+                continue                                 # sans API : page publique de la vidéo
             try:
                 tok = tiktok.refresh(app.settings.get("tiktok_client_key", "") or "",
                                      secrets.get_secret("tiktok_client_secret") or "", refresh_tok)
@@ -1101,21 +1142,14 @@ def _register_handlers(app: AppContext) -> None:
                     done += 1
         return done, errors
 
-    def refresh_stats(ctx: JobContext, params: dict) -> dict:
-        """Relevé des statistiques publiques des vidéos YouTube (V4), via un compte YouTube connecté."""
+    def _youtube_api_stats(ctx: JobContext) -> tuple[int, int, list[str], str]:
+        """Comptes YouTube connectés par API (facultatif) : chiffres et rétention de YouTube Analytics."""
+        from datetime import date, timedelta
+
         from .publish import youtube
         from .services import secrets
-        tk_done, tk_errors = _tiktok_stats()
-        ig_done, ig_errors = _instagram_stats()
-        x_done, x_errors = _x_stats()
-        ig_done, ig_errors = ig_done + x_done, ig_errors + x_errors
-        tk_done, tk_errors = tk_done + ig_done, tk_errors + ig_errors
         items = app.analytics.youtube_ids()
-        if not items:
-            if tk_done or tk_errors:
-                return {"updated": tk_done, "errors": tk_errors}
-            return {"updated": 0, "errors": [], "note": "Aucune vidéo publiée à relever (YouTube, TikTok, Instagram)."}
-        token, errors = None, list(tk_errors)
+        token, errors = None, []
         for acc in app.concepts.list_accounts():
             refresh = secrets.get_secret(f"youtube_refresh_{acc.id}")
             if acc.platform.value == "youtube" and acc.connection_status == "connected" and refresh:
@@ -1125,25 +1159,20 @@ def _register_handlers(app: AppContext) -> None:
                     break
                 except youtube.YouTubeError as exc:
                     errors.append(f"{acc.display} : {exc}")
-        if token is None:
-            if tk_done:
-                return {"updated": tk_done, "errors": errors + ["YouTube : aucun compte connecté."]}
-            raise ValueError("Aucun compte YouTube connecté : connectez-en un (Paramètres → Comptes) pour relever "
-                             "les statistiques." + (" " + "; ".join(errors) if errors else ""))
-        ctx.progress(0.3, "Lecture des statistiques YouTube")
+        if not items or token is None:
+            return 0, 0, errors, ""
         stats = youtube.video_stats(token, list(dict.fromkeys(v for _, v in items)))
-        from datetime import date, timedelta
         done, detailed, scope_note = 0, 0, ""
         end = date.today().isoformat()
-        for k, (pid, vid) in enumerate(items):
+        for pid, vid in items:
             ctx.check()
             if vid not in stats:
-                errors.append(f"Vidéo {vid} introuvable (supprimée ou privée).")
-                continue
+                continue                                 # vidéo d'une autre chaîne : lue sur sa page publique
             m = dict(stats[vid])
             if not scope_note:
                 pub = app.db.query_one("SELECT last_attempt_at FROM publication WHERE id = ?", (pid,))
-                start = ((pub["last_attempt_at"] or "")[:10] if pub else "") or (date.today() - timedelta(days=90)).isoformat()
+                start = ((pub["last_attempt_at"] or "")[:10] if pub else "") or \
+                    (date.today() - timedelta(days=90)).isoformat()
                 try:
                     start = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
                     det = youtube.video_analytics(token, vid, start, end)
@@ -1152,14 +1181,74 @@ def _register_handlers(app: AppContext) -> None:
                 except youtube.ScopeMissing as exc:
                     scope_note = str(exc)
                 except youtube.YouTubeError as exc:
-                    if "403" not in str(exc):          # vidéo d'une autre chaîne : pas de détail, c'est normal
+                    if "403" not in str(exc):
                         errors.append(f"Détail {vid} : {exc}")
             app.analytics.record(pid, m, "api")
             done += 1
-            ctx.progress(0.3 + 0.7 * (k + 1) / len(items), f"{done} vidéo(s) relevée(s)")
-        res = {"updated": done + tk_done, "detailed": detailed, "errors": errors}
-        if scope_note:
-            res["note"] = scope_note
+        return done, detailed, errors, scope_note
+
+    def refresh_stats(ctx: JobContext, params: dict) -> dict:
+        """Relevé des statistiques. Sans API : la page publique de chaque vidéo publiée est lue (yt-dlp), aux
+        étapes du calendrier (`public_stats`) ; « all » (bouton Relever) : toute vidéo non relevée depuis une
+        heure. Au plus 20 pages par passage, une pause de 5 à 20 s entre deux. Les comptes connectés par API
+        (facultatif) passent d'abord par l'API de leur réseau."""
+        import random
+        from datetime import datetime as _dt, timedelta, timezone
+
+        from .publish import browser, public_stats
+        auto = not params.get("all")
+        delay = params.get("delay", public_stats.DELAY)
+        errors: list[str] = []
+        api_done = 0
+        ctx.progress(0.02, "Comptes connectés par API")    # facultatif : seulement les comptes connectés
+        for fn in (_tiktok_stats, _instagram_stats, _x_stats):
+            d, e = fn()
+            api_done += d
+            errors += e
+        d, detailed, e, note = _youtube_api_stats(ctx)
+        api_done += d
+        errors += e
+        now = _dt.now(timezone.utc).replace(tzinfo=None)
+        recent = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        todo = [t for t in app.analytics.public_targets()
+                if (public_stats.due(t["published_at"], t["last_at"], now) if auto
+                    else (t["last_at"] or "") < recent)]
+        later = max(0, len(todo) - public_stats.LIMIT)
+        todo = todo[:public_stats.LIMIT]
+        exe = browser.find_browser()
+        done = 0
+        for k, t in enumerate(todo):
+            ctx.check()
+            if k and delay:
+                ctx.cancel_event.wait(random.uniform(*delay))      # espacé : jamais en rafale
+                ctx.check()
+            ctx.progress(0.1 + 0.9 * k / len(todo), f"Page publique {k + 1}/{len(todo)}")
+            cookies = None
+            if t["platform"] in public_stats.NEEDS_SESSION:
+                prof = browser.profile_dir(app.paths.root, t["account_id"], exe)
+                if browser.is_open(prof):
+                    errors.append(f"{t['platform'].capitalize()} : ferme le navigateur du compte pour relever ses "
+                                  "chiffres")
+                    continue
+                cookies = public_stats.cookies_from(exe, prof)
+            try:
+                m = public_stats.read(t["url"], cookies)
+            except Exception as exc:
+                errors.append(f"{t['url']} : {(str(exc).splitlines() or ['illisible'])[0][:160]}")
+                continue
+            if m:
+                app.analytics.record(t["id"], m, "public")
+                done += 1
+            else:
+                errors.append(f"{t['url']} : aucun chiffre visible sur la page")
+        res = {"updated": api_done + done, "public": done, "detailed": detailed, "errors": errors}
+        if later:
+            res["note"] = f"{later} vidéo(s) relevée(s) au prochain passage (au plus {public_stats.LIMIT} à la fois)."
+        if note:
+            res["note"] = (res.get("note", "") + " " + note).strip()
+        if not todo and not api_done:
+            res["note"] = res.get("note") or ("Rien à relever : aucune vidéo publiée avec son lien, ou toutes "
+                                              "relevées il y a moins d'une heure.")
         return res
 
     def detect_text(ctx: JobContext, params: dict) -> dict:

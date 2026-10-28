@@ -671,6 +671,7 @@ class MontagePlayer(QWidget):
         self.vol_ = self.vol if self.enabled else None
         self.note = label("", "faint", wrap=True)
         lay.addWidget(self.note)
+        self.fit_top = False                # True : aperçu à la hauteur de l'image (la place en trop va dessous)
         for key, fn in (("Space", self.toggle), ("Left", lambda: self.step(-1)), ("Right", lambda: self.step(1))):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
@@ -738,9 +739,30 @@ class MontagePlayer(QWidget):
         self._flash.raise_()
         self._flash_timer.start()
 
+    def rewind(self) -> None:
+        """Autre vidéo (extrait, version, projet) : retour au début, à l'arrêt."""
+        self.pause()
+        self.t = 0.0
+
+    def _fit_height(self) -> None:
+        """`fit_top` : l'aperçu ne prend que la hauteur de l'image pour sa largeur ; il reste ainsi en haut de sa
+        colonne, la barre de lecture juste dessous."""
+        if not self.fit_top:
+            return
+        fw, fh = max(1, self.tl.format.width), max(1, self.tl.format.height)
+        extra = self.layout().sizeHint().height() - self.view.sizeHint().height()
+        h = int(self.width() * fh / fw) + max(0, extra)
+        if self.maximumHeight() != h:
+            self.setMaximumHeight(h)
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._fit_height()
+
     # -- données -----------------------------------------------------------
     def set_timeline(self, tl: Timeline, assets: dict[int, dict]) -> None:
         self.tl, self.assets = tl, assets
+        self._fit_height()
         self.slider.setRange(0, int(tl.duration * 1000))
         self._apply_rate()
         self._setup_layout()

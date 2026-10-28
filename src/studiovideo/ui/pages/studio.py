@@ -860,6 +860,8 @@ class StudioPage(QWidget):
             return
         if self.project_id != project_id:
             self.leave_project()
+            for pl in (self.mplayer, self.clip_view.player, self.tr_view.player, self.export_view.player):
+                pl.rewind()                               # autre projet (ou version) : lecture depuis le début
         self.flush()
         self.player.unload()
         self.mplayer.stop()

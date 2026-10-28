@@ -1,12 +1,13 @@
-"""Gestionnaire de tâches visible (§17.3)."""
+"""Gestionnaire de tâches visible (§17.3) : une colonne pour le média, une pour l'action en cours, une pour l'outil
+(moteur, modèle, alternative) ; chaque tâche active s'arrête à tout instant (bouton carré de sa ligne)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QProgressBar, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QMessageBox, QProgressBar,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core import AppContext
-from .widgets import STATUS_LABELS, button, label, local_time
+from .widgets import STATUS_LABELS, button, label, local_time, tool
 
 FILTERS = [("Toutes", None), ("Actives", ("pending", "running")), ("Échouées", ("failed",)),
            ("Terminées", ("succeeded",)), ("Annulées", ("cancelled",))]
@@ -29,19 +30,24 @@ STEPS = {"transcribe": "Transcription", "translate": "Traduction", "translate_vi
 TV_STEPS = {"voix": "génération de la voix", "traduction du texte": "traduction",
             "Transcription": "transcription", "Séparation voix / musique": "séparation voix / musique",
             "Textes d'origine": "repérage des textes", "export": "export"}
+COLUMNS = ["Média", "Action", "Outil", "État", "Progression", ""]
+STOP_COL = 5
 
 
 def _project_name(app: AppContext, p: dict) -> str:
     pid = p.get("project_id")
+    a = None
     if not pid and p.get("asset_id"):
         a = app.library.get(p["asset_id"])
         pid = a["project_id"] if a else None
     pr = app.projects.get(pid) if pid else None
-    return pr["name"] if pr else ""
+    if pr:
+        return pr["name"]
+    return a["file_name"] if a else ""
 
 
-def describe(app: AppContext, j) -> str:
-    """La tâche en clair : le projet, ce qu'elle fait (l'étape en cours), puis le modèle utilisé."""
+def describe_parts(app: AppContext, j) -> tuple[str, str, str]:
+    """(média, action en cours, outil utilisé) ; une tâche sans action connue : son étiquette comme action."""
     from ..ai import translate as trm
     from ..ai import tts
     from ..ai.translate import LANG_NAMES
@@ -84,10 +90,16 @@ def describe(app: AppContext, j) -> str:
     elif j.kind in ("find_highlights", "auto_clips"):
         eng = p.get("engine") or {}
         model = eng.get("model") or ("analyse locale" if eng else "")
+    elif j.kind in ("refresh_stats", "match_published"):
+        model = "pages publiques (yt-dlp)"
     if not step:
-        return j.label
-    parts = [_project_name(app, p), step + (f" ({lang.lower()})" if lang else ""), model]
-    return " · ".join(x for x in parts if x)
+        return "", j.label, ""
+    return _project_name(app, p), step + (f" ({lang.lower()})" if lang else ""), model.strip()
+
+
+def describe(app: AppContext, j) -> str:
+    """La tâche en clair : le projet, ce qu'elle fait (l'étape en cours), puis le modèle utilisé."""
+    return " · ".join(x for x in describe_parts(app, j) if x)
 
 
 class JobsPanel(QWidget):
@@ -109,26 +121,22 @@ class JobsPanel(QWidget):
         self.filter.currentIndexChanged.connect(self.refresh)
         head.addWidget(self.filter)
         head.addStretch(1)
-        self.cancel_btn = button("Annuler", on_click=self._cancel)
         self.retry_btn = button("Relancer", on_click=self._retry)
-        head.addWidget(self.cancel_btn)
         head.addWidget(self.retry_btn)
         lay.addLayout(head)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Tâche", "État", "Progression", "Détail"])
-        self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignCenter)
+        self.table = QTableWidget(0, len(COLUMNS))
+        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignCenter)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setShowGrid(False)
         hh = self.table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.Interactive)       # la tâche d'abord, le détail au survol
-        hh.resizeSection(3, 190)
-        hh.setSectionResizeMode(1, QHeaderView.Fixed)
-        hh.setSectionResizeMode(2, QHeaderView.Fixed)
-        hh.resizeSection(1, 48)
-        hh.resizeSection(2, 80)
+        for c in (0, 1, 2):
+            hh.setSectionResizeMode(c, QHeaderView.Stretch)
+        for c, w in ((3, 48), (4, 80), (STOP_COL, 34)):
+            hh.setSectionResizeMode(c, QHeaderView.Fixed)
+            hh.resizeSection(c, w)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         lay.addWidget(self.table)
         self._pending_refresh = QTimer(self, singleShot=True, interval=150)
@@ -157,15 +165,20 @@ class JobsPanel(QWidget):
         jobs = [j for j in self.app.jobs.list(self.filter.currentData(), limit=300) if j.kind != "preview_frame"]
         self.table.setRowCount(len(jobs))
         for i, j in enumerate(jobs):
-            text = describe(self.app, j)
-            it = QTableWidgetItem(text)
-            it.setData(Qt.UserRole, j.id)
-            it.setToolTip(f"{text}\n{j.label}\nCréée le {local_time(j.created_at)}")
-            self.table.setItem(i, 0, it)
+            media, step, model = describe_parts(self.app, j)
+            detail = j.error or j.message or ("; ".join(j.result.get("warnings", [])) if j.result else "")
+            tip = f"{describe(self.app, j)}\n{j.label}\nCréée le {local_time(j.created_at)}" + \
+                (f"\n\n{detail}" if detail else "")
+            for c, text in enumerate((media, step, model)):
+                it = QTableWidgetItem(text)
+                it.setToolTip(tip)
+                if c == 0:
+                    it.setData(Qt.UserRole, j.id)
+                self.table.setItem(i, c, it)
             st = QTableWidgetItem(STATUS_EMOJI.get(j.status, "•"))
             st.setTextAlignment(Qt.AlignCenter)
-            st.setToolTip(STATUS_LABELS[j.status])
-            self.table.setItem(i, 1, st)
+            st.setToolTip(STATUS_LABELS[j.status] + (f" : {detail.splitlines()[0]}" if detail else ""))
+            self.table.setItem(i, 3, st)
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(int(j.progress * 100))
@@ -174,11 +187,13 @@ class JobsPanel(QWidget):
             wl = QVBoxLayout(wrap)
             wl.setContentsMargins(6, 0, 6, 0)
             wl.addWidget(bar)
-            self.table.setCellWidget(i, 2, wrap)
-            detail = j.error or j.message or ("; ".join(j.result.get("warnings", [])) if j.result else "")
-            d = QTableWidgetItem(detail.splitlines()[0] if detail else "")
-            d.setToolTip(detail)
-            self.table.setItem(i, 3, d)
+            self.table.setCellWidget(i, 4, wrap)
+            if j.status in ("pending", "running"):
+                stop = tool("square", "Arrêter cette tâche", lambda _=False, jid=j.id: self.stop(jid), size=26,
+                            icon_px=14)
+                self.table.setCellWidget(i, STOP_COL, stop)
+            else:
+                self.table.removeCellWidget(i, STOP_COL)
             if j.id == sel:
                 self.table.selectRow(i)
         self._update_buttons()
@@ -191,18 +206,24 @@ class JobsPanel(QWidget):
     def _update_buttons(self) -> None:
         jid = self._selected()
         j = self.app.jobs.get(jid) if jid else None
-        self.cancel_btn.setEnabled(bool(j and j.status in ("pending", "running")))
         self.retry_btn.setEnabled(bool(j and j.status in ("failed", "cancelled")))
 
-    def _cancel(self) -> None:
-        jid = self._selected()
-        if jid:
-            self.app.jobs.cancel(jid)
+    def stop(self, jid: int, ask: bool = True) -> None:
+        """Arrête la tâche tout de suite. Un export ou une publication en cours (tâches « critiques ») : après
+        confirmation, le fichier ou l'envoi pouvant rester incomplet."""
+        j = self.app.jobs.get(jid)
+        if j is None or j.status not in ("pending", "running"):
+            return
+        if ask and j.critical and j.status == "running" and QMessageBox.question(
+                self, "Arrêter la tâche", "Cette tâche est un export ou une publication en cours. L'arrêter maintenant "
+                "peut laisser un fichier ou un envoi incomplet.\n\nL'arrêter quand même ?") != QMessageBox.Yes:
+            return
+        self.app.jobs.cancel(jid)
 
     def _retry(self) -> None:
         jid = self._selected()
         if jid:
             try:
                 self.app.jobs.retry(jid)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                QMessageBox.information(self, "Relancer", str(exc))

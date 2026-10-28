@@ -64,6 +64,10 @@ class Fake(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "audio/mpeg")
             self.end_headers()
             self.wfile.write(Fake.dubbed)
+        elif self.path == "/v1/dubbing/d1/transcripts/en/format/srt":
+            self._json({"transcript_format": "srt",
+                        "srt": "1\n00:00:00,200 --> 00:00:01,400\nHello everyone.\n\n"
+                               "2\n00:00:01,500 --> 00:00:02,800\nThanks\nfor watching.\n"})
         else:
             self.send_response(404)
             self.end_headers()
@@ -148,6 +152,33 @@ def test_eleven_dubbing_job(server, tmp_path, monkeypatch):
         assert app.dubs.get(aid, "en")[0].engine == "elevenlabs-dubbing"
         sent = next(b for p, b in Fake.calls if p == "/v1/dubbing")
         assert b'name="target_lang"\r\n\r\nen' in sent and b'name="source_lang"\r\n\r\nfr' in sent
+        # ses sous-titres deviennent la traduction anglaise (sous-titres et texte de la voix)
+        assert res["subtitles"] == 2
+        tr = app.transcripts.translation(aid, "en")
+        assert [s.text for s in tr.segments] == ["Hello everyone.", "Thanks for watching."]
+        assert tr.segments[1].start == 1.5 and tr.segments[1].words
+    finally:
+        app.close()
+
+
+def test_translate_with_elevenlabs_engine(server, tmp_path, monkeypatch):
+    """Moteur de traduction « ElevenLabs » : le texte traduit vient du doublage, la voix n'est pas gardée."""
+    from studiovideo.ai import translate as trm
+    from studiovideo.core import build_context
+    from studiovideo.services import secrets
+    from studiovideo.transcribe.model import TSegment, Transcript
+    monkeypatch.setattr(secrets, "get_secret", lambda n: "sk_ok" if n == "elevenlabs_api_key" else None)
+    assert "elevenlabs" in trm.CHOICES and "elevenlabs" not in trm.AUTO_ORDER     # jamais en automatique
+    assert trm.configured("elevenlabs", {}, secrets.get_secret)
+    app = build_context(tmp_path / "d")
+    try:
+        aid = app.importer().import_file(_video(tmp_path / "v.mp4")).asset_id
+        app.transcripts.store_original(aid, Transcript([TSegment(0, 2, "Bonjour à tous.")], "fr", "test"))
+        res = _wait(app, app.jobs.submit("translate", "T", {"asset_id": aid, "language": "en",
+                                                           "engine": "elevenlabs"})).result
+        assert res["engines"] == ["elevenlabs"] and res["segments"] == 2
+        assert app.transcripts.translation(aid, "en").segments[0].text == "Hello everyone."
+        assert app.dubs.get(aid, "en") is None                # traduction seule : pas de voix
     finally:
         app.close()
 

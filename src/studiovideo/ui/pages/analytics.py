@@ -1,7 +1,8 @@
 """Analytiques (V4, §20) : comparer vidéos, comptes, concepts et plateformes.
 
 Un indicateur non fourni s'affiche « — » (jamais 0). La source de chaque chiffre est visible :
-« API » (relevé automatique) ou « saisi » (recopié à la main depuis la plateforme).
+« page publique » (lue par le logiciel, sans API), « API » (compte connecté) ou « saisi » (recopié à la main).
+Onglet « Par vidéo » : une même vidéo sur les quatre réseaux, dans un seul tableau.
 """
 from __future__ import annotations
 
@@ -15,9 +16,12 @@ from ..scrub import int_spin
 from ...core import AppContext
 from ...publish.rules import RULES
 from ...services.analytics import LABELS, METRICS
+from .. import theme
 from ..widgets import Card, PageHeader, button, label, local_time
 
 NA = "—"
+FOUR = ("youtube", "tiktok", "facebook", "instagram")
+SOURCES = {"api": "API", "manuel": "saisi", "public": "page publique"}
 
 
 def _fmt(v) -> str:
@@ -140,7 +144,10 @@ class AnalyticsPage(QWidget):
         for w in (self.concept, self.platform):
             w.currentIndexChanged.connect(self.refresh)
             hdr.add_action(w)
-        self.refresh_btn = button("Relever les statistiques (YouTube, TikTok)", "primary", on_click=self._refresh_stats)
+        self.refresh_btn = button("Relever les statistiques", "primary", on_click=self._refresh_stats,
+                                  tooltip="Lit la page publique de chaque vidéo publiée (sans API), avec une pause "
+                                  "entre deux. Relevé automatique : 6 h après la publication, puis J+1, J+3, J+7, "
+                                  "J+14, J+30, puis chaque mois.")
         hdr.add_action(self.refresh_btn)
         lay.addWidget(hdr)
         self.status = label("", "muted", wrap=True)
@@ -149,6 +156,34 @@ class AnalyticsPage(QWidget):
         self.cards.setSpacing(12)
         lay.addLayout(self.cards)
         self.tabs = QTabWidget()
+        # une vidéo, tous les réseaux : la liste des vidéos, puis le détail réseau par réseau
+        vids = QWidget()
+        vv = QVBoxLayout(vids)
+        vv.setContentsMargins(0, 6, 0, 0)
+        vv.setSpacing(8)
+        self.videos = self._table(["Vidéo", "Vues (total)"] + [RULES[k].label for k in FOUR] + ["Dernier relevé"])
+        self.videos.setItemDelegateForColumn(1, BarDelegate(self.videos))
+        hv = self.videos.horizontalHeader()
+        hv.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.videos.setColumnWidth(1, 170)
+        for c in range(2, 7):
+            hv.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.videos.currentCellChanged.connect(lambda r, *_: self._show_video(r))
+        vv.addWidget(self.videos, 3)
+        self.video_title = label("Choisis une vidéo : ses chiffres sur chaque réseau s'affichent ici.", "h2")
+        vv.addWidget(self.video_title)
+        self.detail = self._table(["Réseau", "Vues", "J'aime", "Commentaires", "Partages", "Engagement", "Source",
+                                   "Relevé", "Lien"])
+        self.detail.setSortingEnabled(False)
+        self.detail.setRowCount(len(FOUR))
+        self.detail.setFixedHeight(self.detail.horizontalHeader().sizeHint().height() + 4 + 34 * len(FOUR))
+        self.detail.verticalHeader().setDefaultSectionSize(34)
+        hd = self.detail.horizontalHeader()
+        for c in range(1, 9):
+            hd.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.detail.itemDoubleClicked.connect(self._open_detail_link)
+        vv.addWidget(self.detail)
+        self.tabs.addTab(vids, "Par vidéo")
         self.groups: dict[str, QTableWidget] = {}
         for key, name in (("concept", "Par concept"), ("platform", "Par plateforme"), ("account", "Par compte")):
             t = self._table(["", "Publications", "Vues", "J'aime", "Commentaires", "Partages", "Engagement"])
@@ -175,15 +210,15 @@ class AnalyticsPage(QWidget):
         self.curve = RetentionChart()
         vl.addWidget(self.curve, 2)
         self.pubs.currentCellChanged.connect(lambda r, *_: self._show_curve(r))
-        self.tabs.addTab(vid, "Par vidéo")
+        self.tabs.addTab(vid, "Par publication")
         lay.addWidget(self.tabs, 1)
         row = QHBoxLayout()
         row.addWidget(button("Saisir des chiffres…", on_click=self._manual,
                              tooltip="Pour les plateformes sans relevé automatique : recopiez les chiffres"))
         row.addStretch(1)
         row.addWidget(label("Engagement = (j'aime + commentaires + partages) / vues, sur les chiffres fournis. "
-                            "« — » = non fourni par la plateforme. Double-clic sur une vidéo : ouvrir son lien.",
-                            "faint", wrap=True), 3)
+                            "« — » = non fourni par la plateforme (ou pas encore relevé). Double-clic sur un réseau : "
+                            "ouvrir la vidéo.", "faint", wrap=True), 3)
         lay.addLayout(row)
 
     def _table(self, headers: list[str]) -> QTableWidget:
@@ -296,15 +331,83 @@ class AnalyticsPage(QWidget):
             e = QTableWidgetItem(f"{pc:.0f} %" if pc is not None else NA)
             e.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             t.setItem(i, 8, e)
-            src = {"api": "API", "manuel": "saisi"}.get(m.get("_source"), NA)
+            src = SOURCES.get(m.get("_source"), NA)
             t.setItem(i, 9, QTableWidgetItem(src))
             t.setItem(i, 10, QTableWidgetItem(local_time(r["captured_at"]) or "jamais"))
         t.setSortingEnabled(True)
+        self._fill_videos(rows)
         if not rows:
             self.status.setText("Aucune vidéo publiée pour l'instant. Les publications confirmées (lien public) ou "
                                 "mises en ligne par le logiciel apparaissent ici.")
         elif not self.job_id:
             self.status.setText("")
+
+    def _fill_videos(self, rows: list[dict]) -> None:
+        """Une ligne par vidéo : vues totales, puis les vues de chaque réseau."""
+        sel = self.videos.item(self.videos.currentRow(), 0).data(Qt.UserRole) \
+            if self.videos.currentRow() >= 0 and self.videos.item(self.videos.currentRow(), 0) else None
+        self.video_groups = {repr(g["key"]): g for g in self.app.analytics.by_video(rows)}
+        t = self.videos
+        t.setSortingEnabled(False)
+        t.setRowCount(len(self.video_groups))
+        top = max((g["views"] or 0 for g in self.video_groups.values()), default=0) or 1
+        for i, (key, g) in enumerate(self.video_groups.items()):
+            it = QTableWidgetItem(g["title"])
+            it.setData(Qt.UserRole, key)
+            it.setToolTip(g["title"])
+            t.setItem(i, 0, it)
+            t.setItem(i, 1, self._num(g["views"], (g["views"] or 0) / top, "#5B8DEF"))
+            for j, k in enumerate(FOUR, start=2):
+                pub = g["pubs"].get(k)
+                if pub is None:
+                    cell = QTableWidgetItem("")                 # pas publiée sur ce réseau
+                    cell.setData(Qt.EditRole, -2)
+                    cell.setText("")
+                    cell.setToolTip(f"Pas publiée sur {RULES[k].label}")
+                else:
+                    cell = self._num(pub["metrics"].get("views"), tip="Pas encore relevé")
+                t.setItem(i, j, cell)
+            t.setItem(i, 6, QTableWidgetItem(local_time(g["captured_at"]) if g["captured_at"] else "jamais"))
+        t.setSortingEnabled(True)
+        row = next((r for r in range(t.rowCount()) if t.item(r, 0).data(Qt.UserRole) == sel), 0 if sel is None else -1)
+        if t.rowCount() and row >= 0:
+            t.setCurrentCell(row, 0)
+        self._show_video(t.currentRow())
+
+    def _show_video(self, row: int) -> None:
+        """Détail de la vidéo choisie : une ligne par réseau, tous ses chiffres."""
+        it = self.videos.item(row, 0) if row >= 0 else None
+        g = self.video_groups.get(it.data(Qt.UserRole)) if it else None
+        self.video_title.setText(g["title"] if g else "Choisis une vidéo : ses chiffres sur chaque réseau "
+                                 "s'affichent ici.")
+        for i, k in enumerate(FOUR):
+            pub = g["pubs"].get(k) if g else None
+            name = QTableWidgetItem(theme.platform_icon(k, 16), RULES[k].label + (f" · {pub['account']}" if pub else ""))
+            name.setData(Qt.UserRole, pub["public_url"] if pub else "")
+            name.setData(Qt.UserRole + 3, pub["id"] if pub else None)
+            self.detail.setItem(i, 0, name)
+            m = pub["metrics"] if pub else {}
+            for j, key in enumerate(("views", "likes", "comments", "shares"), start=1):
+                cell = self._num(m.get(key), tip="Non fourni par la page" if pub else "Pas publiée sur ce réseau") \
+                    if pub else QTableWidgetItem("")
+                self.detail.setItem(i, j, cell)
+            eng = None
+            if m.get("views"):
+                eng = sum(m.get(x, 0) for x in ("likes", "comments", "shares")) / m["views"]
+            e = QTableWidgetItem(f"{eng * 100:.1f} %".replace(".", ",") if eng is not None else (NA if pub else ""))
+            e.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.detail.setItem(i, 5, e)
+            self.detail.setItem(i, 6, QTableWidgetItem(SOURCES.get(m.get("_source"), NA) if pub else ""))
+            self.detail.setItem(i, 7, QTableWidgetItem((local_time(pub["captured_at"]) or "jamais") if pub else ""))
+            link = QTableWidgetItem("Ouvrir" if pub and pub["public_url"] else ("" if not pub else NA))
+            link.setData(Qt.UserRole, pub["public_url"] if pub else "")
+            link.setToolTip(pub["public_url"] if pub and pub["public_url"] else "")
+            self.detail.setItem(i, 8, link)
+
+    def _open_detail_link(self, it: QTableWidgetItem) -> None:
+        url = self.detail.item(it.row(), 0).data(Qt.UserRole) or ""
+        if url.startswith("http"):
+            QDesktopServices.openUrl(QUrl(url))
 
     def _show_curve(self, row: int) -> None:
         if row < 0 or self.pubs.item(row, 0) is None:
@@ -315,7 +418,14 @@ class AnalyticsPage(QWidget):
         self.curve.set_curve((r or {}).get("metrics", {}).get("retention") or [], (r or {}).get("title") or "")
 
     def _selected_pub(self) -> int | None:
-        self.tabs.setCurrentWidget(self.pubs)
+        if self.tabs.currentIndex() == 0:                 # « Par vidéo » : le réseau choisi dans le détail
+            it = self.detail.item(self.detail.currentRow(), 0) if self.detail.currentRow() >= 0 else None
+            if it is not None and it.data(Qt.UserRole + 3):
+                return it.data(Qt.UserRole + 3)
+            QMessageBox.information(self, "Analytiques", "Choisis une vidéo, puis le réseau dont tu recopies les "
+                                    "chiffres.")
+            return None
+        self.tabs.setCurrentWidget(self.pubs.parentWidget())
         row = self.pubs.currentRow()
         if row < 0:
             QMessageBox.information(self, "Analytiques", "Sélectionnez une vidéo dans l'onglet « Par vidéo ».")
@@ -338,9 +448,9 @@ class AnalyticsPage(QWidget):
             QDesktopServices.openUrl(QUrl(url))
 
     def _refresh_stats(self) -> None:
-        self.job_id = self.app.jobs.submit("refresh_stats", "Statistiques", {})
+        self.job_id = self.app.jobs.submit("refresh_stats", "Statistiques", {"all": True})
         self.refresh_btn.setEnabled(False)
-        self.status.setText("Relevé des statistiques en cours…")
+        self.status.setText("Relevé des statistiques en cours… (une page à la fois, avec une pause entre deux)")
 
     def on_job(self, job) -> None:
         if job.id != self.job_id or job.status in ("pending", "running"):

@@ -47,6 +47,11 @@ ENGINES = {
               "L'adresse d'un serveur LibreTranslate (et sa clé s'il en demande une)", "https://libretranslate.com"),
 }
 AUTO_ORDER = ("deepl", "llm", "google", "microsoft", "google_free", "mymemory", "libre")
+# ElevenLabs traduit à partir du son de la vidéo (son doublage), pas un texte : choisi à la main, jamais en automatique
+ENGINES["elevenlabs"] = ("ElevenLabs (à partir du son)", "Très bonne, la même que son doublage",
+                         "Payant : crédits de doublage ElevenLabs (le son de la vidéo est envoyé)",
+                         "La clé API ElevenLabs (celle de la voix)", "https://elevenlabs.io/app/dubbing")
+CHOICES = AUTO_ORDER + ("elevenlabs",)
 
 
 class TranslationError(RuntimeError):
@@ -334,7 +339,8 @@ def configured(kind: str, cfg: dict, secret: Callable[[str], str | None]) -> boo
         return llm.get("kind") in ("ollama", "openai") and bool(llm.get("model"))
     if kind == "libre":
         return bool((cfg.get("libre") or {}).get("url"))
-    key = {"deepl": "deepl_api_key", "google": "google_api_key", "microsoft": "azure_translator_key"}.get(kind)
+    key = {"deepl": "deepl_api_key", "google": "google_api_key", "microsoft": "azure_translator_key",
+           "elevenlabs": "elevenlabs_api_key"}.get(kind)
     return bool(secret(key)) if key else kind in ENGINES
 
 
@@ -342,6 +348,8 @@ def make_translator(cfg: dict, secret: Callable[[str], str | None]) -> Translato
     """cfg : {"engine": "auto" | clé de ENGINES, "llm": réglages du modèle, "libre": {"url"},
     "microsoft": {"region"}}. « auto » (et un moteur indisponible) : le meilleur disponible, puis les suivants."""
     kind = cfg.get("engine") or "auto"
+    if kind == "elevenlabs":            # les textes courts (texte du haut) : le moteur automatique
+        kind = "auto"
     if kind == "auto":
         return FallbackTranslator([_one(k, cfg, secret) for k in AUTO_ORDER if configured(k, cfg, secret)])
     if kind not in ENGINES:

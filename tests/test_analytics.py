@@ -116,13 +116,14 @@ def test_refresh_stats_job(tmp_path, monkeypatch):
             return app.jobs.get(jid)
         monkeypatch.setattr(secrets, "get_secret", lambda k: None)
         j = run()
-        assert j.status == "failed" and "Aucun compte YouTube connecté" in j.error
+        # sans compte connecté par API : pas une erreur ; la page publique sera lue à son heure (6 h après)
+        assert j.status == "succeeded" and j.result["updated"] == 0, j.error
         monkeypatch.setattr(secrets, "get_secret", lambda k: "REFRESH" if k.startswith("youtube_refresh") else "s")
         with app.db.transaction() as con:
             con.execute("UPDATE social_account SET connection_status='connected' WHERE id=?", (yt.id,))
         j = run()
         assert j.status == "succeeded", j.error
-        assert j.result["updated"] == 1 and "GONE000" in j.result["errors"][0]
+        assert j.result["updated"] == 1                    # GONE000 : introuvable par l'API, sans erreur
         latest = {r["id"]: r["metrics"] for r in app.analytics.latest()}
         assert latest[p1]["views"] == 4321 and "likes" not in latest[p1]              # j'aime masqués : absents
         assert latest[p1]["avg_view_s"] == 42 and latest[p1]["avg_view_pct"] == 61.3
@@ -131,3 +132,87 @@ def test_refresh_stats_job(tmp_path, monkeypatch):
     finally:
         app.close()
         srv.shutdown()
+
+
+def test_public_stats_schedule_and_metrics(tmp_path):
+    from datetime import datetime, timedelta
+
+    from studiovideo.publish import public_stats as ps
+    pub = datetime(2026, 10, 1, 12, 0)
+    assert ps.next_reading(pub, None) == pub + timedelta(hours=6)                    # 6 h après
+    assert ps.next_reading(pub, pub + timedelta(hours=7)) == pub + timedelta(days=1)    # puis J+1
+    assert ps.next_reading(pub, pub + timedelta(days=3, hours=1)) == pub + timedelta(days=7)
+    late = pub + timedelta(days=31)
+    assert ps.next_reading(pub, late) == late + timedelta(days=30)                   # ensuite chaque mois
+    assert not ps.due("2026-10-01T12:00:00Z", None, pub + timedelta(hours=5))
+    assert ps.due("2026-10-01T12:00:00Z", None, pub + timedelta(hours=6, minutes=1))
+    assert not ps.due("2026-10-01T12:00:00Z", "2026-10-01T18:30:00Z", pub + timedelta(hours=20))
+    assert ps.metrics({"view_count": 10, "like_count": None, "comment_count": 3, "repost_count": 0}) == \
+        {"views": 10, "comments": 3, "shares": 0}                                     # absent : jamais inventé
+    assert ps.cookies_from(tmp_path / "brave.exe", tmp_path / "p") == ("brave", str(tmp_path / "p" / "Default"),
+                                                                     None, None)
+    assert ps.cookies_from(tmp_path / "firefox.exe", tmp_path / "p")[1] == str(tmp_path / "p")
+    assert ps.cookies_from(tmp_path / "msedge.exe", tmp_path / "p")[0] == "edge"
+    assert ps.cookies_from(tmp_path / "safari.exe", tmp_path / "p") is None
+
+
+def test_public_stats_job(tmp_path, monkeypatch):
+    """Sans API : la page publique de chaque vidéo publiée est lue ; Facebook / Instagram avec les cookies du
+    navigateur dédié du compte (navigateur fermé) ; une vidéo publiée sur plusieurs réseaux est regroupée."""
+    from studiovideo.core import build_context
+    from studiovideo.publish import browser, public_stats
+    from studiovideo.services import secrets
+    monkeypatch.setattr(secrets, "get_secret", lambda k: None)
+    exe = tmp_path / "brave.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(exe))
+    calls = []
+
+    def fake_read(url, cookies=None):
+        calls.append((url, cookies))
+        return {"views": 100 if "tiktok" in url else 7, "likes": 3}
+    monkeypatch.setattr(public_stats, "read", fake_read)
+    app = build_context(tmp_path / "d")
+    try:
+        c = app.concepts.create_concept("PP")
+        tk = app.concepts.create_account(Platform.TIKTOK, "pp")
+        fb = app.concepts.create_account(Platform.FACEBOOK, "pp")
+        m = app.publications.create_master(c.id, "Ma vidéo")
+        p1, p2 = app.publications.set_destinations(m, [tk.id, fb.id], confirmed_external={tk.id, fb.id})
+        app.publications.confirm_published(p1, "https://www.tiktok.com/@pp/video/1")
+        app.publications.confirm_published(p2, "https://www.facebook.com/reel/2")
+        assert {t["id"] for t in app.analytics.public_targets()} == {p1, p2}
+
+        def run(params):
+            jid = app.jobs.submit("refresh_stats", "Statistiques", params)
+            end = time.time() + 20
+            while app.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+                time.sleep(0.05)
+            return app.jobs.get(jid)
+        j = run({})                                                   # automatique : rien avant 6 h
+        assert j.status == "succeeded" and j.result["public"] == 0 and not calls
+        prof = browser.profile_dir(app.paths.root, fb.id, exe)
+        prof.mkdir(parents=True)
+        lock = open(prof / "lockfile", "w")                           # navigateur du compte Facebook ouvert
+        try:
+            if browser.is_open(prof):                                 # (verrou effectif sous Windows seulement)
+                j = run({"all": True, "delay": None})
+                assert j.result["public"] == 1 and "ferme le navigateur" in j.result["errors"][0]
+                calls.clear()
+                app.db.connect().execute("DELETE FROM analytics_snapshot")
+        finally:
+            lock.close()
+            (prof / "lockfile").unlink()
+        j = run({"all": True, "delay": None})                         # bouton « Relever » : tout, tout de suite
+        assert j.status == "succeeded" and j.result["public"] == 2, j.result
+        by_url = dict(calls)
+        assert by_url["https://www.tiktok.com/@pp/video/1"] is None                     # TikTok : sans session
+        assert by_url["https://www.facebook.com/reel/2"] == ("brave", str(prof / "Default"), None, None)
+        latest = {r["id"]: r["metrics"] for r in app.analytics.latest()}
+        assert latest[p1] == {"views": 100, "likes": 3, "_source": "public"}
+        (g,) = app.analytics.by_video(app.analytics.latest())        # une vidéo, deux réseaux
+        assert g["title"] == "Ma vidéo" and set(g["pubs"]) == {"tiktok", "facebook"} and g["views"] == 107
+        calls.clear()
+        assert run({"all": True, "delay": None}).result["public"] == 0 and not calls    # relevé il y a < 1 h
+    finally:
+        app.close()

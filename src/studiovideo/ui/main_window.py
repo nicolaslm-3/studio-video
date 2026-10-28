@@ -192,14 +192,28 @@ class MainWindow(QMainWindow):
         return len(due)
 
     def check_links(self) -> int | None:
-        """Lance la recherche des liens (tâche « match_published ») s'il y a des publications à confirmer."""
+        """Toutes les heures : relevé des statistiques arrivées à leur étape (6 h, J+1, J+3…), puis recherche des
+        liens (tâche « match_published ») s'il y a des publications à confirmer."""
         self._links.setInterval(3_600_000)
+        self.check_stats()
         if not self.app.publications.awaiting_link():
             return None
         if self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'match_published' AND status IN "
                                  "('pending','running')"):
             return None
         return self.app.jobs.submit("match_published", "Recherche des liens des vidéos publiées", {})
+
+    def check_stats(self) -> int | None:
+        """Relevé automatique des pages publiques, seulement si une vidéo est arrivée à une étape du calendrier."""
+        from datetime import datetime, timezone
+
+        from ..publish import public_stats
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if not any(public_stats.due(t["published_at"], t["last_at"], now) for t in self.app.analytics.public_targets()):
+            return None
+        if self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'refresh_stats' AND status IN ('pending','running')"):
+            return None
+        return self.app.jobs.submit("refresh_stats", "Statistiques des vidéos publiées", {})
 
     def check_watch_folder(self) -> int:
         """Importe les médias nouvellement déposés dans le dossier surveillé (Paramètres → Stockage)."""

@@ -47,7 +47,8 @@ DEFAULT_ASPECT = {"free_edit": "9:16", "smart_clipping": "9:16", "translation": 
                   "texts": "9:16"}
 
 PLATFORMS = {"youtube": ("youtube", "#FF2D2D"), "tiktok": ("music", "#FE2C55"), "instagram": ("instagram", "#E1306C"),
-             "facebook": ("facebook", "#1877F2"), "x": ("twitter", None)}
+             "facebook": ("facebook", "#1877F2"), "x": ("twitter", None),
+             "meta": ("infinity", "#0866FF")}
 
 
 def platform_icon(platform: str, size: int = 18) -> QIcon:

@@ -252,16 +252,16 @@ def test_calendar_publication_flow(window, monkeypatch, tmp_path):
     monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(tmp_path / "absent.exe"))
     opened = []
     a = PublishWorkshop(ctx, pubs[yt.id].id, open_url=opened.append)
-    assert QApplication.clipboard().text() == "Mon sketch"            # titre copié d'office
     a._open()
+    assert QApplication.clipboard().text() == "Mon sketch"            # titre copié en ouvrant la page d'envoi
     assert opened == ["https://www.youtube.com/upload"]
     assert "profil du compte" in a.msg.text()
     assert ctx.publications.get(pubs[yt.id].id)["status"] == "manual_action"
-    a.url.setText("https://www.tiktok.com/@x/video/1")
-    a._confirm()
+    a.link.url.setText("https://www.tiktok.com/@x/video/1")
+    a.link._confirm()
     assert "plateforme" in a.msg.text()
-    a.url.setText("https://youtu.be/abc")
-    a._confirm()
+    a.link.url.setText("https://youtu.be/abc")
+    a.link._confirm()
     assert ctx.publications.get(pubs[yt.id].id)["status"] == "published"
     assert calmod.now_local()[:2] == "20"
 
@@ -322,6 +322,17 @@ def test_analytics_page(window):
     pg.refresh()
     plat = {pg.groups["platform"].item(i, 0).text(): pg.groups["platform"].item(i, 2).text() for i in range(2)}
     assert plat["TikTok"] == "12 k"
+    # « Par vidéo » (premier onglet) : la même vidéo sur les quatre réseaux, dans un seul tableau
+    assert pg.tabs.tabText(0) == "Par vidéo" and pg.videos.rowCount() == 1
+    v = pg.videos
+    assert [v.horizontalHeaderItem(c).text() for c in range(2, 6)] == ["YouTube", "TikTok", "Facebook", "Instagram"]
+    assert v.item(0, 0).text() == "Vidéo 1" and v.item(0, 1).text() == "12 k"          # 500 + 12 000
+    assert (v.item(0, 2).text(), v.item(0, 3).text(), v.item(0, 4).text()) == ("500", "12 k", "")   # pas sur Facebook
+    d = pg.detail
+    assert d.rowCount() == 4 and d.item(0, 0).text() == "YouTube · A" and d.item(0, 2).text() == "20"
+    assert d.item(1, 4).text() == "40" and d.item(1, 6).text() == "saisi"               # partages TikTok, source
+    assert d.item(0, 6).text() == "API" and d.item(2, 1).text() == ""                  # Facebook : pas publiée
+    assert d.item(1, 8).text() == "Ouvrir"                                             # lien de la vidéo TikTok
 
 
 def test_detected_zones_are_added_once(window):
@@ -1129,7 +1140,8 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     st = w.studio
     w.start_parcours("smart_clipping")
     cv, pid = st.clip_view, st.project_id
-    assert "Importe" in cv.b_title.text() and cv.b_action.isVisibleTo(cv)
+    assert not cv.banner.isVisibleTo(cv) and cv.body.currentIndex() == 0    # seulement la zone de dépôt
+    assert cv.drop_zone.width() == 420 and cv.player.fit_top           # petite, au centre ; aperçu en haut
     assert cv.import_extra() == {"auto_clips": True}            # import : transcription puis extraits, d'office
     assert st._import_extra() == {"auto_clips": True}           # même réglage depuis l'en-tête commun
     assert not hasattr(cv, "step_lbls")                         # plus d'étapes en haut
@@ -1360,13 +1372,13 @@ def test_translation_screen_generate(window, monkeypatch):
 
 
 def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path):
-    """Onglet Export : titre et description communs, un texte par réseau (TikTok : titre en tête de la
-    description), aperçu téléphone, puis export et brouillon / programmation / publication."""
-    from PySide6.QtCore import QDateTime
+    """Onglet Export en deux colonnes : à gauche nom du fichier, titre, description, petit aperçu et « Brouillon sur
+    les réseaux » / « Sur mon PC seulement » ; à droite l'Atelier de publication (vidéo à glisser, une carte par
+    réseau : YouTube, TikTok, Meta)."""
+    from PySide6.QtWidgets import QApplication
 
     from studiovideo.domain.models import Platform
     from studiovideo.jobs.manager import JobInfo
-    from studiovideo.transcribe.model import TSegment, Transcript
     w, ctx = window
     st = w.studio
     w.start_parcours("free_edit")
@@ -1382,51 +1394,46 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     st.show_export()                                            # l'onglet Export du dock
     ev = st.export_view
     assert st.stack.currentWidget() is ev and w.dock.buttons["export"].isChecked()
-    assert list(ev.nets) == ["youtube", "tiktok", "facebook", "instagram"]    # une colonne par réseau
-    assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet
+    assert list(ev.nets) == ["youtube", "tiktok", "meta"]       # une carte par réseau ; Meta = Facebook + Instagram
+    assert not hasattr(ev, "act_publish") and not hasattr(ev, "act_schedule") and not hasattr(ev, "when")
+    from studiovideo.ui import export_view as evmod
+    assert not hasattr(evmod, "PhonePreview")                   # plus d'aperçus par réseau
+    assert not hasattr(ev.nets["youtube"], "on") and not hasattr(ev.nets["youtube"], "text")   # ni case ni texte
+    assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet, petit aperçu
     assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
-    assert not hasattr(ev, "version") and not hasattr(ev, "version_row")    # langues : versions du projet
     assert ctx.projects.get(pid)["name"] == "x"                 # le projet a pris le nom du média
     assert ev.file_name.text() == "x" and ev.act_local.isChecked()      # par défaut : sur le PC
     from studiovideo.ui.export_view import date_prefix, file_name
     assert ev.date_lbl.text() == date_prefix() and len(date_prefix()) == 10   # le fichier commence par la date
     assert file_name("2020-01-01 Clip") == f"{date_prefix()} Clip.mp4"
-    assert "Instagram" in ev.act_draft.toolTip() and not hasattr(ev, "tabs")  # brouillon sur les réseaux
+    assert "Instagram" in ev.act_draft.toolTip()
     assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
-    assert ev.desc.height() <= 70                                # description moins haute
+    assert not ev.tile.isEnabled() and not ev.reveal_btn.isEnabled()      # rien d'exporté encore
+    assert ev.tile.maximumWidth() <= 300                        # vidéo à glisser : rectangle étroit
     acc = ev.nets["youtube"].account
     from studiovideo.ui.export_view import ADD_ACCOUNT, CONNECT_ACCOUNT
     assert acc.itemData(0) == yt.id and not acc.itemIcon(0).isNull()    # pastille du compte
     assert acc.itemData(acc.count() - 1) == ADD_ACCOUNT and acc.itemText(acc.count() - 1) == "Ajouter un compte"
     assert acc.itemData(acc.count() - 2) == CONNECT_ACCOUNT          # « Connecter ce compte… »
     added = []
-    monkeypatch.setattr(ev, "add_account", added.append)
+    monkeypatch.setattr(ev, "add_account", lambda pf, a=None: added.append(pf))
     acc.setCurrentIndex(acc.count() - 1)                        # « Ajouter un compte » : le compte reste choisi
     assert added == ["youtube"] and acc.currentData() == yt.id
-    assert [lb.text() for lb in ev.findChildren(type(st.mode_icon)) if "Langue" in lb.text()] == []
+    meta = ev.nets["meta"]
+    assert meta.no_account.isVisibleTo(meta) and meta.no_account.text() == "Ajouter un compte"   # pas de compte Meta
+    assert not meta.open_btn.isEnabled()
+    meta.no_account.click()
+    assert added[-1] == "facebook"
     ev.title.setText("Le vrai chiffre")
     ev.desc.setPlainText("Ce qu'on ne vous dit pas #politique")
-    yt_tab, tk_tab = ev.nets["youtube"], ev.nets["tiktok"]
-    assert yt_tab.title.text() == "Le vrai chiffre" and yt_tab.text.toPlainText() == "Ce qu'on ne vous dit pas #politique"
-    assert tk_tab.title_row.isHidden() and tk_tab.text.toPlainText() == \
-        "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"               # TikTok : titre puis description
-    assert not ev.nets["facebook"].on.isEnabled()               # pas de compte Facebook : bouton pour l'ajouter
-    assert ev.nets["facebook"].no_account.isVisibleTo(ev.nets["facebook"])
-    assert ev.nets["facebook"].no_account.text() == "Ajouter un compte"
-    assert ev.nets["facebook"].no_account.property("kind") == "ghost"    # sans fond rouge, petit
-    assert not [lb for lb in ev.findChildren(QLabel) if "titre au début" in lb.text()]   # « Description »
-    tk_tab.text.setPlainText("Texte rien que pour TikTok 🔥")      # texte propre au réseau
-    ev.desc.setPlainText("Nouvelle description")
-    assert tk_tab.text.toPlainText() == "Texte rien que pour TikTok 🔥" and tk_tab.reset.isVisibleTo(tk_tab)
-    assert yt_tab.text.toPlainText() == "Nouvelle description"
-    ev.nets["youtube"].text.setFocus()
     from studiovideo.ui.export_view import EmojiButton
     eb = next(b for b in ev.findChildren(EmojiButton) if b.target is ev.title)
     assert eb.parent() is ev.title and eb.text() == ""          # icône grise, dans le champ, en haut à droite
     eb.insert("🔥")                                              # menu d'emojis
     assert "🔥" in ev.title.text()
+    ev.title.setText("Le vrai chiffre")
     ui = ctx.projects.load_data(pid)["export_ui"]
-    assert ui["nets"]["tiktok"]["custom"] and ui["nets"]["tiktok"]["account"] == tk.id
+    assert ui["nets"]["tiktok"]["account"] == tk.id and ui["title"] == "Le vrai chiffre"
     sent = []
     real_submit = ctx.jobs.submit
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
@@ -1437,52 +1444,48 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     ev._go()                                                    # sur le PC seulement : aucune publication
     kind, params, kw = sent[-1]
     dest = tmp_path / f"{date_prefix()} Mon export   final.mp4"   # date du jour, puis le nom choisi
-    assert kind == "export_timeline" and params["dest"] == str(dest)
+    assert kind == "export_timeline" and params["dest"] == str(dest) and kw.get("critical")
     pend = ctx.projects.load_data(pid)["export_pending"]
     assert pend["action"] == "local" and pend["nets"] == {}
     dest.write_bytes(b"x")
+    vid = ctx.montage.record_export(pid, st.tl, {"path": str(dest)}, None)
     ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
                       error="", critical=True, created_at="", params=params,
-                      result={"path": str(dest)}))
+                      result={"path": str(dest), "variant_id": vid}))
     data = ctx.projects.load_data(pid)
     assert "enregistrée" in data["export_last"]["summary"] and "master_id" not in data["export_last"]
-    assert ev.open_dir.isVisibleTo(ev)
-    ev.file_name.setText("")
-    ev.folder = str(tmp_path)
-    ev.act_schedule.setChecked(True)
-    ev.when.setDateTime(QDateTime.currentDateTime().addDays(2))
-    assert ev.go.text().startswith("Exporter et programmer") and ev.go.isEnabled()
-    ev._go()
-    kind, params, kw = sent[-1]
-    assert kind == "export_timeline" and kw.get("critical") and params["project_id"] == pid
-    pend = ctx.projects.load_data(pid)["export_pending"]
-    assert pend["action"] == "schedule" and set(pend["nets"]) == {"youtube", "tiktok"}
-    out = tmp_path / "v.mp4"
-    out.write_bytes(b"x")
-    vid = ctx.montage.record_export(pid, st.tl, {"path": str(out)}, None)
-    ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
-                      error="", critical=True, created_at="", params=params,
-                      result={"path": str(out), "variant_id": vid}))
-    data = ctx.projects.load_data(pid)
-    assert "export_pending" not in data and "programmée" in data["export_last"]["summary"]
-    pubs = {pb.account.platform.value: pb for pb in ctx.publications.list_for_master(data["export_last"]["master_id"])}
-    assert set(pubs) == {"youtube", "tiktok"}
-    assert pubs["youtube"].title.startswith("Le vrai chiffre") and pubs["youtube"].description == "Nouvelle description"
-    assert pubs["tiktok"].description == "Texte rien que pour TikTok 🔥" and pubs["tiktok"].title == ""
-    assert all(pb.status.value == "scheduled_local" for pb in pubs.values())     # programmées (Calendrier)
-    assert p["concept_id"] and yt.id
-    # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram n'en propose pas
-    ctx.concepts.create_account(Platform.INSTAGRAM, "moninsta")
+    assert ev.open_dir.isVisibleTo(ev) and ev.tile.isEnabled() and ev.reveal_btn.isEnabled()
+    assert ev.tile.path == str(dest)                            # la vidéo exportée, à glisser
+    # page d'envoi TikTok : publication créée pour retrouver le lien, texte copié, navigateur du compte
+    monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(tmp_path / "absent.exe"))
+    opened = []
+    ev.open_url = opened.append
+    tkc = ev.nets["tiktok"]
+    assert tkc.open_btn.isEnabled() and tkc.open_btn.text() == "Ouvrir la page d'envoi TikTok"
+    tkc.open_btn.click()
+    assert opened == ["https://www.tiktok.com/upload"]
+    assert QApplication.clipboard().text() == "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"
+    pubs = ctx.projects.load_data(pid)["export_last"]["pubs"]
+    r = ctx.publications.get(pubs["tiktok"])
+    assert r["status"] == "manual_action" and r["account_id"] == tk.id and r["output_path"] == str(dest)
+    assert tkc.state.text() == "À publier" and tkc.link.isVisibleTo(tkc)
+    tkc.link.url.setText("https://www.tiktok.com/@moncompte/video/7")
+    tkc.link._confirm()
+    assert ctx.publications.get(pubs["tiktok"])["status"] == "published" and "Publiée" in tkc.state.text()
+    assert not tkc.open_btn.isEnabled()
+    # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram (Meta) n'en propose pas
+    ig = ctx.concepts.create_account(Platform.INSTAGRAM, "moninsta")
     con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
     ev.refresh()
-    assert ev.nets["instagram"].on.isChecked()
+    assert ev.nets["meta"].account_id() == ig.id
     ev.act_draft.setChecked(True)
-    assert ev.go.text().startswith("Exporter en brouillon") and not ev.when.isEnabled()
+    assert ev.go.text().startswith("Exporter en brouillon") and "Meta" in ev.go.text()
     ev.file_name.setText("brouillon")
     ev._go()
     kind, params, kw = sent[-1]
     pend = ctx.projects.load_data(pid)["export_pending"]
-    assert pend["action"] == "draft" and set(pend["nets"]) == {"youtube", "tiktok", "instagram"}
+    assert pend["action"] == "draft" and set(pend["nets"]) == {"youtube", "tiktok", "meta"}
+    assert pend["nets"]["tiktok"]["text"].startswith("Le vrai chiffre\n\n")    # TikTok : titre puis description
     out2 = tmp_path / "b.mp4"
     out2.write_bytes(b"x")
     vid2 = ctx.montage.record_export(pid, st.tl, {"path": str(out2)}, None)
@@ -1497,6 +1500,8 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     pubs = {pb.account.platform.value: pb for pb in ctx.publications.list_for_master(data["export_last"]["master_id"])}
     assert pubs["instagram"].status.value == "manual_action" and pubs["tiktok"].status.value == "manual_action"
     assert pubs["youtube"].status.value == "uploading"
+    assert set(data["export_last"]["pubs"]) == {"youtube", "tiktok", "meta"}
+    assert p["concept_id"]
     monkeypatch.setattr(ctx.jobs, "submit", real_submit)
 
 
@@ -1640,7 +1645,7 @@ def test_refresh_keeps_playing_and_sidebar_stable(window, monkeypatch):
 def test_robot_effects_export_sidebar_and_nested_projects(window, monkeypatch):
     """Bouton robot sous chaque aperçu (effets de la vidéo du projet), barre des projets dans Export (on y reste),
     extraits rangés sous leur projet, version supprimée pour de bon, heure en heures + minutes."""
-    from PySide6.QtCore import QDateTime, QTime, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QMessageBox
     w, ctx = window
     st = w.studio
@@ -1690,9 +1695,6 @@ def test_robot_effects_export_sidebar_and_nested_projects(window, monkeypatch):
     st.sidebar.refresh()
     st.open_from_list(other, "export")
     assert st.project_id == other and st.stack.currentWidget() is st.export_view
-    when = st.export_view.when
-    when.setDateTime(QDateTime(when.dateTime().date(), QTime(14, 2)))
-    assert (when.hour.currentText(), when.minute.currentText()) == ("14 h", "05")   # minutes par 5
     # un extrait devenu un projet, et une version traduite : sous leur projet
     clip = ctx.projects.quick_create(ctx.concepts, "smart_clipping", "Mon extrait")
     data = ctx.projects.load_data(pid)

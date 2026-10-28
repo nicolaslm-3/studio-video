@@ -1,18 +1,21 @@
 """Atelier de publication : publier sans API de plateforme, le clic final « Publier » restant à l'utilisateur.
 
-Niveau 2 (assistance) : le texte est copié d'office, la page d'envoi s'ouvre dans le navigateur dédié du compte
-(déjà connecté), la vidéo se glisse directement depuis l'Atelier vers la page. Niveau 3 : une fois la vidéo en ligne,
-son lien est retrouvé tout seul sur la page publique du compte (tâche « match_published », toutes les heures) ;
-un doute est proposé ici (« Est-ce cette vidéo ? ») ; en dernier recours, on colle le lien.
+Niveau 2 (assistance) : la page d'envoi s'ouvre dans le navigateur dédié du compte (déjà connecté), la vidéo se
+glisse directement depuis l'Atelier vers la page ; le texte du réseau est copié en l'ouvrant. Niveau 3 : une fois
+la vidéo en ligne, son lien est retrouvé tout seul sur la page publique du compte (tâche « match_published », toutes
+les heures) ; un doute est proposé ici (« Est-ce cette vidéo ? ») ; en dernier recours, on colle le lien.
+
+Les mêmes morceaux (vidéo à glisser, page d'envoi, lien) servent dans l'onglet Export (une carte par réseau) et
+dans la fenêtre ouverte depuis le Calendrier.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QMimeData, QSize, Qt, QUrl
+from PySide6.QtCore import QMimeData, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QDrag, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
+                               QPushButton, QVBoxLayout, QWidget)
 
 from ..core import AppContext
 from ..publish import reconcile, rules
@@ -21,35 +24,56 @@ from . import browser_login, theme
 from .publication_dialog import video_info
 from .widgets import button, label
 
+# page d'envoi de Meta (Meta Business Suite) : une vidéo pour la Page Facebook et le compte Instagram reliés
+META_UPLOAD_URL = "https://business.facebook.com/latest/reels_composer"
+
+
+def upload_url(platform: str) -> str:
+    """Page d'envoi du réseau ; Facebook et Instagram : celle de Meta."""
+    return META_UPLOAD_URL if platform in ("meta", "facebook", "instagram") else rules.RULES[platform].upload_url
+
+
+def reveal(path: str) -> None:
+    from .pages.library import reveal as _reveal
+    _reveal(path)
+
 
 class VideoTile(QFrame):
     """La vidéo à envoyer : à glisser telle quelle dans la page d'envoi du navigateur."""
 
     def __init__(self, path: str, thumb: str = "", parent=None):
         super().__init__(parent)
-        self.path = path
         self.setProperty("role", "card")
         self.setCursor(Qt.OpenHandCursor)
         self.setToolTip("Glisse la vidéo dans la page d'envoi du navigateur")
+        self.setMaximumWidth(300)                     # étroite : juste l'image et le nom
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 8, 12, 8)
+        lay.setContentsMargins(8, 6, 10, 6)
         self.pic = QLabel()
-        self.pic.setFixedSize(54, 72)
+        self.pic.setFixedSize(40, 54)
         self.pic.setAlignment(Qt.AlignCenter)
-        pix = QPixmap(thumb) if thumb and Path(thumb).exists() else QPixmap()
-        if pix.isNull():
-            pix = theme.icon("film", theme.color("muted"), 32).pixmap(QSize(32, 32))
-        else:
-            pix = pix.scaled(54, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.pic.setPixmap(pix)
         lay.addWidget(self.pic)
         col = QVBoxLayout()
         col.setSpacing(2)
-        self.name = label(Path(path).name if path else "Aucune vidéo", None, wrap=True, hint=False)
+        self.name = label("", None, wrap=True, hint=False)
         col.addWidget(self.name)
-        col.addWidget(label("À glisser dans la page d'envoi", "faint", hint=False))
+        self.hint = label("À glisser dans la page d'envoi", "faint", hint=False)
+        col.addWidget(self.hint)
         lay.addLayout(col, 1)
-        self.setEnabled(bool(path) and Path(path).exists())
+        self.set_video(path, thumb)
+
+    def set_video(self, path: str, thumb: str = "") -> None:
+        self.path = path or ""
+        pix = QPixmap(thumb) if thumb and Path(thumb).exists() else QPixmap()
+        if pix.isNull():
+            pix = theme.icon("film", theme.color("muted"), 26).pixmap(QSize(26, 26))
+        else:
+            pix = pix.scaled(40, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.pic.setPixmap(pix)
+        ok = bool(path) and Path(path).exists()
+        self.name.setText(Path(path).name if ok else "Aucune vidéo exportée")
+        self.hint.setText("À glisser dans la page d'envoi" if ok else "Exporte-la d'abord (à gauche)")
+        self.setEnabled(ok)
 
     def mime(self) -> QMimeData:
         m = QMimeData()
@@ -66,6 +90,114 @@ class VideoTile(QFrame):
         super().mousePressEvent(e)
 
 
+class LinkBox(QWidget):
+    """Le lien de la vidéo publiée : retrouvé tout seul (page publique du compte), proposé (« Est-ce cette
+    vidéo ? »), ou collé à la main."""
+    changed = Signal()
+
+    def __init__(self, app: AppContext, open_url, parent=None):
+        super().__init__(parent)
+        self.app, self.open_url, self.pid = app, open_url, None
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        self.auto_note = label("", "muted", wrap=True, hint=False)
+        v.addWidget(self.auto_note)
+        self.props = QVBoxLayout()
+        self.props.setSpacing(4)
+        v.addLayout(self.props)
+        lr = QHBoxLayout()
+        lr.setSpacing(6)
+        self.url = QLineEdit()
+        lr.addWidget(self.url, 1)
+        self.confirm_btn = button("Confirmer", "soft", on_click=self._confirm)
+        lr.addWidget(self.confirm_btn)
+        v.addLayout(lr)
+        self.msg = label("", "muted", wrap=True, hint=False)
+        v.addWidget(self.msg)
+
+    def set_publication(self, pid: int | None) -> None:
+        if pid != self.pid:
+            self.msg.setText("")
+            self.url.clear()
+        self.pid = pid
+        self.refresh()
+
+    def refresh(self) -> None:
+        r = self.app.publications.get(self.pid) if self.pid else None
+        self.setVisible(r is not None)
+        if r is None:
+            return
+        done = r["status"] in ("published", "cancelled")
+        if not self.url.text() and r["public_url"]:
+            self.url.setText(r["public_url"])
+        self.url.setPlaceholderText("Lien de la vidéo publiée : " + {
+            "youtube": "https://youtu.be/…", "tiktok": "https://www.tiktok.com/@…/video/…"}.get(r["platform"],
+                                                                                              "https://…"))
+        acc = self.app.concepts.get_account(r["account_id"])
+        if done:
+            self.auto_note.setText(f"✓ En ligne : {r['public_url']}" if r["public_url"] else "Annulée.")
+        elif r["platform"] in reconcile.SUPPORTED and reconcile.listing_urls(r["platform"], acc.public_url):
+            last = (self.app.concepts.account_settings(acc.id).get("reconcile") or {})
+            when = ""
+            if last.get("at"):
+                from .widgets import local_time
+                when = f" Dernière recherche : {local_time(last['at'])}" + (
+                    f" ({last['error']})" if last.get("error") else ".")
+            self.auto_note.setText("Une fois la vidéo publiée, son lien est retrouvé tout seul sur la page publique "
+                                   "du compte (vérifié toutes les heures)." + when)
+        elif r["platform"] in reconcile.SUPPORTED:
+            self.auto_note.setText("Renseigne l'adresse publique du compte (Réglages du compte) pour que le lien "
+                                   "soit retrouvé tout seul. En attendant, colle-le ici.")
+        else:
+            self.auto_note.setText(f"{rules.RULES[r['platform']].label} ne montre pas ses vidéos sans connexion : "
+                                   "colle ici le lien de la vidéo une fois publiée.")
+        while self.props.count():
+            it = self.props.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        for m in ([] if done else self.app.publications.matches(self.pid)):
+            self.props.addWidget(self._proposal(m))
+        self.url.setVisible(not done)
+        self.confirm_btn.setVisible(not done)
+
+    def _proposal(self, m) -> QWidget:
+        w = QFrame()
+        w.setProperty("role", "card")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(10, 6, 8, 6)
+        h.addWidget(label("Est-ce cette vidéo ?", None, hint=False))
+        t = label(m["title"] or m["url"], "muted", hint=False)
+        t.setToolTip(m["url"])
+        h.addWidget(t, 1)
+        h.addWidget(button("Voir", "ghost", on_click=lambda: self.open_url(m["url"])))
+        h.addWidget(button("Oui", "soft", on_click=lambda: self._accept(m["id"])))
+        h.addWidget(button("Non", "ghost", on_click=lambda: self._reject(m["id"])))
+        return w
+
+    def _accept(self, match_id: int) -> None:
+        try:
+            self.app.publications.accept_match(match_id)
+        except PublicationError as exc:
+            self.msg.setText(f"⚠ {exc}")
+        self.refresh()
+        self.changed.emit()
+
+    def _reject(self, match_id: int) -> None:
+        self.app.publications.reject_match(match_id)
+        self.refresh()
+
+    def _confirm(self) -> None:
+        try:
+            self.app.publications.confirm_published(self.pid, self.url.text())
+        except PublicationError as exc:
+            self.msg.setText(f"⚠ {exc}")
+            return
+        self.msg.setText("✓ Publication confirmée.")
+        self.refresh()
+        self.changed.emit()
+
+
 class PublishWorkshop(QDialog):
     """Une ou plusieurs publications (une par réseau) à faire à la main, l'une après l'autre."""
 
@@ -76,7 +208,7 @@ class PublishWorkshop(QDialog):
         self.open_url = open_url or (lambda u: QDesktopServices.openUrl(QUrl(u)))
         self.login = None
         self.setWindowTitle("Atelier de publication")
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(600)
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         self.tabs = QHBoxLayout()
@@ -129,7 +261,6 @@ class PublishWorkshop(QDialog):
             self.body.addWidget(label("Publication introuvable.", "error"))
             return
         pl = rules.RULES[r["platform"]]
-        self.composed = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
         head = QHBoxLayout()
         ic = QLabel()
         ic.setPixmap(theme.platform_icon(r["platform"], 22).pixmap(QSize(22, 22)))
@@ -142,41 +273,19 @@ class PublishWorkshop(QDialog):
         for w in rules.check(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "",
                              video_info(r)):
             self.body.addWidget(label("⚠ " + w, "muted", wrap=True, hint=False))
-        # 1. le texte (copié d'office)
-        self.body.addWidget(label("1. Le texte", "h2"))
-        self.text = QPlainTextEdit(self.composed["text"])
-        self.text.setReadOnly(True)
-        self.text.setMaximumHeight(110)
-        if self.composed["title"]:
-            self.title = QLineEdit(self.composed["title"])
-            self.title.setReadOnly(True)
-            self.body.addWidget(self.title)
-        self.body.addWidget(self.text)
-        row = QHBoxLayout()
-        if self.composed["title"]:
-            row.addWidget(button("Recopier le titre", "ghost", icon="copy",
-                                 on_click=lambda: self._copy(self.composed["title"], "Titre copié.")))
-            row.addWidget(button("Copier la description", "ghost", icon="copy",
-                                 on_click=lambda: self._copy(self.composed["text"], "Description copiée.")))
-        else:
-            row.addWidget(button("Recopier le texte", "ghost", icon="copy",
-                                 on_click=lambda: self._copy(self.composed["text"], "Texte copié.")))
-        self.copied = label("", "faint", hint=False)
-        row.addWidget(self.copied)
-        row.addStretch(1)
-        self.body.addLayout(row)
-        # 2. la vidéo
-        self.body.addWidget(label("2. La vidéo", "h2"))
+        # 1. la vidéo
+        self.body.addWidget(label("1. La vidéo", "h2"))
         vr = QHBoxLayout()
         path = r["output_path"] or ""
         self.tile = VideoTile(path, r["thumbnail"] or "")
-        vr.addWidget(self.tile, 1)
-        show = button("Afficher dans l'Explorateur", "ghost", icon="folder-open", on_click=lambda: self._reveal(path))
+        vr.addWidget(self.tile)
+        show = button("Afficher dans l'Explorateur", "ghost", icon="folder-open", on_click=lambda: reveal(path))
         show.setEnabled(bool(path) and Path(path).exists())
         vr.addWidget(show, 0, Qt.AlignVCenter)
+        vr.addStretch(1)
         self.body.addLayout(vr)
-        # 3. la page d'envoi, dans le navigateur dédié du compte
-        self.body.addWidget(label("3. La page d'envoi", "h2"))
+        # 2. la page d'envoi, dans le navigateur dédié du compte
+        self.body.addWidget(label("2. La page d'envoi", "h2"))
         br = QHBoxLayout()
         self.open_btn = button(f"Ouvrir la page d'envoi {pl.label}", "primary", icon="upload", on_click=self._open)
         br.addWidget(self.open_btn)
@@ -186,27 +295,14 @@ class PublishWorkshop(QDialog):
         self.body.addLayout(br)
         self.page_note = label("", "muted", wrap=True, hint=False)
         self.body.addWidget(self.page_note)
-        # 4. le lien de la vidéo publiée
-        self.body.addWidget(label("4. Le lien de la vidéo publiée", "h2"))
-        self.auto_note = label("", "muted", wrap=True, hint=False)
-        self.body.addWidget(self.auto_note)
-        self.props = QVBoxLayout()
-        self.props.setSpacing(4)
-        self.body.addLayout(self.props)
-        lr = QHBoxLayout()
-        self.url = QLineEdit(r["public_url"] or "")
-        self.url.setPlaceholderText({"youtube": "https://youtu.be/…", "tiktok": "https://www.tiktok.com/@…/video/…"}
-                                    .get(r["platform"], "https://…"))
-        lr.addWidget(self.url, 1)
-        self.confirm_btn = button("Confirmer", "soft", on_click=self._confirm)
-        lr.addWidget(self.confirm_btn)
-        self.body.addLayout(lr)
-        self.msg = label("", "muted", wrap=True, hint=False)
-        self.body.addWidget(self.msg)
-        self._copy(self.composed["title"] or self.composed["text"],
-                   "Titre copié dans le presse-papiers." if self.composed["title"] else
-                   "Texte copié dans le presse-papiers.")
+        # 3. le lien de la vidéo publiée
+        self.body.addWidget(label("3. Le lien de la vidéo publiée", "h2"))
+        self.link = LinkBox(self.app, self.open_url)
+        self.link.changed.connect(self.refresh)
+        self.body.addWidget(self.link)
+        self.msg = self.link.msg
         browser_login.check_session(self.app, r["account_id"])
+        self.link.set_publication(self.pid)
         self.refresh()
 
     def refresh(self) -> None:
@@ -217,67 +313,23 @@ class PublishWorkshop(QDialog):
         self.login_btn.setVisible(not st)
         name = browser_login.browser.browser_name(browser_login.browser.find_browser())
         self.page_note.setText(
-            f"Navigateur dédié à ce compte ({name}), déjà connecté. Glisse la vidéo dans la page, colle le texte, "
-            "vérifie, puis clique toi-même sur « Publier »." if st else
+            f"Navigateur dédié à ce compte ({name}), déjà connecté. Glisse la vidéo dans la page, colle le texte "
+            "(copié en ouvrant la page), vérifie, puis clique toi-même sur « Publier »." if st else
             "Ce compte n'est pas encore connecté dans son navigateur dédié : « Se connecter à ce compte », puis "
             "ferme la fenêtre une fois connecté.")
-        acc = self.app.concepts.get_account(r["account_id"])
-        if done:
-            self.auto_note.setText(f"✓ En ligne : {r['public_url']}" if r["public_url"] else "")
-        elif r["platform"] in reconcile.SUPPORTED and reconcile.listing_urls(r["platform"], acc.public_url):
-            last = (self.app.concepts.account_settings(acc.id).get("reconcile") or {})
-            when = ""
-            if last.get("at"):
-                from .widgets import local_time
-                when = f" Dernière recherche : {local_time(last['at'])}" + (
-                    f" ({last['error']})" if last.get("error") else ".")
-            self.auto_note.setText("Une fois la vidéo publiée, son lien est retrouvé tout seul sur la page publique "
-                                   "du compte (vérifié toutes les heures)." + when)
-        elif r["platform"] in reconcile.SUPPORTED:
-            self.auto_note.setText("Renseigne l'adresse publique du compte (Concepts et projets) pour que le lien "
-                                   "soit retrouvé tout seul. En attendant, colle-le ici.")
-        else:
-            self.auto_note.setText(f"{rules.RULES[r['platform']].label} ne montre pas ses vidéos sans connexion : "
-                                   "colle ici le lien de la vidéo une fois publiée.")
-        while self.props.count():
-            it = self.props.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
-        for m in ([] if done else self.app.publications.matches(self.pid)):
-            self.props.addWidget(self._proposal(m))
-        for w in (self.url, self.confirm_btn, self.open_btn):
-            w.setEnabled(not done)
-
-    def _proposal(self, m) -> QWidget:
-        w = QFrame()
-        w.setProperty("role", "card")
-        h = QHBoxLayout(w)
-        h.setContentsMargins(10, 6, 8, 6)
-        h.addWidget(label("Est-ce cette vidéo ?", None, hint=False))
-        t = label(m["title"] or m["url"], "muted", hint=False)
-        t.setToolTip(m["url"])
-        h.addWidget(t, 1)
-        h.addWidget(button("Voir", "ghost", on_click=lambda: self.open_url(m["url"])))
-        h.addWidget(button("Oui", "soft", on_click=lambda: self._accept(m["id"])))
-        h.addWidget(button("Non", "ghost", on_click=lambda: self._reject(m["id"])))
-        return w
+        self.link.refresh()
+        self.open_btn.setEnabled(not done)
 
     # -- actions --------------------------------------------------------------------------
-    def _copy(self, text: str, msg: str) -> None:
-        QApplication.clipboard().setText(text)
-        self.copied.setText("✓ " + msg)
-
-    def _reveal(self, path: str) -> None:
-        from .pages.library import reveal
-        reveal(path)
-
     def _open(self) -> None:
         r = self.row
         if r["status"] not in ("published", "cancelled", "manual_action"):
             self.app.publications.mark_manual(self.pid, "Envoyée depuis l'Atelier de publication : lien à confirmer.")
-        note = browser_login.open_page(self.app, r["account_id"], rules.RULES[r["platform"]].upload_url,
-                                       self.open_url)
-        self.msg.setText(note or "Page d'envoi ouverte dans le navigateur du compte.")
+        c = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
+        QApplication.clipboard().setText(c["title"] or c["text"])      # le texte, prêt à coller dans la page
+        note = browser_login.open_page(self.app, r["account_id"], upload_url(r["platform"]), self.open_url)
+        self.msg.setText(note or ("Page d'envoi ouverte dans le navigateur du compte ; "
+                                  + ("titre copié." if c["title"] else "texte copié.")))
         self.refresh()
 
     def _login(self) -> None:
@@ -295,24 +347,4 @@ class PublishWorkshop(QDialog):
         self.msg.setText("✓ Compte connecté dans son navigateur." if found else
                          "Aucune session trouvée : la connexion n'a pas abouti." if found is False else
                          "Impossible de vérifier la connexion (navigateur encore ouvert ?).")
-        self.refresh()
-
-    def _accept(self, match_id: int) -> None:
-        try:
-            self.app.publications.accept_match(match_id)
-        except PublicationError as exc:
-            self.msg.setText(f"⚠ {exc}")
-        self.refresh()
-
-    def _reject(self, match_id: int) -> None:
-        self.app.publications.reject_match(match_id)
-        self.refresh()
-
-    def _confirm(self) -> None:
-        try:
-            self.app.publications.confirm_published(self.pid, self.url.text())
-        except PublicationError as exc:
-            self.msg.setText(f"⚠ {exc}")
-            return
-        self.msg.setText("✓ Publication confirmée.")
         self.refresh()

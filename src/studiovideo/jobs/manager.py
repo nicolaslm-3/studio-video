@@ -181,16 +181,24 @@ class JobManager:
             self._notify(job_id)
             try:
                 result = handler(ctx, json.loads(row["params_json"])) or {}
-            except JobCancelled:
-                self._update(job_id, status="cancelled", message="Annulée", finished=True)
             except Exception as exc:
-                log.error("Tâche %s (%s) en échec\n%s", job_id, row["kind"], traceback.format_exc())
-                self._update(job_id, status="failed", error=str(exc) or type(exc).__name__, finished=True)
+                if not ctx.cancelled:
+                    log.error("Tâche %s (%s) en échec\n%s", job_id, row["kind"], traceback.format_exc())
+                    self._update(job_id, status="failed", error=str(exc) or type(exc).__name__, finished=True)
             else:
-                self._update(job_id, status="succeeded", progress=1.0, result=result, finished=True)
+                if not ctx.cancelled:
+                    self._update(job_id, status="succeeded", progress=1.0, result=result, finished=True)
+            # arrêtée (même si le travail en cours a fini malgré tout) : son résultat n'est pas retenu, et une
+            # relance faite entre-temps n'est pas touchée
+            if ctx.cancelled:
+                with self._lock:
+                    current = self._contexts.get(job_id) is ctx
+                if current:
+                    self._update(job_id, status="cancelled", message="Arrêtée", finished=True)
         finally:
             with self._lock:
-                self._contexts.pop(job_id, None)
+                if self._contexts.get(job_id) is ctx:
+                    del self._contexts[job_id]
                 self._idle.notify_all()
             self.db.close()  # connexion propre au thread
 
@@ -217,9 +225,11 @@ class JobManager:
         if ctx:
             ctx.cancel_event.set()
             ctx._kill()
+        # arrêtée tout de suite, même si son travail en cours (un appel réseau…) ne s'interrompt pas : il se
+        # termine en arrière-plan et son résultat est ignoré
         self.db.connect().execute(
-            "UPDATE job SET status='cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-            " WHERE id = ? AND status = 'pending'", (job_id,))
+            "UPDATE job SET status='cancelled', message='Arrêtée', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+            " WHERE id = ? AND status IN ('pending', 'running')", (job_id,))
         self._notify(job_id)
 
     def retry(self, job_id: int) -> int:

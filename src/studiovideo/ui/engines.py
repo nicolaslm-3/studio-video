@@ -18,7 +18,8 @@ from ..services import secrets
 from .widgets import button, label
 
 # clé secrète de chaque moteur qui en demande une
-TR_KEYS = {"deepl": "deepl_api_key", "google": "google_api_key", "microsoft": "azure_translator_key"}
+TR_KEYS = {"deepl": "deepl_api_key", "google": "google_api_key", "microsoft": "azure_translator_key",
+           "elevenlabs": "elevenlabs_api_key"}
 
 
 def _cfg(app: AppContext, engine: str | None = None) -> dict:
@@ -28,8 +29,8 @@ def _cfg(app: AppContext, engine: str | None = None) -> dict:
 def translation_choices(app: AppContext) -> list[tuple[str, str]]:
     """(clé, libellé) du menu « Traduction par » : Automatique d'abord, puis chaque moteur prêt."""
     cfg = _cfg(app)
-    ready = [k for k in trm.AUTO_ORDER if trm.configured(k, cfg, secrets.get_secret)]
-    first = trm.ENGINES[ready[0]][0] if ready else "aucun"
+    ready = [k for k in trm.CHOICES if trm.configured(k, cfg, secrets.get_secret)]
+    first = next((trm.ENGINES[k][0] for k in ready if k in trm.AUTO_ORDER), "aucun")
     out = [("auto", f"Automatique (recommandé) · {first}")]
     for k in ready:
         name = trm.ENGINES[k][0]
@@ -210,7 +211,7 @@ class TranslationEnginesDialog(_Dialog):
 
     def __init__(self, app: AppContext, parent=None):
         cfg = _cfg(app)
-        ready = [k for k in trm.AUTO_ORDER if trm.configured(k, cfg, secrets.get_secret)]
+        ready = [k for k in trm.CHOICES if trm.configured(k, cfg, secrets.get_secret)]
         tip = ("Sans rien régler, la traduction marche déjà avec Google Traduction (gratuit). Pour la meilleure "
                "qualité, créez une clé DeepL API Free : gratuite jusqu'à 500 000 caractères par mois (environ "
                "8 heures de vidéo parlée), elle passe alors en premier.")
@@ -229,7 +230,7 @@ class TranslationEnginesDialog(_Dialog):
         al.addWidget(self.auto)
         self.rows.addWidget(auto)
         self._pick(self.auto, "auto")
-        for k in trm.AUTO_ORDER:
+        for k in trm.CHOICES:
             name, quality, cost, needs, url = trm.ENGINES[k]
             extra = None
             if k == "microsoft":
@@ -275,6 +276,10 @@ class TranslationEnginesDialog(_Dialog):
         cfg = _cfg(self.app, kind)
         if not trm.configured(kind, cfg, secrets.get_secret):
             return False, "Pas encore réglé : " + trm.ENGINES[kind][3] + "."
+        if kind == "elevenlabs":                          # traduit à partir du son : la clé seule se vérifie ici
+            from ..ai import elevenlabs
+            elevenlabs.call(secrets.get_secret("elevenlabs_api_key") or "", "/v1/user", timeout=20)
+            return True, "Clé acceptée : la traduction se fait à partir du son de la vidéo, avec son doublage."
         out = trm.make_translator(cfg, secrets.get_secret).translate(
             ["Bonjour à tous, merci d'avoir regardé cette vidéo."], "fr", "en")
         return True, f"Fonctionne : « {out[0]} »"

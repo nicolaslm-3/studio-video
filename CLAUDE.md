@@ -46,7 +46,10 @@ dans la fenêtre : Whisper sur ce PC ou ElevenLabs Scribe v2, `core.asr_params`,
 (pas de
 bouton Exporter ni de « Suivant » : on passe d'un onglet à l'autre par le dock ; import masqué dans Export).
 « Enregistré » et les messages brefs s'affichent en haut de la liste des tâches ; chaque tâche y est décrite en
-clair (projet · étape en cours · modèle, `jobs_panel.describe`), son état en emoji (mot au survol).
+colonnes — média, action en cours, outil / modèle (`jobs_panel.describe_parts`) —, son état en emoji (mot au survol),
+et un bouton carré l'**arrête à tout instant** (`JobManager.cancel` : arrêtée tout de suite, un travail qui ne
+s'interrompt pas finit en arrière-plan et son résultat est ignoré ; export ou publication : après confirmation).
+Changer d'extrait, de version ou de projet remet la lecture au début (`MontagePlayer.rewind`).
 **Historique** (migration 0008, `services/history.py`) : chaque transcription, traduction et voix générée est
 gardée et appliquée d'office ; on revient à une ancienne par l'horloge (`HistoryPopover` : moteur, puis en gris le
 début du texte) ; une voix a son propre dossier (`DubService.new_directory`). Les dates sont enregistrées en temps
@@ -79,7 +82,9 @@ transcription puis dans la bulle de « Proposer d'autres extraits » (avec duré
 bouton) ; pas d'étapes ni de phrases d'état (seulement une action ou une progression) : en haut « Vidéo complète »,
 puis « Extraits » et les extraits à cocher (colonne étroite, hauteur fixe : titre de 3 à 8 mots,
 `highlights.summary`, et en gris le début de la transcription), « + » pour en ajouter un à la main (petite bulle
-début / durée) ; début et fin à la souris (± 1 s), suivi de la
+début / durée) ; les deux colonnes au centre (de l'espace sur les bords), l'aperçu en haut de la sienne
+(`MontagePlayer.fit_top`) ; sans vidéo, seulement une petite zone de dépôt au centre ; début et fin à la souris
+(± 1 s), suivi de la
 tête sur bouton-icône (`edit/reframe.py`) ; chaque extrait coché devient une vidéo (le premier celle du projet, les
 autres un projet chacun). Traduction prépare les langues (`translate_video` avec `export=False`, une version par
 langue) sur le montage du projet ; le projet d'origine montre la vidéo originale, chaque version (en retrait
@@ -89,26 +94,33 @@ corrigée servant aux sous-titres et à la voix —, Voix, Musique, Effacer les 
 coche verte ou rouge, interrupteur
 `ToggleSwitch`, moteur utilisé, roue crantée ; voix hors ligne : télécharger une langue ou toutes ; chaque voix s'écoute, extrait publié par le service, rien
 n'est généré ; doublage automatique d'ElevenLabs à partir du son de la vidéo, voix `eleven_dub`,
-`ai/elevenlabs.py`), puis ce que fait le logiciel et le résultat outil par outil (`result["status"]` : la voix peut échouer
+`ai/elevenlabs.py` : ses sous-titres — le texte traduit par ElevenLabs — deviennent la traduction de la langue ; moteur
+de traduction « ElevenLabs » au choix, à partir du son, jamais en automatique), puis ce que fait le logiciel et le résultat outil par outil (`result["status"]` : la voix peut échouer
 sans emporter les sous-titres) ; l'aperçu d'une version fait entendre sa voix doublée (`StudioPage._tracks_for`).
 Une version supprimée l'est pour de bon (sa langue quitte `translations.ready`). Moteur « Automatique » par défaut (`ai/translate.py` : le meilleur moteur prêt, puis le suivant en cas d'échec ;
 Google Traduction et MyMemory gratuits sans clé) ; roues crantées = alternatives, clés, voix hors ligne et modèle
-de langage (`ui/engines.py`, `ui/engine_panels.py`). Export : nom du fichier précédé de la date du jour
-(« 2026-04-02 Nom.mp4 », `export_view.file_name`) et dossier, titre et description communs, une colonne par réseau
-(YouTube Shorts, TikTok, Facebook, Instagram ; sans champ titre, le titre ouvre la description), aperçu téléphone,
-programmation : calendrier (jour choisi dans un rond), heures et minutes par 5,
-puis publier / programmer / brouillon sur les réseaux via `PublicationService` (brouillon : YouTube privé, boîte de
-réception TikTok, Page Facebook ; Instagram à la main), ou « Sur mon PC seulement » (aucune publication).
+de langage (`ui/engines.py`, `ui/engine_panels.py`). Export, en deux colonnes : à gauche nom du fichier précédé
+de la date du jour (« 2026-04-02 Nom.mp4 », `export_view.file_name`) et dossier, titre et description communs (sans
+champ titre, le titre ouvre la description), petit aperçu, puis « Brouillon sur les réseaux » (comptes connectés par
+API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et Instagram par la page d'envoi) ou
+« Sur mon PC seulement » — ni publication immédiate ni programmation ; à droite l'**Atelier de publication** : la
+vidéo exportée (rectangle étroit, à glisser, ou « Afficher dans l'Explorateur »), puis une carte par réseau (YouTube,
+TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite) : icône et nom, compte, « Ouvrir la page
+d'envoi » (texte copié), lien de la vidéo publiée (`publish_workshop.LinkBox`) ; pas de case à cocher.
 « Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte, adresse publique, **navigateur
 dédié** (« Se connecter à ce compte » : navigateur par défaut de Windows — sinon Edge — lancé normalement avec le profil
 `browser/<navigateur>/<id>`, l'utilisateur se connecte
 lui-même, la session est reconnue à la fermeture, `publish/browser.py`) ; la connexion par API (application développeur,
 OAuth) est repliée dans « Avancé : connexion par API », jamais supprimée ; il n'y a plus d'onglet Paramètres →
-Publication. **Sans API** : **Atelier de publication** (`ui/publish_workshop.py`, ouvert d'office après « Publier
-maintenant ») : texte copié d'office, page d'envoi dans le profil du compte, vidéo glissée depuis l'Atelier ; le clic
+Publication. **Sans API** : **Atelier de publication** (`ui/publish_workshop.py`, dans Export et depuis le
+Calendrier) : page d'envoi dans le profil du compte (texte copié en l'ouvrant), vidéo glissée depuis l'Atelier ; le clic
 final « Publier » reste humain ; le lien est retrouvé tout seul sur la page publique du compte (`publish/reconcile.py`,
 yt-dlp, YouTube et TikTok, tâche `match_published` toutes les heures) : sûr → confirmé, doute → « Est-ce cette
-vidéo ? ». Pas d'API de plateforme ni de service payant pour publier ou relever les statistiques.
+vidéo ? ». **Statistiques sans API** (`publish/public_stats.py`) : page publique de chaque vidéo publiée lue par
+yt-dlp (Facebook / Instagram avec les cookies du navigateur dédié, lus par yt-dlp, navigateur fermé), 6 h après puis
+J+1, J+3, J+7, J+14, J+30, puis chaque mois, au plus 20 par heure, 5 à 20 s entre deux (`MainWindow.check_stats`) ;
+Analytiques → « Par vidéo » : une vidéo sur les quatre réseaux dans un tableau (`AnalyticsService.by_video`).
+Pas d'API de plateforme ni de service payant pour publier ou relever les statistiques.
 Pas de titre ni de légende ailleurs que dans Export. Dans l'interface on dit « extrait », jamais « moment » ; la
 bibliothèque s'appelle « Médias ».
 

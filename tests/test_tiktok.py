@@ -230,7 +230,7 @@ def test_tiktok_stats_job(server, tmp_path, monkeypatch):
         while app.jobs.get(jid).status in ("pending", "running") and time.time() < end:
             time.sleep(0.05)
         j = app.jobs.get(jid)
-        assert j.status == "succeeded" and "non connecté" in j.result["errors"][0]
+        assert j.status == "succeeded" and j.result["updated"] == 0 and not j.result["errors"]   # page publique plus tard
         store[f"tiktok_refresh_{acc.id}"] = "R1"
         with app.db.transaction() as con:
             con.execute("UPDATE social_account SET connection_status='connected' WHERE id=?", (acc.id,))

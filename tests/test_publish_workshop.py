@@ -237,15 +237,18 @@ def test_workshop_ui(qtbot, app, monkeypatch, tmp_path):
     _, yt = _pub(app, Platform.YOUTUBE, "Titre YouTube", "https://www.youtube.com/@pp")
     _, tk = _pub(app, Platform.TIKTOK, "Légende TikTok", "https://www.tiktok.com/@pp")
     app.publications.propose_match(tk, "https://www.tiktok.com/@pp/video/5", "Légende TikTok", 0.7)
-    w = PublishWorkshop(app, [yt, tk])
+    opened = []
+    w = PublishWorkshop(app, [yt, tk], open_url=opened.append)
     qtbot.addWidget(w)
+    assert not hasattr(w, "text") and "toutes les heures" in w.link.auto_note.text()   # plus de partie « texte »
+    QApplication.clipboard().setText("")
+    w._open()                                                                  # page d'envoi : texte copié
     assert QApplication.clipboard().text() == "Titre YouTube"                  # YouTube : le titre d'abord
-    assert "toutes les heures" in w.auto_note.text()
+    assert opened == ["https://www.youtube.com/upload"] and "profil du compte" in w.msg.text()
     w.group.button(1).click()
-    assert QApplication.clipboard().text() == "Légende TikTok"
-    assert w.props.count() == 1                                                # « Est-ce cette vidéo ? »
+    assert w.link.props.count() == 1                                           # « Est-ce cette vidéo ? »
     (m,) = app.publications.matches(tk)
-    w._accept(m["id"])
+    w.link._accept(m["id"])
     assert app.publications.get(tk)["status"] == "published" and "✓ Publiée" in w.state.text()
     assert not w.open_btn.isEnabled()
     assert w.login_btn.isVisible() or not w.isVisible()                        # pas encore connecté

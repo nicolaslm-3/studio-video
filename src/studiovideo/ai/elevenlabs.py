@@ -3,6 +3,8 @@
 - Transcription (Scribe v2) : le son est envoyé, le texte revient mot à mot avec ses horodatages.
 - Doublage : le son de la vidéo est envoyé ; ElevenLabs transcrit, traduit et refait la voix (voix d'origine
   reproduite, fond sonore gardé), puis renvoie la piste doublée. Le logiciel n'y ajoute rien.
+- Sous-titres du doublage : le texte traduit par ElevenLabs, phrase par phrase et minuté (SRT) ; il sert de
+  traduction de la vidéo (sous-titres et texte de la voix), en un seul passage avec la voix.
 """
 from __future__ import annotations
 
@@ -91,8 +93,9 @@ def speech_to_text(key: str, audio: Path, language: str | None = None, model: st
 
 
 def dub(key: str, audio: Path, target: str, source: str | None, progress: Callable[[float, str], None],
-        is_cancelled: Callable[[], bool], poll: float = 5.0) -> bytes:
-    """Doublage automatique : envoi, attente (ElevenLabs annonce sa durée), puis la piste doublée (MP3)."""
+        is_cancelled: Callable[[], bool], poll: float = 5.0, info: dict | None = None) -> bytes:
+    """Doublage automatique : envoi, attente (ElevenLabs annonce sa durée), puis la piste doublée (MP3).
+    `info` reçoit l'identifiant du doublage (« dubbing_id »), pour en lire ensuite les sous-titres."""
     fields = {"target_lang": target, "num_speakers": "0", "name": f"Studio Vidéo · {audio.stem} · {target}"}
     if source:
         fields["source_lang"] = source
@@ -100,6 +103,8 @@ def dub(key: str, audio: Path, target: str, source: str | None, progress: Callab
     progress(0.05, "envoi du son à ElevenLabs")
     d = json.loads(call(key, "/v1/dubbing", body, ctype, timeout=1800).decode())
     did = d["dubbing_id"]
+    if info is not None:
+        info["dubbing_id"] = did
     expected = float(d.get("expected_duration_sec") or 60.0)
     t0 = time.monotonic()
     while True:
@@ -116,3 +121,44 @@ def dub(key: str, audio: Path, target: str, source: str | None, progress: Callab
         time.sleep(poll)
     progress(0.92, "récupération de la voix doublée")
     return call(key, f"/v1/dubbing/{urllib.parse.quote(did)}/audio/{urllib.parse.quote(target)}", timeout=600)
+
+
+def dub_subtitles(key: str, dubbing_id: str, target: str) -> str:
+    """Sous-titres (SRT) du doublage dans la langue cible : le texte traduit par ElevenLabs, minuté."""
+    did, lang = urllib.parse.quote(dubbing_id), urllib.parse.quote(target)
+    try:
+        data = call(key, f"/v1/dubbing/{did}/transcripts/{lang}/format/srt", timeout=120)
+    except ElevenLabsError as exc:
+        if " 404" not in str(exc) and " 405" not in str(exc):
+            raise
+        data = call(key, f"/v1/dubbing/{did}/transcript/{lang}?format_type=srt", timeout=120)   # ancienne adresse
+    text = data.decode("utf-8", "replace")
+    if text.lstrip().startswith("{"):                     # réponse JSON : le SRT est dans un champ
+        d = json.loads(text)
+        text = d.get("content") or d.get("srt") or d.get("transcript") or ""
+    return text
+
+
+def _srt_time(t: str) -> float:
+    h, m, rest = t.strip().replace(".", ",").split(":")
+    s, ms = (rest.split(",") + ["0"])[:2]
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")[:3]) / 1000
+
+
+def parse_srt(text: str) -> list[tuple[float, float, str]]:
+    """[(début, fin, texte)] d'un fichier SRT (les lignes d'un même sous-titre sont jointes par une espace)."""
+    out = []
+    for block in text.replace("\r\n", "\n").replace("\ufeff", "").split("\n\n"):
+        lines = [ln.strip() for ln in block.strip().split("\n") if ln.strip()]
+        k = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if k is None:
+            continue
+        a, b = lines[k].split("-->")
+        try:
+            start, end = _srt_time(a), _srt_time(b.split()[0])
+        except (ValueError, IndexError):
+            continue
+        words = " ".join(lines[k + 1:]).strip()
+        if words and end > start:
+            out.append((start, end, words))
+    return out

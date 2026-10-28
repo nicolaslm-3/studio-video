@@ -203,3 +203,29 @@ def test_import_starts_transcription_automatically(app, sample_video, monkeypatc
     app.settings.set("auto_transcribe", False)
     imp(3)
     assert app.jobs.wait_idle(timeout=5) and len(got) == 1
+
+
+def test_stop_at_any_time(app):
+    """Une tâche qui ne s'interrompt pas d'elle-même (appel réseau…) est arrêtée tout de suite pour l'utilisateur ;
+    son résultat, s'il arrive ensuite, n'est pas retenu, et une relance n'est pas écrasée."""
+    started, release = threading.Event(), threading.Event()
+
+    def stubborn(ctx, p):
+        started.set()
+        release.wait(5)                       # ne regarde jamais ctx.check()
+        return {"late": True}
+    app.jobs.register("stubborn", stubborn)
+    jid = app.jobs.submit("stubborn", "Têtue")
+    assert started.wait(5)
+    app.jobs.cancel(jid)
+    assert app.jobs.get(jid).status == "cancelled"          # aussitôt, sans attendre la fin du travail
+    app.jobs.register("stubborn", lambda ctx, p: {"ok": True})
+    app.jobs.retry(jid)                                     # relancée pendant que l'ancienne finit
+    release.set()
+    j = wait(app.jobs, jid)
+    for _ in range(50):
+        if j.status == "succeeded":
+            break
+        time.sleep(0.05)
+        j = app.jobs.get(jid)
+    assert j.status == "succeeded" and j.result == {"ok": True}
