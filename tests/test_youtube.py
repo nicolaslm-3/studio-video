@@ -191,6 +191,14 @@ def test_jobs_connect_publish_and_private_case(google, tmp_path, monkeypatch):
         j = wait(app.jobs.submit("publish_upload", "YouTube", {"publication_id": p3}))
         assert j.status == "succeeded" and app.publications.get(p3)["status"] == "scheduled_platform"
         assert G.state["meta"]["status"]["publishAt"].startswith("2099-01-01")
+        # brouillon : envoyée en privé, à rendre publique dans YouTube Studio (jamais « publiée »)
+        md = app.publications.create_master(c.id, "Brouillon", "", "", variant_id=1)
+        pd = app.publications.set_destinations(md, [acc.id])[0]
+        j = wait(app.jobs.submit("publish_upload", "YouTube", {"publication_id": pd, "now": True, "draft": True}))
+        assert j.status == "succeeded" and G.state["meta"]["status"]["privacyStatus"] == "private", j.error
+        assert "publishAt" not in G.state["meta"]["status"]
+        r = app.publications.get(pd)
+        assert r["status"] == "manual_action" and "YouTube Studio" in r["last_error"]
         # compte déconnecté entre-temps : la publication passe en échec (jamais bloquée « en cours d'envoi »)
         m4 = app.publications.create_master(c.id, "Encore", "", "", variant_id=1)
         p4 = app.publications.set_destinations(m4, [acc.id])[0]

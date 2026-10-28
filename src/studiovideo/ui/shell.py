@@ -270,7 +270,7 @@ class Popover(QFrame):
 
 
 class Drawer(Popover):
-    """Navigation : Accueil, Studio, Médias, Calendrier, Analytics, Concepts, Paramètres."""
+    """Navigation : Studio, Médias, Calendrier, Analytics, Concepts, Paramètres."""
     navigate = Signal(int)
 
     def __init__(self, items: list[tuple[int, str, str]], version: str, parent=None):

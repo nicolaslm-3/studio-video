@@ -31,7 +31,7 @@ DARK = {
 PARCOURS = {
     "free_edit": ("Montage libre", "clapperboard", "#4F8EF7", "Monter librement une vidéo"),
     "smart_clipping": ("Clipping", "sparkles", "#D35BC8", "Trouver et découper les meilleurs extraits"),
-    "translation": ("Traduction et adaptation", "languages", "#26A69A", "Sous-titrer, traduire et doubler"),
+    "translation": ("Traduction", "languages", "#26A69A", "Sous-titrer, traduire et doubler"),
     "original": ("Création originale", "wand-sparkles", "#F0894A", "Créer une vidéo à partir d'un texte"),
     "texts": ("Textes", "type", "#8E6CEF", "Textes à l'écran, sous-titres et leur mise en forme"),
 }
@@ -100,7 +100,7 @@ QFrame[role="dim"] {{ background: transparent; }}
 QFrame[role="dock"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 20px; }}
 QFrame[role="drawer"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 18px; }}
 QFrame[role="popover"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 16px; }}
-QFrame[role="sidebar"] {{ background: {c['surface']}; border-right: 1px solid {c['border']}; }}
+QFrame[role="sidebar"] {{ background: {c['bg']}; border: none; }}
 QFrame[role="dropzone"] {{ border: 2px dashed {c['border']}; border-radius: 16px; background: {c['surface']}; }}
 QFrame[role="dropzone"][active="true"] {{ border-color: {c['accent']}; background: {c['accent_soft']}; }}
 QFrame[role="divider"] {{ background: {c['border']}; border: none; }}
@@ -167,6 +167,7 @@ QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::su
 QProgressBar {{ background: {c['sunken']}; border: none; border-radius: 4px; height: 8px; max-height: 8px; text-align: center; color: transparent; }}
 QProgressBar::chunk {{ background: {c['accent']}; border-radius: 4px; }}
 QSlider {{ background: transparent; }}
+QSlider:horizontal {{ min-height: 22px; }}
 QSlider::groove:horizontal {{ height: 6px; background: {c['sunken']}; border-radius: 3px; }}
 QSlider::sub-page:horizontal {{ background: {c['accent']}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ background: {c['raised']}; border: 2px solid {c['accent']}; width: 12px; height: 12px; margin: -5px 0; border-radius: 8px; }}
@@ -216,9 +217,33 @@ QFrame[role="projitem"][selected="true"] {{ background: {c['raised']}; }}
 QFrame[role="projitem"] QLabel {{ background: transparent; }}
 QFrame[role="scrub"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 10px; }}
 QFrame[role="scrub"]:hover {{ border-color: {c['faint']}; }}
-QFrame[role="scrub"] QToolButton {{ background: transparent; border: none; color: {c['muted']}; font-size: 15px; font-weight: 700; padding: 4px 8px; }}
-QFrame[role="scrub"] QToolButton:hover {{ color: {c['text']}; }}
+QFrame[role="scrub"] QToolButton {{ background: transparent; border: none; border-radius: 4px; color: {c['muted']}; font-size: 12px; font-weight: 700; padding: 0; }}
+QFrame[role="scrub"] QToolButton:hover {{ color: {c['text']}; background: {c['hover']}; }}
+QPushButton[kind="mini"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 11px; padding: 3px 9px; font-size: 12px; font-weight: 500; }}
+QPushButton[kind="mini"]:hover {{ border-color: {c['faint']}; }}
+QPushButton[kind="mini"]:checked {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['text']}; font-weight: 600; }}
+QPushButton[kind="mini"]:disabled {{ color: {c['faint']}; }}
 QFrame[role="sep"] {{ background: {c['border']}; border: none; max-height: 1px; }}
+QFrame[role="vsep"] {{ background: {c['border']}; border: none; }}
+QToolButton[role="flag"] {{ background: transparent; border: 2px solid transparent; border-radius: 7px; padding: 3px; }}
+QToolButton[role="flag"]:hover {{ background: {c['hover']}; }}
+QToolButton[role="flag"]:checked {{ background: {c['accent_soft']}; border: 2px solid {c['accent']}; }}
+QPushButton[kind="link"] {{ background: transparent; border: none; padding: 2px 4px; color: {c['text']}; font-weight: 600; text-align: left; }}
+QPushButton[kind="link"]:hover {{ color: {c['accent']}; background: transparent; }}
+QPushButton[kind="link"]:disabled {{ color: {c['faint']}; background: transparent; }}
+QToolButton[role="field"] {{ background: {c['raised']}; border: 1px solid {c['border']}; border-radius: 10px; padding: 6px 10px; }}
+QToolButton[role="field"]:hover {{ border-color: {c['faint']}; background: {c['raised']}; }}
+QToolButton[role="field"]:disabled {{ color: {c['faint']}; background: {c['surface']}; }}
+QCalendarWidget[role="cal"] QWidget {{ background: {c['raised']}; }}
+QCalendarWidget[role="cal"] QWidget#qt_calendar_navigationbar {{ background: {c['raised']}; border: none; padding: 4px; }}
+QCalendarWidget[role="cal"] QToolButton {{ color: {c['text']}; font-weight: 600; background: transparent; border-radius: 8px; padding: 4px 8px; }}
+QCalendarWidget[role="cal"] QToolButton:hover {{ background: {c['hover']}; }}
+QCalendarWidget[role="cal"] QToolButton::menu-indicator {{ image: none; }}
+QCalendarWidget[role="cal"] QToolButton#qt_calendar_prevmonth {{ qproperty-icon: url({tinted_svg('chevron-left', c['muted'])}); }}
+QCalendarWidget[role="cal"] QToolButton#qt_calendar_nextmonth {{ qproperty-icon: url({tinted_svg('chevron-right', c['muted'])}); }}
+QCalendarWidget[role="cal"] QSpinBox {{ border: none; background: transparent; }}
+QCalendarWidget[role="cal"] QAbstractItemView {{ background: {c['raised']}; border: none; outline: none; selection-background-color: {c['accent']}; selection-color: {c['accent_text']}; }}
+QCalendarWidget[role="cal"] QAbstractItemView:disabled {{ color: {c['faint']}; }}
 """
 
 

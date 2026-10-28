@@ -252,7 +252,7 @@ class ColorButton(QPushButton):
     """Pastille de couleur ; un clic ouvre le panneau de couleur. `picked` est émis à chaque changement."""
     picked = Signal(str)
 
-    def __init__(self, value: str = "#FFFFFF", size: tuple[int, int] = (40, 24)):
+    def __init__(self, value: str = "#FFFFFF", size: tuple[int, int] = (24, 24)):      # carré
         super().__init__()
         self.setFixedSize(*size)
         self.setCursor(Qt.PointingHandCursor)

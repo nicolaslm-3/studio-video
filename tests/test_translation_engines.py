@@ -173,7 +173,7 @@ def test_migration_texts_mode_keeps_everything(tmp_path, monkeypatch):
                 "VALUES (1, ?, 'video', 'v.mp4', 'v.mp4', 'f')", (pid,))
     with pytest.raises(sqlite3.IntegrityError):
         con.execute("UPDATE project SET mode = 'texts' WHERE id = ?", (pid,))
-    monkeypatch.setattr(database, "available_migrations", lambda: all_migs)
+    monkeypatch.setattr(database, "available_migrations", lambda: all_migs[:7])
     assert db.migrate() == [7]
     assert con.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     row = con.execute("SELECT name, mode, data_json FROM project WHERE id = ?", (pid,)).fetchone()

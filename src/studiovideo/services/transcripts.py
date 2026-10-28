@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from ..db.database import Database
 from ..transcribe.model import Transcript
+from .history import HistoryService
 
 
 class TranscriptService:
     def __init__(self, db: Database):
         self.db = db
+        self.history = HistoryService(db)          # toutes les transcriptions et traductions faites
 
     def _row(self, asset_id: int):
         return self.db.query_one("SELECT * FROM transcript WHERE source_asset_id = ? ORDER BY id DESC LIMIT 1",
@@ -31,11 +33,16 @@ class TranscriptService:
         r = self._row(asset_id)
         return bool(r and r["edited_json"])
 
-    def store_original(self, asset_id: int, tr: Transcript) -> int:
+    def _set_current(self, asset_id: int, language: str | None, engine: str, data: str) -> int:
         with self.db.transaction() as c:
             c.execute("DELETE FROM transcript WHERE source_asset_id = ?", (asset_id,))
-            tid = c.execute("INSERT INTO transcript(source_asset_id, language, engine, original_json) VALUES (?,?,?,?)",
-                            (asset_id, tr.language, tr.engine, tr.to_json())).lastrowid
+            return c.execute("INSERT INTO transcript(source_asset_id, language, engine, original_json) "
+                             "VALUES (?,?,?,?)", (asset_id, language, engine, data)).lastrowid
+
+    def store_original(self, asset_id: int, tr: Transcript) -> int:
+        """Nouvelle transcription : appliquée, les précédentes restent dans l'historique."""
+        tid = self._set_current(asset_id, tr.language, tr.engine, tr.to_json())
+        self.history.add(asset_id, "transcript", "", tr.engine, tr.to_json())
         self.db.audit("transcript.create", f"asset={asset_id} engine={tr.engine}")
         return tid
 
@@ -47,6 +54,20 @@ class TranscriptService:
         with self.db.transaction() as c:
             c.execute("UPDATE transcript SET edited_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
                       " WHERE id = ?", (tr.to_json(), r["id"]))
+        self.history.update_active(asset_id, "transcript", "", tr.to_json())
+
+    def apply_version(self, hid: int) -> str | None:
+        """Revenir à une transcription ou une traduction de l'historique ; renvoie sa langue ("" : la
+        transcription d'origine), None si elle n'existe plus."""
+        r = self.history.activate(hid)
+        if r is None:
+            return None
+        if r["kind"] == "transcript":
+            tr = Transcript.from_json(r["data_json"])
+            self._set_current(r["source_asset_id"], tr.language, r["engine"], r["data_json"])
+            return ""
+        self._put_translation(r["source_asset_id"], r["language"], r["engine"], r["data_json"])
+        return r["language"]
 
     def revert(self, asset_id: int) -> None:
         r = self._row(asset_id)
@@ -77,16 +98,22 @@ class TranscriptService:
                               (asset_id, language))
         return Transcript.from_json(r["edited_json"] or r["original_json"]) if r else None
 
-    def store_translation(self, asset_id: int, tr: Transcript) -> None:
+    def _put_translation(self, asset_id: int, language: str, engine: str, data: str) -> None:
         with self.db.transaction() as c:
             c.execute("INSERT INTO translation(source_asset_id, language, engine, original_json) VALUES (?,?,?,?) "
                       "ON CONFLICT(source_asset_id, language) DO UPDATE SET engine = excluded.engine, "
                       "original_json = excluded.original_json, edited_json = NULL",
-                      (asset_id, tr.language, tr.engine, tr.to_json()))
+                      (asset_id, language, engine, data))
+
+    def store_translation(self, asset_id: int, tr: Transcript, label: str = "") -> None:
+        """Nouvelle traduction : appliquée, les précédentes restent dans l'historique."""
+        self._put_translation(asset_id, tr.language, tr.engine, tr.to_json())
+        self.history.add(asset_id, "translation", tr.language, tr.engine, tr.to_json(), label=label)
 
     def save_translation_edit(self, asset_id: int, tr: Transcript) -> None:
         self.db.connect().execute("UPDATE translation SET edited_json = ? WHERE source_asset_id = ? AND language = ?",
                                   (tr.to_json(), asset_id, tr.language))
+        self.history.update_active(asset_id, "translation", tr.language, tr.to_json())
 
     def delete_translation(self, asset_id: int, language: str) -> None:
         self.db.connect().execute("DELETE FROM translation WHERE source_asset_id = ? AND language = ?",

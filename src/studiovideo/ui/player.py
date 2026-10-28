@@ -5,8 +5,7 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
-from ..media.ffmpeg import fmt_timecode
-from .widgets import PlayButton, button, label, tool
+from .widgets import PlayButton, button, label, tc_html, tool
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -50,6 +49,8 @@ class PlayerWidget(QWidget):
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
+        from .audio_out import follow_default_output        # écouteurs Bluetooth : le son les suit
+        self._sync_audio = follow_default_output(self, lambda: [self.audio])
         self.player.setVideoOutput(self.video)
         self.player.positionChanged.connect(self._on_pos)
         self.player.durationChanged.connect(self._on_dur)
@@ -69,7 +70,8 @@ class PlayerWidget(QWidget):
         ctr.addWidget(tool("step-back", "Image précédente (←)", lambda: self.step(-1)))
         ctr.addWidget(self.play_btn)
         ctr.addWidget(tool("step-forward", "Image suivante (→)", lambda: self.step(1)))
-        self.tc = label("0:00.0 / 0:00", "muted")
+        self.tc = label("", "muted")
+        self.tc.setTextFormat(Qt.RichText)
         self.tc.setMinimumWidth(118)
         ctr.addSpacing(6)
         ctr.addWidget(self.tc)
@@ -97,6 +99,7 @@ class PlayerWidget(QWidget):
         io2.addWidget(tool("arrow-left-to-line", "Fin de la sélection ici (O)", self.mark_out))
         io2.addWidget(tool("square-play", "Lire la sélection (P)", self.preview_range))
         self.io_lbl = label("—", "faint")
+        self.io_lbl.setTextFormat(Qt.RichText)
         self.io_lbl.setToolTip("Entrée · Sortie · Durée de la sélection")
         io2.addWidget(self.io_lbl)
         io2.addStretch(1)
@@ -135,6 +138,7 @@ class PlayerWidget(QWidget):
         self._on_pos(int(max(0.0, t) * 1000)) if not self.enabled else None
         if play:
             self._range_end = None
+            self._sync_audio()
             self.player.play()
 
     def set_range(self, a: float, b: float) -> None:
@@ -149,6 +153,7 @@ class PlayerWidget(QWidget):
             self.player.pause()
         else:
             self._range_end = None
+            self._sync_audio()
             self.player.play()
 
     def step(self, frames: int) -> None:
@@ -174,6 +179,7 @@ class PlayerWidget(QWidget):
             return
         self.player.setPosition(int(self.in_s * 1000))
         self._range_end = self.out_s
+        self._sync_audio()
         self.player.play()
 
     def _emit_clip(self) -> None:
@@ -185,7 +191,7 @@ class PlayerWidget(QWidget):
     # -- internes ---------------------------------------------------------
     def _refresh_io(self) -> None:
         dur = (self.out_s - self.in_s) if (self.in_s is not None and self.out_s is not None) else None
-        self.io_lbl.setText(f"{fmt_timecode(self.in_s, True)} → {fmt_timecode(self.out_s, True)}"
+        self.io_lbl.setText(f"{tc_html(self.in_s)} → {tc_html(self.out_s)}"
                             + (f"  ({dur:.1f} s)" if dur is not None else ""))
         self.io_lbl.setToolTip("Point d'entrée → point de sortie (durée)")
         self.clip_btn.setEnabled(dur is not None)
@@ -195,7 +201,7 @@ class PlayerWidget(QWidget):
         self.position_changed.emit(ms / 1000)
         if not self.slider.isSliderDown():
             self.slider.setValue(ms)
-        self.tc.setText(f"{fmt_timecode(ms / 1000, True)} / {fmt_timecode(self._duration)}")
+        self.tc.setText(tc_html(ms / 1000, self._duration))
         if self._range_end is not None and ms / 1000 >= self._range_end:
             self.player.pause()
             self._range_end = None

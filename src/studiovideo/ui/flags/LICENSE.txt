@@ -1,0 +1,3 @@
+Drapeaux : emojis 3D de Noto Emoji (Google), https://github.com/googlefonts/noto-emoji
+Licence Apache 2.0 (images) — https://www.apache.org/licenses/LICENSE-2.0
+Fichiers : <code pays ISO en minuscules>.png (128 px), copiés tels quels depuis 3D/png/128.

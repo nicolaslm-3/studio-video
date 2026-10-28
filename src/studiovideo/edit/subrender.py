@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen, QTransform
 
+from . import emoji
 from .subtitles import State, SubtitleStyle, SubtitleTrack, states, wrap_lines
 from .textrender import REFERENCE_HEIGHT, _ensure_app
 
@@ -54,7 +55,7 @@ def render_state(track: SubtitleTrack, state: State, W: int, H: int) -> QImage:
     max_w = W * style.max_width
     lines = wrap_lines(words, track.rules.max_chars, track.rules.max_lines)
     # sécurité : une ligne trop large est rognée en réduisant la police
-    widest = max((fm.horizontalAdvance(" ".join(l)) for l in lines), default=0)
+    widest = max((emoji.width(fm, font, " ".join(l)) for l in lines), default=0)
     if widest > max_w:
         font.setPixelSize(max(8, int(font.pixelSize() * max_w / widest)))
         fm = QFontMetricsF(font)
@@ -74,7 +75,7 @@ def render_state(track: SubtitleTrack, state: State, W: int, H: int) -> QImage:
     p.setOpacity(max(0.0, min(1.0, state.alpha)))
 
     if style.box:
-        widths = [fm.horizontalAdvance(" ".join(l)) for l in lines]
+        widths = [emoji.width(fm, font, " ".join(l)) for l in lines]
         pad = font.pixelSize() * 0.3
         c = QColor(style.box_color)
         c.setAlphaF(max(0.0, min(1.0, style.box_opacity)))
@@ -87,14 +88,14 @@ def render_state(track: SubtitleTrack, state: State, W: int, H: int) -> QImage:
     k = 0
     outline_w = style.outline * H / REFERENCE_HEIGHT * 2
     for i, line in enumerate(lines):
-        lw = fm.horizontalAdvance(" ".join(line))
+        lw = emoji.width(fm, font, " ".join(line))
         x = (W - lw) / 2
         base = top + i * line_h + fm.ascent()
         for w in line:
             visible = state.visible < 0 or k < state.visible
             if visible:
                 path = QPainterPath()
-                path.addText(QPointF(x, base), font, w)
+                marks = emoji.add_line(path, font, fm, x, base, w)       # emojis en couleur, drapeaux en image
                 if style.shadow:
                     sp = QPainterPath(path)
                     sp.translate(outline_w * 0.35 + 1, outline_w * 0.45 + 1)
@@ -107,7 +108,8 @@ def render_state(track: SubtitleTrack, state: State, W: int, H: int) -> QImage:
                 if track.animation == "word" and k == state.highlight:
                     col = style.highlight_color
                 p.fillPath(path, QColor(col))
-            x += fm.horizontalAdvance(w) + space
+                emoji.draw(p, marks)
+            x += emoji.width(fm, font, w) + space
             k += 1
     p.end()
     return img

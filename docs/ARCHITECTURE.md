@@ -18,11 +18,14 @@ src/studiovideo/
 │   ├── montage.py      timeline du projet, réglages par concept, historique des exports
 │   ├── settings.py     paramètres
 │   ├── transcripts.py  transcriptions (original conservé + corrections)
+│   ├── history.py      historique des transcriptions, traductions et voix (on revient à une ancienne)
 │   ├── candidates.py   propositions d'extraits (décisions, conversion en clips)
 │   └── secrets.py      coffre d'identifiants Windows (keyring)
 ├── ai/
-│   ├── highlights.py   moments forts : analyse locale, moteur LLM (Ollama / OpenAI), protection du contexte
-│   ├── lexicon.py      indices lexicaux FR / EN par catégorie
+│   ├── highlights.py   extraits : analyse locale (texte + son : rire, polarisant, émotion, politique), moteur LLM
+│   │                   (Ollama / OpenAI), titre en 3 à 8 mots, protection du contexte
+│   ├── lexicon.py      indices lexicaux FR / EN par critère
+│   ├── elevenlabs.py   ElevenLabs : transcription Scribe v2, doublage automatique à partir du son
 │   └── translate.py    traduction : DeepL, modèle de langage, Google, Microsoft, LibreTranslate, gratuits
 │                       (Google Traduction, MyMemory) ; « Automatique » avec reprise ; glossaire
 ├── edit/
@@ -30,6 +33,7 @@ src/studiovideo/
 │   ├── render.py       graphe FFmpeg, export 2 passes, aperçu exact, analyse audio, vérification
 │   ├── compose.py      mise en page : double cadrage d'une même source, deux vidéos, incrustation
 │   ├── textrender.py   rendu des textes par Qt (identique en aperçu et à l'export)
+│   ├── emoji.py        emojis des textes en couleur, drapeaux en images (Windows n'en a pas)
 │   ├── subtitles.py    sous-titres : génération depuis la transcription, découpage, états d'animation
 │   ├── subrender.py    dessin des sous-titres et incrustation en une passe (concat d'images)
 │   ├── audiofix.py     « Optimiser l'audio » : mesures par extrait, choix des traitements, rapport
@@ -50,10 +54,17 @@ src/studiovideo/
 │   └── rollback.py     retour à la version précédente
 └── ui/                 PySide6 — ne contient pas de logique métier
     ├── main_window.py  navigation latérale, 6 espaces, panneau des tâches, mises à jour
-    ├── pages/          tableau de bord, studio, bibliothèque, paramètres
+    ├── pages/          studio, médias, calendrier, analytics, paramètres (pas de page d'accueil)
     ├── player.py       lecteur source + points d'entrée/sortie
-    ├── montage_player.py lecteur du montage, aperçu en direct du cadrage
-    ├── timeline_view.py  timeline (pistes vidéo, textes, musique)
+    ├── montage_player.py lecteur du montage, aperçu en direct du cadrage (coins arrondis, sans bandes noires)
+    ├── project_sidebar.py barre des projets (Clipping, Traduction, Textes), ordre stable, versions en retrait
+    ├── scrub.py        valeurs réglables à la souris (temps, nombres) : remplacent les champs numériques
+    ├── effects.py      bouton robot : effets de l'image (miroir, zoom, mouvement, filtre, rotation, vitesse)
+    ├── audio_out.py    le son suit la sortie audio de Windows (écouteurs Bluetooth)
+    ├── account_setup.py ajouter / connecter un compte et régler l'application du réseau
+    ├── engine_panels.py voix hors ligne (Piper) et modèle de langage, dans les roues crantées
+    ├── flags/          drapeaux emoji en images (Noto 3D, Apache 2.0) : langues, emojis des textes
+    ├── timeline_view.py  timeline (pistes vidéo, textes, musique, sous-titres, voix doublée)
     ├── montage_panel.py  inspecteur : extrait, cadrage, textes, audio, export
     ├── dialogs.py      concept, compte, nouveau projet
     ├── importing.py    import partagé (fichiers, glisser-déposer, URL)
@@ -120,12 +131,13 @@ src/studiovideo/
 | `services/archive.py` | Archive de projet `.studioproj` (export / import, renumérotation, médias reconnus par empreinte) |
 | `edit/original.py` | Création originale : script en scènes, voix off, fabrication de la vidéo |
 | `publish/rules.py` | Limites de texte par plateforme, composition des légendes, contrôle des liens |
-| `publish/youtube.py`, `tiktok.py`, `meta.py`, `xapi.py` | Connexions OAuth (redirection locale, PKCE), envois reprenables, statistiques |
+| `publish/youtube.py`, `tiktok.py`, `meta.py`, `xapi.py` | Connexions OAuth (redirection locale, PKCE), envois reprenables, statistiques ; brouillons : YouTube en privé, boîte de réception TikTok (`video.upload`), brouillon de Page Facebook (Instagram n'en propose pas) |
 | `services/analytics.py` | Relevés horodatés ; un indicateur absent n'est jamais remplacé par zéro |
 | `ui/guide.py` | Barre d'étapes des parcours guidés (Clipping, Traduction, Création originale) |
-| `ui/export_view.py` | Onglet Export : aperçu compact (clic : lecture / pause), nom du fichier, dossier, titre et description communs ; une colonne par réseau (aperçu téléphone, compte avec sa photo, texte propre) ; publier / programmer / sur le PC seulement ; tous les emojis avec recherche français-anglais (`ui/assets/emojis.json`, données Unicode CLDR) |
-| `ui/simple_views.py` | Écrans simplifiés Clipping (extraits à cocher, critères, début et fin réglables à la souris, suivi de la tête sur bouton-icône, un projet par extrait coché, « Suivant » vers l'onglet suivant) et Traduction (vidéo, langues, voix, textes, style des sous-titres, « Préparer » les langues) |
-| `ui/engines.py` | Moteurs de traduction et de voix : choix du menu, alternatives, coûts et conseils, saisie et test des clés (icônes réglages de Traduction) |
+| `ui/export_view.py` | Onglet Export : un cadre (aperçu compact — clic : lecture / pause avec icône 1,5 s —, nom du fichier daté « AAAA-MM-JJ Nom.mp4 », dossier, titre et description | que faire de la vidéo) ; une colonne par réseau (aperçu téléphone, compte avec sa photo, « Ajouter un compte » / « Connecter ce compte… », texte propre) ; publier / programmer (calendrier épuré, heure par 10 min) / brouillon sur les réseaux / sur le PC seulement ; emojis (icône grise dans chaque champ, recherche français-anglais, `ui/assets/emojis.json`) |
+| `ui/simple_views.py` | Écrans simplifiés Clipping (« Vidéo complète », extraits à hauteur fixe à cocher, « + » pour en ajouter un, critères dans une bulle, début et fin à la souris, suivi de la tête sur bouton-icône, un projet par extrait coché) et Traduction (drapeaux, un outil par ligne avec interrupteur, moteur, état et roue crantée ; tâche en cours et résultat outil par outil ; « Préparer » crée une version par langue sous le projet) |
+| `ui/engines.py` | Moteurs de traduction et de voix : alternatives (qualité et coût en une ligne), pastille du moteur utilisé, saisie et test des clés, voix hors ligne et modèle de langage intégrés (roues crantées de Traduction) |
+| `ui/account_setup.py` | Ajouter / connecter un compte : nom, application développeur du réseau (identifiants, code secret dans le coffre, visibilité), connexion OAuth (remplace l'ancien onglet Paramètres → Publication) |
 | `ui/shell.py` | Dock des onglets, bulles et infobulles aux couleurs du thème (`TipFilter`), bouton des tâches |
 | `edit/translation.py` | Vidéo traduite clé en main : styles de sous-titres, voix doublée, texte du haut ; utilisé par la tâche `translate_video` |
 | `ui/color_picker.py` | Choix de couleur intégré (panneau flottant aux couleurs du thème) |

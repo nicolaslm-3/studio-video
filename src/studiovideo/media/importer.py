@@ -89,7 +89,9 @@ class MediaImporter:
         return row["id"] if row else None
 
     def import_file(self, path: Path | str, *, project_id: int | None = None, allow_duplicate: bool = False,
-                    origin_url: str = "", provenance: str = "", progress=None) -> ImportResult:
+                    origin_url: str = "", provenance: str = "", progress=None,
+                    display_name: str = "") -> ImportResult:
+        """`display_name` : nom affiché du média (titre d'une vidéo téléchargée par lien), sinon le nom du fichier."""
         path = Path(path)
         if not path.is_file():
             raise FileNotFoundError(f"Fichier introuvable : {path}")
@@ -130,7 +132,7 @@ class MediaImporter:
                 "INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, size_bytes, fingerprint,"
                 " duration_s, width, height, fps, video_codec, audio_codec, audio_tracks, probe_json,"
                 " origin_url, provenance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (self.workspace_id, project_id, kind, str(path.resolve()), path.name, size, fp,
+                (self.workspace_id, project_id, kind, str(path.resolve()), display_name or path.name, size, fp,
                  info.duration_s if info else None, info.width if info else None,
                  info.height if info else None, info.fps if info else None,
                  info.video_codec if info else None, info.audio_codec if info else None,

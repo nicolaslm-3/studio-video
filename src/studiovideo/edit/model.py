@@ -130,6 +130,12 @@ class VideoSettings:
     temperature: int = 6500     # kelvins, 6500 = neutre
     sharpen: float = 0.0        # 0..1
     lut: str = ""               # look colorimétrique : fichier .cube (copié dans les données du logiciel)
+    # effets de l'image (bouton robot sous l'aperçu) : la vidéo seulement, jamais les textes ni les sous-titres
+    tilt: float = 0.0           # légère rotation, en degrés (-10..10), image agrandie pour ne pas montrer de coins
+    pan: float = 0.0            # mouvement subtil (panoramique lent) : 0 = aucun … 1 = marqué
+    look: str = ""              # filtre colorimétrique (`render.LOOKS`)
+    look_amount: float = 0.7    # intensité du filtre (0..1)
+    speed: float = 1.0          # vitesse de la vidéo exportée (0,5 … 2)
     # zones masquées (texte incrusté, logo) en proportions de l'image source :
     # {"x", "y", "w", "h" (0..1), "mode": "blur" | "delogo" | "box"}
     masks: list = field(default_factory=list)

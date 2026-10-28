@@ -16,7 +16,7 @@ from ...core import AppContext
 from ...media.ffmpeg import fmt_timecode
 from ..importing import KIND_LABELS, DropZone, import_paths, import_url, pick_and_import
 from .. import theme
-from ..widgets import Card, EmptyState, PageHeader, button, label
+from ..widgets import Card, EmptyState, PageHeader, button, label, local_time
 
 COLS = ["", "Nom", "Type", "Durée", "Résolution", "Concept", "Importé le"]
 
@@ -190,7 +190,7 @@ class LibraryPage(QWidget):
             res = f"{r['width']}×{r['height']}" if r["width"] else ""
             self.model.appendRow([thumb, name, QStandardItem(KIND_LABELS.get(r["kind"], r["kind"])), dur,
                                   QStandardItem(res), QStandardItem(r["concept_name"] or ""),
-                                  QStandardItem(r["imported_at"][:16].replace("T", " "))])
+                                  QStandardItem(local_time(r["imported_at"]))])
         self._show_details()
 
     def _selected_id(self) -> int | None:
@@ -207,7 +207,6 @@ class LibraryPage(QWidget):
                 w.setParent(None)
                 w.deleteLater()
             elif it.layout():
-                from .dashboard import _delete_layout
                 _delete_layout(it.layout())
         aid = self._selected_id()
         a = self.app.library.get(aid) if aid else None
@@ -320,3 +319,15 @@ def reveal(path: str) -> None:
         target = p.parent if p.parent.exists() else Path.home()
         subprocess.Popen(["xdg-open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          env=os.environ.copy())
+
+
+def _delete_layout(layout) -> None:
+    while layout.count():
+        it = layout.takeAt(0)
+        w = it.widget()
+        if w:
+            w.hide()                  # sinon son affichage différé en fait une fenêtre
+            w.setParent(None)
+            w.deleteLater()
+        elif it.layout():
+            _delete_layout(it.layout())

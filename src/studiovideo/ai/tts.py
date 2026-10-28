@@ -46,6 +46,21 @@ class Voice:
     name: str
     category: str = ""
     language: str = ""
+    preview: str = ""                       # extrait d'écoute fourni par le service (adresse), rien de généré
+
+
+# extraits d'écoute publiés par OpenAI et par Piper (aucune voix n'est générée pour les écouter)
+OPENAI_PREVIEW = "https://cdn.openai.com/API/docs/audio/{}.wav"
+PIPER_PREVIEW = "https://rhasspy.github.io/piper-samples/samples/{family}/{lang}/{name}/{quality}/speaker_0.mp3"
+
+
+def piper_preview(key: str) -> str:
+    """« fr_FR-siwis-medium » → adresse de l'extrait publié par Piper."""
+    parts = key.split("-")
+    if len(parts) < 3:
+        return ""
+    lang, quality, name = parts[0], parts[-1], "-".join(parts[1:-1])
+    return PIPER_PREVIEW.format(family=lang.split("_")[0], lang=lang, name=name, quality=quality)
 
 
 class TTSEngine(Protocol):
@@ -82,34 +97,17 @@ class ElevenLabsTTS:
         self.url = (base_url or "https://api.elevenlabs.io").rstrip("/")
 
     def _req(self, path: str, body: dict | None = None, timeout: float = 120) -> bytes:
+        from . import elevenlabs
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(self.url + path, data=data, headers={
-            "xi-api-key": self.key, "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read()
-        except urllib.error.HTTPError as exc:
-            detail = exc.read()[:400].decode("utf-8", "replace")
-            if "api_key_id_used_as_api_key" in detail:
-                raise TTSError("Vous avez collé l'identifiant de la clé ElevenLabs, pas la clé elle-même : la clé "
-                               "commence par « sk_ » et n'est affichée qu'à sa création (ElevenLabs → Developers → "
-                               "API Keys → Create). Collez-la dans Réglages.") from exc
-            if exc.code == 401 or "invalid_api_key" in detail:
-                raise TTSError("Clé ElevenLabs refusée : vérifiez-la dans Réglages (elle commence par « sk_ »).") \
-                    from exc
-            if "quota_exceeded" in detail or "credits" in detail.lower():
-                raise TTSError("Plus de crédit ElevenLabs ce mois-ci : attendez le renouvellement, passez à un "
-                               "forfait supérieur ou choisissez une autre voix.") from exc
-            if exc.code == 429:
-                raise TTSError("Quota ElevenLabs atteint ou trop de requêtes.") from exc
-            raise TTSError(f"ElevenLabs a répondu {exc.code} : {detail}") from exc
-        except (urllib.error.URLError, OSError) as exc:
-            raise TTSError(f"ElevenLabs injoignable : {exc}") from exc
+            return elevenlabs.call(self.key, path, data, timeout=timeout, base=self.url)
+        except elevenlabs.ElevenLabsError as exc:
+            raise TTSError(str(exc)) from exc
 
     def voices(self) -> list[Voice]:
         data = json.loads(self._req("/v1/voices", timeout=30).decode())
-        return [Voice(v["voice_id"], v.get("name", v["voice_id"]), v.get("category", ""))
-                for v in data.get("voices", [])]
+        return [Voice(v["voice_id"], v.get("name", v["voice_id"]), v.get("category", ""),
+                      preview=v.get("preview_url") or "") for v in data.get("voices", [])]
 
     def credits(self) -> tuple[int, int] | None:
         """(caractères utilisés, caractères du forfait) ce mois-ci ; None si la clé n'a pas ce droit."""
@@ -144,7 +142,7 @@ class OpenAITTS:
         self.url = (base_url or "https://api.openai.com").rstrip("/")
 
     def voices(self) -> list[Voice]:
-        return [Voice(v, v.capitalize(), "multilingue") for v in OPENAI_VOICES]
+        return [Voice(v, v.capitalize(), "multilingue", preview=OPENAI_PREVIEW.format(v)) for v in OPENAI_VOICES]
 
     def synth(self, text: str, voice: str, language: str, dest: Path, speed: float = 1.0) -> Path:
         body = {"model": self.model, "voice": voice, "input": text, "response_format": "pcm",   # 24 kHz, 16 bits
@@ -182,7 +180,8 @@ class PiperTTS:
         out = []
         for key in piper.installed_voices(self.models_dir):
             lang = key.split("-")[0]
-            out.append(Voice(key, key.replace("_", " ").replace("-", " · "), "hors ligne", lang.split("_")[0]))
+            out.append(Voice(key, key.replace("_", " ").replace("-", " · "), "hors ligne", lang.split("_")[0],
+                             preview=piper_preview(key)))
         return out
 
     def synth(self, text: str, voice: str, language: str, dest: Path, speed: float = 1.0) -> Path:

@@ -5,10 +5,11 @@ import json
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLineEdit, QMessageBox, QSpinBox, QSplitter, QTableWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout,
+                               QHeaderView, QLineEdit, QMessageBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
-
+
+from .scrub import double_spin, int_spin
 from ..ai.highlights import Request, context_flags
 from ..ai.lexicon import CATEGORIES
 from ..core import AppContext
@@ -58,11 +59,11 @@ class HighlightsPanel(QWidget):
         self.query.setPlaceholderText("Mots-clés ou demande (ex. : désaccords sur les retraites)")
         g.addWidget(self.query, r, 0, 1, 2)
         row = QHBoxLayout()
-        self.count = QSpinBox()
+        self.count = int_spin()
         self.count.setRange(1, 50)
         self.count.setValue(10)
         self.count.setSuffix(" extraits")
-        self.dmin, self.dmax, self.dtarget = QDoubleSpinBox(), QDoubleSpinBox(), QDoubleSpinBox()
+        self.dmin, self.dmax, self.dtarget = double_spin(), double_spin(), double_spin()
         for sp, v, tip in ((self.dmin, 20, "Durée minimale"), (self.dmax, 60, "Durée maximale"),
                            (self.dtarget, 40, "Durée cible")):
             sp.setRange(3, 600)
@@ -118,7 +119,7 @@ class HighlightsPanel(QWidget):
         self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
         dl.addWidget(self.detail)
         tr = QHBoxLayout()
-        self.k_start, self.k_end = QDoubleSpinBox(), QDoubleSpinBox()
+        self.k_start, self.k_end = double_spin(), double_spin()
         for sp in (self.k_start, self.k_end):
             sp.setRange(0, 1e6)
             sp.setDecimals(1)

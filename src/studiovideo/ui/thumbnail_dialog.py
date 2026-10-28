@@ -10,9 +10,8 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout
 
 from ..core import AppContext
 from ..media import ffmpeg
-from ..media.ffmpeg import fmt_timecode
 from ..publish import thumbnail
-from .widgets import label
+from .widgets import label, tc_html
 
 
 class ThumbnailDialog(QDialog):
@@ -39,6 +38,7 @@ class ThumbnailDialog(QDialog):
         self.slider.setRange(0, int(self.duration * 10))
         self.slider.setValue(int((m["cover_s"] if m and m["cover_s"] is not None else min(1.0, self.duration / 3)) * 10))
         self.tc = label("", "muted")
+        self.tc.setTextFormat(Qt.RichText)
         row.addWidget(self.slider, 1)
         row.addWidget(self.tc)
         lay.addLayout(row)
@@ -70,7 +70,7 @@ class ThumbnailDialog(QDialog):
         return self.title.text() if self.with_title.isChecked() else ""
 
     def _render(self) -> None:
-        self.tc.setText(fmt_timecode(self.t(), True))
+        self.tc.setText(tc_html(self.t()))
         try:
             thumbnail.make(self.video, self.t(), self._text(), self.tmp)
         except Exception as exc:

@@ -1,4 +1,4 @@
-"""Timeline : pistes vidéo, textes et musique, tête de lecture, zoom (§8.2)."""
+"""Timeline : pistes vidéo, textes, musique, sous-titres et voix (doublage), tête de lecture, zoom (§8.2)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
@@ -8,13 +8,13 @@ from PySide6.QtWidgets import QHBoxLayout, QScrollArea, QSlider, QVBoxLayout, QW
 from ..edit.model import Timeline
 from ..media.ffmpeg import fmt_timecode
 from . import theme
-from .widgets import label
+from .widgets import label, tc_html
 
 RULER_H = 20
 TRACK_H = 32
 TRACK_GAP = 4
 LABEL_W = 70
-TRACKS = ("Vidéo", "Textes", "Musique", "Sous-titres")
+TRACKS = ("Vidéo", "Textes", "Musique", "Sous-titres", "Voix")
 
 
 class TimelineCanvas(QWidget):
@@ -40,6 +40,8 @@ class TimelineCanvas(QWidget):
         self._drag: dict | None = None    # poignée en cours : {"kind", "id", "edge", "t0", valeurs d'origine}
         self.peaks: dict = {}             # asset_id -> pics (forme d'onde), voir media/waveform.py
         self._cols: dict = {}             # cache des colonnes dessinées
+        self.voice_lines: list[tuple[float, float, str]] = []   # phrases doublées (temps du montage)
+        self.voice_name = ""                                    # « Voix doublée · anglais » ; vide : voix d'origine
         self.setMinimumHeight(RULER_H + len(TRACKS) * (TRACK_H + TRACK_GAP) + 8)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
@@ -198,6 +200,26 @@ class TimelineCanvas(QWidget):
         if not st.cues:
             p.setPen(QColor(c["faint"]))
             p.drawText(r3.adjusted(10, 0, 0, 0), Qt.AlignVCenter, "Onglet « Sous-titres » → Générer depuis la transcription")
+        # voix : les phrases de la voix doublée (version traduite), sinon la voix d'origine de la vidéo
+        r4 = self.track_rect(4)
+        if self.voice_name:
+            for a, b, txt in self.voice_lines:
+                rect = QRectF(self.x_of(a) + 0.5, r4.top() + 5, max(2.0, (b - a) * self.pps - 1), r4.height() - 10)
+                col = QColor(c["accent"])
+                col.setAlphaF(0.4)
+                p.setBrush(col)
+                p.setPen(Qt.NoPen)
+                p.drawRoundedRect(rect, 3, 3)
+                if rect.width() > 24:
+                    p.setPen(QColor(c["text"]))
+                    p.drawText(rect.adjusted(3, 0, -2, 0), Qt.AlignVCenter,
+                               p.fontMetrics().elidedText(txt, Qt.ElideRight, int(rect.width() - 5)))
+            if not self.voice_lines:
+                p.setPen(QColor(c["faint"]))
+                p.drawText(r4.adjusted(10, 0, 0, 0), Qt.AlignVCenter, self.voice_name)
+        elif self.tl.segments:
+            p.setPen(QColor(c["faint"]))
+            p.drawText(r4.adjusted(10, 0, 0, 0), Qt.AlignVCenter, "Voix d'origine de la vidéo")
         if not self.tl.segments:
             p.setPen(QColor(c["faint"]))
             p.drawText(r0.adjusted(10, 0, 0, 0), Qt.AlignVCenter,
@@ -338,6 +360,7 @@ class TimelineView(QWidget):
         lay.setSpacing(4)
         head = QHBoxLayout()
         self.info = label("", "faint")
+        self.info.setTextFormat(Qt.RichText)
         head.addWidget(self.info)
         head.addStretch(1)
         self.zoom = QSlider(Qt.Horizontal)
@@ -359,7 +382,7 @@ class TimelineView(QWidget):
 
     def set_timeline(self, tl: Timeline, names: dict[int, str], music_name: str = "") -> None:
         self.canvas.set_timeline(tl, names, music_name)
-        self.info.setText(f"{len(tl.segments)} extrait(s) · durée {fmt_timecode(tl.duration, True)} · "
+        self.info.setText(f"{len(tl.segments)} extrait(s) · durée {tc_html(tl.duration)} · "
                           f"{tl.format.aspect} {tl.format.width}×{tl.format.height}")
 
     def fit(self) -> None:

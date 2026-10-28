@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QHeaderView, QMessageBox, QPlainTextEdit, QSpinBox,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog,
+                               QFormLayout, QHBoxLayout, QHeaderView, QMessageBox, QPlainTextEdit,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
-
+
+from .scrub import double_spin, int_spin
 from ..ai import tts as tts_mod
 from ..core import AppContext
 from ..edit import original
@@ -46,7 +47,7 @@ class OriginalDialog(QDialog):
         self.lang = QComboBox()
         for c, n in LANGUAGES:
             self.lang.addItem(n, c)
-        self.seconds = QSpinBox()
+        self.seconds = int_spin()
         self.seconds.setRange(10, 600)
         self.seconds.setValue(45)
         self.seconds.setSuffix(" s")
@@ -193,7 +194,7 @@ class OriginalDialog(QDialog):
         self.table.setItem(r, 0, QTableWidgetItem(sc.narration))
         self.table.setItem(r, 1, QTableWidgetItem(sc.text))
         self.table.setCellWidget(r, 2, self._visual_combo(sc.visual))
-        d = QDoubleSpinBox()
+        d = double_spin()
         d.setRange(0, 120)
         d.setSpecialValueText("auto")
         d.setSuffix(" s")

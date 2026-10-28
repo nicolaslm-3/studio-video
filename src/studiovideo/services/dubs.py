@@ -6,14 +6,23 @@ from pathlib import Path
 
 from ..db.database import Database
 from ..edit.dubbing import DubManifest
+from .history import HistoryService
 
 
 class DubService:
     def __init__(self, db: Database, root: Path):
         self.db, self.root = db, root
+        self.history = HistoryService(db)          # toutes les voix générées, chacune dans son dossier
 
     def directory(self, asset_id: int, language: str) -> Path:
         return self.root / f"a{asset_id}_{language}"
+
+    def new_directory(self, asset_id: int, language: str) -> Path:
+        """Dossier neuf pour une nouvelle voix : les précédentes restent (historique), et un fichier encore ouvert
+        par l'aperçu n'empêche jamais d'en générer une autre."""
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        return self.root / f"a{asset_id}_{language}_{stamp}"
 
     def languages(self, asset_id: int) -> list[str]:
         return [r["language"] for r in self.db.query(
@@ -33,7 +42,23 @@ class DubService:
         p = d / (man.track or "dub.wav")
         return p if p.exists() else None
 
-    def store(self, man: DubManifest, directory: Path) -> None:
+    def store(self, man: DubManifest, directory: Path, label: str = "", history: bool = True) -> None:
+        """Voix appliquée ; une nouvelle voix entre aussi dans l'historique (`history`)."""
+        self._put(man, directory)
+        if history:
+            self.history.add(man.asset_id, "dub", man.language, man.engine, man.to_json(), str(directory), label)
+        else:
+            self.history.update_active(man.asset_id, "dub", man.language, man.to_json())
+
+    def apply_version(self, hid: int) -> str | None:
+        """Revenir à une voix de l'historique ; renvoie sa langue (None si elle n'existe plus)."""
+        r = self.history.activate(hid)
+        if r is None:
+            return None
+        self._put(DubManifest.from_json(r["data_json"]), Path(r["directory"]))
+        return r["language"]
+
+    def _put(self, man: DubManifest, directory: Path) -> None:
         with self.db.transaction() as c:
             c.execute("INSERT INTO dub(source_asset_id, language, engine, directory, manifest_json) VALUES (?,?,?,?,?) "
                       "ON CONFLICT(source_asset_id, language) DO UPDATE SET engine = excluded.engine, "
@@ -46,6 +71,9 @@ class DubService:
         got = self.get(asset_id, language)
         with self.db.transaction() as c:
             c.execute("DELETE FROM dub WHERE source_asset_id = ? AND language = ?", (asset_id, language))
+            if got:                                       # et cette voix sort de l'historique
+                c.execute("DELETE FROM version_history WHERE kind = 'dub' AND source_asset_id = ? AND language = ? "
+                          "AND directory = ?", (asset_id, language, str(got[1])))
         if got:
             shutil.rmtree(got[1], ignore_errors=True)
         self.db.audit("dub.delete", f"asset={asset_id} lang={language}")

@@ -1,9 +1,11 @@
-"""Détection des meilleurs moments (cahier des charges §7).
+"""Détection des meilleurs extraits (cahier des charges §7).
+
+Quatre critères : Rire, Polarisant, Émotion, Politique (`lexicon.CATEGORIES`).
 
 Deux moteurs interchangeables :
-- « Analyse locale » : combine la transcription (structure des phrases, lexiques,
-  questions, mots-clés), l'énergie de la voix et les changements d'intervenants.
-  Fonctionne hors ligne, sans modèle à télécharger.
+- « Analyse locale » : combine la transcription (lexiques, prises de position, répétitions,
+  ponctuation) et le son (`AudioProfile` : volume, micro qui sature, éclats sonores hors parole,
+  voix qui monte dans les aigus, débit). Fonctionne hors ligne, sans modèle à télécharger.
 - « Modèle de langage » (optionnel) : Ollama en local ou une API compatible OpenAI,
   qui lit la transcription et propose des extraits. Ses propositions passent par les
   mêmes contrôles (bornes de phrases, durées, protection du contexte).
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from ..transcribe.model import Transcript
-from .lexicon import CATEGORIES, CLAIM_MARKERS, LEXICON, RESERVATIONS, STOPWORDS
+from .lexicon import CATEGORIES, CLAIM_MARKERS, DISAGREE, FILLERS, LEXICON, RESERVATIONS, STOPWORDS
 
 Progress = Callable[[float, str], None]
 
@@ -56,25 +58,27 @@ CLIP_DURATIONS = {"court": ("15 à 30 s", 15.0, 30.0, 22.0), "moyen": ("30 à 60
 DEFAULT_CRITERIA = {"categories": [], "duration": "moyen", "count": 8, "reframe": False}
 
 # Comment chaque critère est cherché (affiché au survol), fidèle à `LocalEngine.propose` et au modèle de langage.
-CATEGORY_HELP_COMMON = ("Pour tous : la transcription est découpée en passages de la durée choisie qui commencent et finissent "
-           "sur une phrase complète ; bonus si la parole est dense et la durée proche de la cible, malus si une "
-           "phrase est coupée ou si une réserve (« mais », « cependant ») suit. Les meilleurs passages sont gardés "
-           "sans chevauchement, avec des sujets variés. Avec un modèle de langage (Réglages), il lit le texte et "
-           "choisit lui-même, en suivant ce critère.")
+CATEGORY_HELP_COMMON = ("Pour tous : la vidéo est découpée en passages de la durée choisie qui commencent et finissent "
+           "sur une phrase complète ; malus si une phrase est coupée ou si une réserve (« mais », « cependant ») "
+           "suit. Les meilleurs passages sont gardés sans chevauchement. Avec un modèle de langage (Réglages), il "
+           "lit le texte et choisit lui-même, en suivant ce critère.")
 CATEGORY_HELP = {
-    "humour": "Humour : mots du rire et de la blague (« mdr », « c'est une blague », « n'importe quoi »…), "
-              "points d'exclamation, et pic de voix nettement au-dessus de la moyenne de la vidéo (rires, éclats).",
-    "debat": "Débat et désaccord : expressions de contradiction (« je ne suis pas d'accord », « c'est faux », "
-             "« laissez-moi finir »…), nombreux changements de personne qui parle et questions posées.",
-    "politique": "Politique : vocabulaire politique et économique (gouvernement, ministre, loi, réforme, budget, "
-                 "retraites, impôts, élection…). Plus il y a de termes différents, plus le passage remonte.",
-    "emotion": "Émotion : mots forts (honte, scandale, colère, peur, fier, bouleversant…), points d'exclamation, "
-               "et voix plus intense que la moyenne de la vidéo.",
-    "pedagogie": "Pédagogie : marques d'explication (« par exemple », « c'est-à-dire », « la raison », « en "
-                 "résumé », « astuce »…), et passages qui posent une question puis y répondent.",
-    "potentiel": "Potentiel d'intérêt : accroches qui retiennent l'attention (« personne ne vous dit », « la "
-                 "vérité », « le pire », « saviez-vous »…) ; bonus fort si le passage commence par une question, "
-                 "et s'il donne un chiffre dès la première phrase.",
+    "rire": "Rire : les rires notés dans la transcription (« haha », « (rires) »), ce qu'on dit quand c'est drôle "
+            "(« c'est marrant », « mort de rire », « j'en peux plus », « je suis mort », « mdr »…), et dans le son "
+            "les éclats hors parole (rires, réactions du chat ou du public), le micro qui sature et les éclats "
+            "saccadés typiques du rire.",
+    "polarisant": "Polarisant : les prises de position qui font réagir (« je pense que », « honnêtement », « je "
+                  "l'assume », « ça va pas plaire », « c'est surcoté »…), les jugements tranchés (« ridicule », "
+                  "« arnaque »…), les généralisations (« tous les », « les gens », « jamais ») et la "
+                  "contradiction des autres juste après.",
+    "emotion": "Émotion : la voix qui monte (cris, excitation, commentateurs qui s'emballent) mesurée sur le son — "
+               "volume au-dessus de la moyenne de la vidéo, voix plus aiguë, micro qui sature, débit qui "
+               "s'accélère —, les mots de la hype (« allez », « c'est pas possible », « il l'a fait », « let's "
+               "go »…), les mots répétés (« non non non ») et les points d'exclamation.",
+    "politique": "Politique : vocabulaire politique (institutions, partis, personnalités, sujets : retraites, "
+                 "immigration, budget, élection…) — plus il y a de termes différents, plus le passage remonte —, "
+                 "déclarations et propositions (« je propose », « il faut que », « je dénonce »), chiffres "
+                 "avancés et contradiction.",
 }
 DEFAULT_CATEGORY = "politique"          # aucun critère coché : politique
 
@@ -88,8 +92,9 @@ def criteria_request(criteria: dict | None, video_duration: float) -> Request:
     if dur and dur < b * 1.5:                           # vidéo courte : extraits plus courts, moins nombreux
         a, b, t = max(4.0, dur * 0.12), max(8.0, dur * 0.45), max(6.0, dur * 0.25)
         count = max(2, min(count, int(dur // 15) or 2))
+    cats = [k for k in c["categories"] if k in CATEGORIES]          # anciens critères retirés : ignorés
     return Request(count=count, min_duration=a, max_duration=b, target_duration=t,
-                   categories=list(c["categories"]) or [DEFAULT_CATEGORY])
+                   categories=cats or [DEFAULT_CATEGORY])
 
 
 @dataclass
@@ -133,6 +138,52 @@ def energy_profile(wav: Path, step: float = 0.5) -> list[float]:
     return out
 
 
+@dataclass
+class AudioProfile:
+    """Mesures du son par fenêtre de `step` secondes : volume (dB), part d'échantillons saturés, centre de
+    gravité du spectre (Hz : une voix qui crie monte dans les aigus) et variation rapide du volume (dB : le rire
+    est fait d'éclats saccadés)."""
+    step: float
+    rms: list[float]
+    clip: list[float]
+    bright: list[float]
+    burst: list[float]
+
+
+def audio_profile(wav: Path, step: float = 0.5) -> AudioProfile:
+    """Profil du son, lu en flux (vidéos de plusieurs heures)."""
+    import numpy as np
+    prof = AudioProfile(step, [], [], [], [])
+    with wave.open(str(wav), "rb") as w:
+        rate = w.getframerate()
+        n = int(rate * step)
+        sub = max(1, int(rate * 0.05))                      # tranches de 50 ms
+        while True:
+            data = w.readframes(n)
+            if not data:
+                break
+            x = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+            if not x.size:
+                break
+            rms = float(np.sqrt(np.mean(x * x)))
+            prof.rms.append(20 * math.log10(max(rms, 1e-6)))
+            prof.clip.append(float(np.mean(np.abs(x) > 0.97)))
+            if rms > 1e-4:
+                mag = np.abs(np.fft.rfft(x * np.hanning(x.size)))
+                freqs = np.fft.rfftfreq(x.size, 1.0 / rate)
+                prof.bright.append(float((freqs * mag).sum() / max(mag.sum(), 1e-9)))
+            else:
+                prof.bright.append(0.0)
+            k = x.size // sub
+            if k >= 4:
+                parts = np.sqrt(np.mean(x[:k * sub].reshape(k, sub) ** 2, axis=1))
+                db = 20 * np.log10(np.maximum(parts, 1e-6))
+                prof.burst.append(float(np.mean(np.abs(np.diff(db)))))
+            else:
+                prof.burst.append(0.0)
+    return prof
+
+
 def _window_energy(profile: list[float], step: float, a: float, b: float) -> tuple[float, float]:
     """(moyenne, maximum) en dB sur [a, b]."""
     if not profile:
@@ -155,14 +206,70 @@ def _lex_hits(text_f: str, words: list[str]) -> list[str]:
     return hits
 
 
-def _subject(texts: list[str], n: int = 3) -> str:
+def _keywords(texts: list[str], n: int = 5, boost: list[str] | None = None) -> list[str]:
+    """Idées principales : les mots (et groupes de deux mots qui reviennent) les plus fréquents, sans les mots
+    vides ; ceux du thème (`boost`) passent devant, les mots longs départagent."""
     c: Counter = Counter()
+    pairs: Counter = Counter()
     for t in texts:
-        for tok in re.findall(r"[\wÀ-ÿ'-]{4,}", t.lower()):
-            tok = tok.strip("'-")
-            if fold(tok) not in STOPWORDS and tok not in STOPWORDS and not tok.isdigit():
+        toks = [re.sub(r"^(?:[ldjnsctm]|qu)'", "", x.strip("'-")) for x in re.findall(r"[\wÀ-ÿ'-]+", t.lower())]
+        good = [len(x) >= 4 and "-" not in x and fold(x) not in STOPWORDS and x not in STOPWORDS
+                and not x.isdigit() for x in toks]
+        for k, tok in enumerate(toks):
+            if good[k]:
                 c[tok] += 1
-    return ", ".join(w for w, _ in c.most_common(n))
+                if k + 1 < len(toks) and good[k + 1]:
+                    pairs[f"{tok} {toks[k + 1]}"] += 1
+    theme = {fold(w) for w in boost or []}
+    score = {w: k + (2 if fold(w) in theme else 0) + len(w) / 100 for w, k in c.items()}
+    score.update({w: k * 1.5 + len(w) / 100 for w, k in pairs.items() if k >= 2})
+    out: list[str] = []
+    for w in sorted(score, key=score.get, reverse=True):
+        if any(w in o or o in w for o in out):
+            continue
+        out.append(w)
+        if len(out) >= n:
+            break
+    return out
+
+
+def _punchline(sentences: list[str]) -> tuple[str, int]:
+    """La phrase la plus clivante d'un passage (prise de position, jugement, généralisation) et sa force."""
+    best, force = "", 0
+    for s in sentences:
+        sf = fold(s)
+        f = 3 * len(_lex_hits(sf, LEXICON["polarisant"])) + len(_lex_hits(sf, LEXICON["absolus"])) \
+            + s.count("!")
+        if f > force and 4 <= len(s.split()) <= 30:
+            best, force = s, f
+    return best, force
+
+
+def _short(sentence: str, n: int = 8) -> str:
+    """Phrase ramenée à `n` mots au plus, sans les hésitations du début (« euh », « bah », « alors »)."""
+    words = sentence.strip().split()
+    while words and fold(words[0].strip(",.!?…")) in FILLERS:
+        words.pop(0)
+    out = " ".join(words[:n]).rstrip(",;:")
+    return out + ("…" if len(words) > n else "")
+
+
+def summary(texts: list[str], category: str = "") -> str:
+    """Titre d'un extrait en 3 à 8 mots : sa parole la plus clivante quand il en a une (ou en Polarisant),
+    sinon ses idées principales en mots-clés, sans forme de phrase."""
+    quote, force = _punchline(texts)
+    if quote and (force >= 6 or (category == "polarisant" and force >= 3)):
+        return _short(quote)
+    kws = _keywords(texts, 4, LEXICON.get(category))
+    words: list[str] = []
+    for k in kws:
+        if len(words) + len(k.split()) > 8:
+            break
+        words.append(k)
+    title = " · ".join(words)
+    if len(title.split()) < 3:                                # trop peu de mots-clés : le début de la phrase
+        return _short(next((t for t in texts if t.strip()), ""))
+    return title
 
 
 def _hook(sentences: list[str]) -> str:
@@ -211,8 +318,9 @@ class LocalEngine:
     name = "local"
     label = "Analyse locale (hors ligne)"
 
-    def __init__(self, energy: list[float] | None = None, step: float = 0.5):
-        self.energy, self.step = energy or [], step
+    def __init__(self, energy: list[float] | None = None, step: float = 0.5, audio: AudioProfile | None = None):
+        self.audio = audio
+        self.energy, self.step = (audio.rms if audio else energy) or [], (audio.step if audio else step)
 
     def _windows(self, tr: Transcript, req: Request):
         segs = tr.segments
@@ -240,6 +348,17 @@ class LocalEngine:
             kw += [t for t in re.findall(r"[\wÀ-ÿ'-]{4,}", req.query.lower()) if fold(t) not in STOPWORDS]
         file_mean = (sum(v for v in self.energy if v > -55) / max(1, sum(1 for v in self.energy if v > -55))
                      if self.energy else -30.0)
+        au = self.audio
+        st = self.step
+        speech = [False] * len(self.energy)                  # fenêtres où quelqu'un parle (transcription)
+        for s in segs:
+            for k in range(int(s.start / st), min(len(speech), int(math.ceil(s.end / st)))):
+                speech[k] = True
+        voiced = [v for v in self.energy if v > -55]
+        bright_mean = (sum(b for b, e in zip(au.bright, au.rms) if e > -55) / max(1, len(voiced))) if au else 0.0
+        burst_mean = (sum(b for b, e in zip(au.burst, au.rms) if e > -55) / max(1, len(voiced))) if au else 0.0
+        total_words = sum(len(s.text.split()) for s in segs)
+        rate_mean = total_words / max(1.0, sum(s.end - s.start for s in segs))     # débit moyen (mots / s)
         cands: list[Candidate] = []
         windows = list(self._windows(tr, req))
         for k, (i, j) in enumerate(windows):
@@ -260,35 +379,70 @@ class LocalEngine:
             words = len(text.split())
             density = words / max(1.0, dur)                       # mots / seconde
             changes = sum(1 for x, y in zip(speakers, speakers[1:]) if x != y)
-            questions = sum(1 for s in texts if s.strip().endswith("?"))
             exclam = text.count("!")
             e_mean, e_max = _window_energy(self.energy, self.step, a, b)
             e_rel = e_mean - file_mean
+            # le son du passage : cris, saturation, éclats hors parole, voix plus aiguë
+            i0, i1 = int(a / st), max(int(a / st) + 1, int(math.ceil(b / st)))
+            win = range(i0, min(i1, len(self.energy)))
+            loud = sum(1 for k in win if speech[k] and self.energy[k] > file_mean + 8)   # crie, s'emballe
+            spoken = [self.energy[k] for k in win if speech[k] and self.energy[k] > -55]
+            e_voice = (sum(spoken) / len(spoken) - file_mean) if spoken else e_rel     # voix seule, sans le public
+            sat = sum(1 for k in win if au and au.clip[k] > 0.002)               # micro qui sature
+            outside = sum(1 for k in win if not speech[k] and self.energy[k] > file_mean + 2)   # rires, public
+            bursty = sum(1 for k in win if au and self.energy[k] > file_mean and au.burst[k] > burst_mean * 1.6)
+            bright = ([au.bright[k] for k in win if self.energy[k] > file_mean + 3] if au else [])
+            bright_rel = (sum(bright) / len(bright) - bright_mean) if bright else 0.0
+            rate_rel = density / max(0.5, rate_mean)
+            repeats = len(re.findall(r"\b(\w{2,})(?:[ ,!]+\1\b){2,}", tf))     # « non non non », « allez allez allez »
+            disagree = _lex_hits(tf, DISAGREE)
 
             cat_scores: dict[str, float] = {}
             reasons: dict[str, list[str]] = {}
             for c in cats:
                 hits = _lex_hits(tf, LEXICON.get(c, []))
-                sc = min(4, len(hits)) * 6.0
                 r = [f"mots : {', '.join(dict.fromkeys(hits[:4]))}"] if hits else []
-                if c == "debat":
-                    sc += min(6, changes) * 3.0 + (4 if questions else 0)
-                    if changes >= 2:
-                        r.append(f"{changes} changements d'intervenant")
-                if c == "humour":
-                    sc += exclam * 2.0 + (4 if e_max - file_mean > 9 else 0)
-                if c == "emotion":
-                    sc += exclam * 2.5 + max(0.0, e_rel) * 1.5
-                    if e_rel > 3:
-                        r.append("voix plus intense que la moyenne")
-                if c == "pedagogie":
-                    sc += 4 if questions and not chunk[-1].text.strip().endswith("?") else 0
-                if c == "potentiel":
-                    if texts[0].strip().endswith("?"):
-                        sc += 10
-                        r.append("commence par une question")
-                    if re.search(r"\d", texts[0]):
-                        sc += 4
+                if c == "rire":
+                    noted = len(re.findall(r"\b(?:ha){2,}|\brires?\b|\blaugh", tf))
+                    sc = min(4, len(hits)) * 7.0 + min(3, noted) * 5.0 + min(5, exclam) * 1.5
+                    sc += min(5, outside) * 2.5 + min(4, sat) * 2.0 + min(5, bursty) * 1.5
+                    if outside >= 2:
+                        r.append("éclats sonores hors parole (rires, réactions)")
+                    if bursty >= 2:
+                        r.append("éclats saccadés, typiques du rire")
+                    if sat:
+                        r.append("micro qui sature")
+                elif c == "polarisant":
+                    quote, force = _punchline(texts)
+                    absol = _lex_hits(tf, LEXICON["absolus"])
+                    sc = min(5, len(hits)) * 6.0 + min(4, len(absol)) * 2.0 + min(3, len(disagree)) * 3.0
+                    sc += min(4, changes) * 1.5 if disagree else 0.0
+                    sc += min(6.0, force)
+                    if absol:
+                        r.append(f"généralisations : {', '.join(dict.fromkeys(absol[:3]))}")
+                    if disagree:
+                        r.append("contradiction juste après")
+                elif c == "emotion":
+                    sc = min(4, len(hits)) * 5.0 + min(3, repeats) * 4.0 + min(5, exclam) * 2.0
+                    sc += max(0.0, e_voice) * 1.5 + min(6, loud) * 2.5 + min(4, sat) * 1.0
+                    sc += max(0.0, min(6.0, bright_rel / 150)) + max(0.0, rate_rel - 1.15) * 8.0
+                    if loud >= 2 or e_voice > 3:
+                        r.append("la voix monte (cris, excitation)")
+                    if bright_rel > 300:
+                        r.append("voix plus aiguë que d'habitude")
+                    if sat:
+                        r.append("micro qui sature")
+                    if rate_rel > 1.3:
+                        r.append("débit qui s'accélère")
+                    if repeats:
+                        r.append("mots répétés")
+                else:                                           # politique
+                    terms = set(fold(h) for h in hits)
+                    decl = _lex_hits(tf, LEXICON["politique_declaration"])
+                    sc = min(8, len(terms)) * 4.0 + min(3, len(decl)) * 5.0 + min(2, len(disagree)) * 2.0
+                    sc += 3.0 if terms and re.search(r"\d", tf) else 0.0
+                    if decl:
+                        r.append(f"déclarations : {', '.join(dict.fromkeys(decl[:3]))}")
                 cat_scores[c], reasons[c] = sc, r
             best = max(cat_scores, key=cat_scores.get)
             base = cat_scores[best]
@@ -311,7 +465,7 @@ class LocalEngine:
                 why.append("parole dense")
             if chunk[-1].text.strip().endswith((".", "!", "?")):
                 why.append("se termine sur une phrase complète")
-            cands.append(Candidate(a, b, score, best, _subject(texts), "; ".join(why) or "passage cohérent",
+            cands.append(Candidate(a, b, score, best, summary(texts, best), "; ".join(why) or "passage cohérent",
                                    _hook(texts), spk_set, flags, i, j, "local"))
         return select(cands, req)
 
@@ -335,7 +489,7 @@ def select(cands: list[Candidate], req: Request) -> list[Candidate]:
         if not free(c):
             continue
         if req.avoid_repetition and c.subject:
-            key = c.subject.split(",")[0].strip()
+            key = re.split(r"[,·]", c.subject)[0].strip()
             if seen_subjects[key] >= 2:
                 continue
             seen_subjects[key] += 1
@@ -403,6 +557,8 @@ Propose jusqu'à {count} extraits de {min_d:.0f} à {max_d:.0f} secondes (cible 
 Chaque extrait doit commencer au début d'une phrase et finir à la fin d'une phrase, avoir une accroche
 immédiate et une conclusion compréhensible, sans sortir une phrase de son contexte.
 N'invente rien : l'accroche reprend ou résume fidèlement ce qui est dit.
+« subject » : 3 à 8 mots, soit les idées principales en mots-clés (sans forme de phrase), soit la parole
+la plus clivante de l'extrait, citée telle quelle.
 
 Réponds UNIQUEMENT en JSON : {{"clips": [{{"start": 12.3, "end": 48.9, "subject": "...", "category": "{catlist}",
 "score": 0-100, "rationale": "pourquoi ce passage", "hook": "accroche proposée"}}]}}
@@ -410,6 +566,19 @@ Réponds UNIQUEMENT en JSON : {{"clips": [{{"start": 12.3, "end": 48.9, "subject
 Transcription :
 {transcript}
 """
+
+
+LLM_HINTS = {
+    "rire": "rire (category « rire ») : les moments où l'on rit ou où c'est hilarant, rires notés dans le texte, "
+            "« c'est marrant », « mort de rire », « j'en peux plus », fou rire entre plusieurs personnes",
+    "polarisant": "polarisant (category « polarisant ») : hot takes, opinions tranchées (« je pense que… »), "
+                  "propos controversés que tout le monde n'appréciera pas, prises de position qui font réagir sur "
+                  "les réseaux",
+    "emotion": "émotion (category « emotion ») : cris, excitation, hype (commentateurs qui s'emballent, « allez », "
+               "« c'est pas possible »), voix qui s'intensifie, moments forts et émouvants",
+    "politique": "politique (category « politique ») : déclarations, propositions et prises de position "
+                 "politiques, chiffres avancés, attaques et contradictions entre personnalités",
+}
 
 
 def _transcript_lines(tr: Transcript, a: int, b: int) -> str:
@@ -462,7 +631,8 @@ class LLMEngine:
             prompt = PROMPT.format(
                 count=max(3, req.count // len(blocks) + 2), min_d=req.min_duration, max_d=req.max_duration,
                 target=req.target_duration,
-                cats=(", de préférence : " + ", ".join(CATEGORIES[c] for c in cats)) if req.categories else "",
+                cats=(". Cherche en priorité :\n" + "\n".join(f"- {LLM_HINTS[c]}" for c in cats if c in LLM_HINTS))
+                if req.categories else "",
                 query=(f". Demande : « {req.query} »" if req.query else "") +
                       (f". Mots-clés : {', '.join(req.keywords)}" if req.keywords else ""),
                 catlist="|".join(cats), transcript=_transcript_lines(tr, a, b))
@@ -478,7 +648,7 @@ class LLMEngine:
                     continue
                 if cand is None:
                     continue
-                cand.subject = str(c.get("subject", ""))[:120] or cand.subject
+                cand.subject = " ".join(str(c.get("subject", "")).split()[:10])[:120] or cand.subject
                 cat = str(c.get("category", "")).lower()
                 cand.category = cat if cat in CATEGORIES else cand.category
                 cand.rationale = str(c.get("rationale", ""))[:400] or cand.rationale
@@ -500,7 +670,8 @@ class LLMEngine:
             return None
         texts = [s.text for s in segs[first:last + 1]]
         spk = list(dict.fromkeys(s.speaker for s in segs[first:last + 1] if s.speaker))
-        return Candidate(start, end, 50.0, "potentiel", _subject(texts), "", _hook(texts), spk,
+        return Candidate(start, end, 50.0, req.categories[0] if req.categories else DEFAULT_CATEGORY,
+                         summary(texts), "", _hook(texts), spk,
                          context_flags(tr, first, last), first, last, self.name)
 
 

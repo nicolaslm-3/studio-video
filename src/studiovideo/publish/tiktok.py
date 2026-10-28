@@ -25,7 +25,7 @@ from typing import Callable
 
 AUTH = "https://www.tiktok.com/v2/auth/authorize/"
 API = "https://open.tiktokapis.com"
-SCOPES = "user.info.basic,video.publish,video.list"
+SCOPES = "user.info.basic,video.publish,video.upload,video.list"        # video.upload : brouillons
 MB = 1024 * 1024
 
 
@@ -199,6 +199,61 @@ def upload(path: Path, title: str, privacy: str, token: str,
     pid, url = init.get("publish_id"), init.get("upload_url")
     if not pid or not url:
         raise TikTokError("TikTok n'a pas fourni d'adresse d'envoi.")
+    _send_file(url, path, size, chunk, count, progress, is_cancelled)
+    end = time.time() + max_wait
+    while True:
+        st = _call("POST", ep.api + "/v2/post/publish/status/fetch/", token, body={"publish_id": pid}).get("data") or {}
+        status = st.get("status", "")
+        if status == "PUBLISH_COMPLETE":
+            return {"publish_id": pid, "status": status, "privacy": used,
+                    "post_ids": [str(x) for x in (st.get("publicaly_available_post_id") or [])],
+                    "max_duration": max_dur}
+        if status == "FAILED":
+            raise TikTokError(f"TikTok a refusé la vidéo : {st.get('fail_reason', 'raison inconnue')}")
+        if time.time() > end:
+            raise TikTokError("TikTok traite encore la vidéo : vérifiez dans l'application TikTok.")
+        if is_cancelled():
+            raise TikTokError("Suivi annulé (la vidéo peut quand même être publiée par TikTok).")
+        progress(0.9, "Traitement par TikTok…")
+        time.sleep(poll_s)
+
+
+def upload_draft(path: Path, token: str, progress: Callable[[float, str], None] = lambda f, m: None,
+                 is_cancelled: Callable[[], bool] = lambda: False, ep: Endpoints | None = None,
+                 poll_s: float = 5.0, max_wait: float = 900) -> dict:
+    """Envoie la vidéo en brouillon : elle arrive dans la boîte de réception TikTok du compte, qui la publie
+    depuis l'application (autorisation video.upload). Retourne {"publish_id", "status"}."""
+    ep = ep or Endpoints.from_env()
+    path = Path(path)
+    if not path.exists():
+        raise TikTokError(f"Vidéo introuvable : {path}")
+    size = path.stat().st_size
+    chunk, count = chunk_plan(size)
+    init = _call("POST", ep.api + "/v2/post/publish/inbox/video/init/", token, body={
+        "source_info": {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk,
+                        "total_chunk_count": count}}).get("data") or {}
+    pid, url = init.get("publish_id"), init.get("upload_url")
+    if not pid or not url:
+        raise TikTokError("TikTok n'a pas fourni d'adresse d'envoi.")
+    _send_file(url, path, size, chunk, count, progress, is_cancelled)
+    end = time.time() + max_wait
+    while True:
+        st = _call("POST", ep.api + "/v2/post/publish/status/fetch/", token, body={"publish_id": pid}).get("data") or {}
+        status = st.get("status", "")
+        if status in ("SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"):
+            return {"publish_id": pid, "status": status}
+        if status == "FAILED":
+            raise TikTokError(f"TikTok a refusé la vidéo : {st.get('fail_reason', 'raison inconnue')}")
+        if time.time() > end:
+            raise TikTokError("TikTok traite encore la vidéo : vérifiez la boîte de réception de l'application.")
+        if is_cancelled():
+            raise TikTokError("Suivi annulé (la vidéo peut quand même arriver dans la boîte de réception TikTok).")
+        progress(0.9, "Traitement par TikTok…")
+        time.sleep(poll_s)
+
+
+def _send_file(url: str, path: Path, size: int, chunk: int, count: int, progress, is_cancelled) -> None:
+    """Envoi du fichier par blocs, avec reprise sur erreur passagère."""
     with open(path, "rb") as f:
         for i in range(count):
             if is_cancelled():
@@ -227,22 +282,6 @@ def upload(path: Path, title: str, privacy: str, token: str,
                         continue
                     raise TikTokError(f"Connexion perdue pendant l'envoi : {exc}") from exc
             progress(0.8 * (i + 1) / count, f"Envoi {start + len(data) >> 20}/{size >> 20} Mo")
-    end = time.time() + max_wait
-    while True:
-        st = _call("POST", ep.api + "/v2/post/publish/status/fetch/", token, body={"publish_id": pid}).get("data") or {}
-        status = st.get("status", "")
-        if status == "PUBLISH_COMPLETE":
-            return {"publish_id": pid, "status": status, "privacy": used,
-                    "post_ids": [str(x) for x in (st.get("publicaly_available_post_id") or [])],
-                    "max_duration": max_dur}
-        if status == "FAILED":
-            raise TikTokError(f"TikTok a refusé la vidéo : {st.get('fail_reason', 'raison inconnue')}")
-        if time.time() > end:
-            raise TikTokError("TikTok traite encore la vidéo : vérifiez dans l'application TikTok.")
-        if is_cancelled():
-            raise TikTokError("Suivi annulé (la vidéo peut quand même être publiée par TikTok).")
-        progress(0.9, "Traitement par TikTok…")
-        time.sleep(poll_s)
 
 
 def video_stats(token: str, ids: list[str], ep: Endpoints | None = None) -> dict[str, dict]:

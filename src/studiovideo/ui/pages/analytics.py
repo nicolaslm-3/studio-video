@@ -8,13 +8,14 @@ from __future__ import annotations
 from PySide6.QtCore import QRect, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-                               QHBoxLayout, QHeaderView, QMessageBox, QSpinBox, QStyledItemDelegate, QTableWidget,
+                               QHBoxLayout, QHeaderView, QMessageBox, QStyledItemDelegate, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
-
+
+from ..scrub import int_spin
 from ...core import AppContext
 from ...publish.rules import RULES
 from ...services.analytics import LABELS, METRICS
-from ..widgets import Card, PageHeader, button, label
+from ..widgets import Card, PageHeader, button, label, local_time
 
 NA = "—"
 
@@ -102,7 +103,7 @@ class ManualStatsDialog(QDialog):
         for m in METRICS:
             row = QHBoxLayout()
             cb = QCheckBox("fourni")
-            sp = QSpinBox()
+            sp = int_spin()
             sp.setRange(0, 2_000_000_000)
             sp.setGroupSeparatorShown(True)
             cb.setChecked(m in current)
@@ -297,7 +298,7 @@ class AnalyticsPage(QWidget):
             t.setItem(i, 8, e)
             src = {"api": "API", "manuel": "saisi"}.get(m.get("_source"), NA)
             t.setItem(i, 9, QTableWidgetItem(src))
-            t.setItem(i, 10, QTableWidgetItem((r["captured_at"] or "")[:16].replace("T", " ") or "jamais"))
+            t.setItem(i, 10, QTableWidgetItem(local_time(r["captured_at"]) or "jamais"))
         t.setSortingEnabled(True)
         if not rows:
             self.status.setText("Aucune vidéo publiée pour l'instant. Les publications confirmées (lien public) ou "

@@ -61,6 +61,43 @@ class Plan:
     notes: list[str] = field(default_factory=list)
 
 
+# Filtres colorimétriques (bouton robot) : nom affiché, filtre FFmpeg ; l'intensité mêle l'image filtrée à l'image
+# d'origine.
+LOOKS = {
+    "chaud": ("Chaud", "colortemperature=temperature=4200"),
+    "froid": ("Froid", "colortemperature=temperature=9500"),
+    "vif": ("Vif", "eq=saturation=1.45:contrast=1.06"),
+    "doux": ("Doux", "eq=contrast=0.9:saturation=0.85:brightness=0.03"),
+    "cinema": ("Cinéma", "colorbalance=rs=-0.08:bs=0.1:rh=0.1:bh=-0.08,eq=contrast=1.08"),
+    "vintage": ("Vintage", "curves=preset=vintage"),
+    "nb": ("Noir et blanc", "hue=s=0"),
+}
+PAN_ZOOM = 0.08                 # mouvement subtil : agrandissement qui laisse la place au glissement
+
+
+def tilt_cover(tl: Timeline) -> float:
+    """Agrandissement nécessaire pour qu'une image tournée de `tilt` degrés couvre encore tout le cadre."""
+    a = math.radians(abs(float(getattr(tl.video, "tilt", 0.0) or 0.0)))
+    if a < 1e-4:
+        return 1.0
+    W, H = tl.format.width, tl.format.height
+    r = max(W / H, H / W)
+    return math.cos(a) + math.sin(a) * r
+
+
+def pan_zoom(tl: Timeline) -> float:
+    return 1.0 + PAN_ZOOM * max(0.0, min(1.0, float(getattr(tl.video, "pan", 0.0) or 0.0)))
+
+
+def speed_of(tl: Timeline) -> float:
+    return max(0.5, min(2.0, float(getattr(tl.video, "speed", 1.0) or 1.0)))
+
+
+def output_duration(tl: Timeline) -> float:
+    """Durée de la vidéo exportée (la vitesse change la durée ; le montage reste en temps d'origine)."""
+    return tl.duration / speed_of(tl)
+
+
 def _even(v: float) -> int:
     n = int(math.ceil(v))
     return n + (n % 2)
@@ -137,15 +174,18 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
     flips = (["hflip"] if v.mirror else []) + (["vflip"] if v.flip else [])
     lay = compose.norm(getattr(v, "layout", None))
     if lay["kind"] != "single":
-        return _composite_chain(tl, lay, parts, flips, sw, sh, tag, second) + "," + _look_chain(tl)
+        return _composite_chain(tl, lay, parts, flips, sw, sh, tag, second) + "," + _look_chain(tl, tag)
     parts += flips
 
     zoom = max(1.0, float(v.zoom)) * max(1.0, float(getattr(seg, "zoom", 1.0) or 1.0))
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
 
     keys = list(getattr(seg, "reframe", None) or []) if seg is not None and rot in (0, 180) else []
+    pan = float(getattr(v, "pan", 0.0) or 0.0) > 0 and seg is not None and not keys
 
     def fill_chain(z: float, follow: bool = True) -> str:
+        if follow and pan:
+            z *= pan_zoom(tl)
         s = max(W / sw, H / sh) * z
         SW, SH = max(W, _even(sw * s)), max(H, _even(sh * s))
         x = int((SW - W) / 2 * (1 + ox))
@@ -154,6 +194,12 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
             from .reframe import crop_x_expr
             k = [(t, (1 - c) if v.mirror else c) for t, c in keys]
             return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:x='{crop_x_expr(k, seg.src_in, seg.src_out, SW, W)}':y={y}"
+        if follow and pan and SW > W:
+            # mouvement subtil : le cadre glisse lentement d'un bord à l'autre pendant l'extrait (sens alterné)
+            d = max(0.1, seg.duration)
+            p = f"min(1,max(0,t/{_fmt(d)}))"
+            back = int(tag) % 2 == 1 if str(tag).isdigit() else False
+            return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:x='{SW - W}*{'(1-' + p + ')' if back else p}':y={y}"
         return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:{x}:{y}"
 
     def fit_chain(z: float) -> str:
@@ -181,8 +227,12 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
                f"[bgb{tag}][fgs{tag}]overlay={int((W - SW) / 2 * (1 + ox))}:{int((H - SH) / 2 * (1 + oy))}")
     else:
         geo = pre + fill_chain(zoom)
-
-    return geo + "," + _look_chain(tl)
+    tilt = float(getattr(v, "tilt", 0.0) or 0.0)
+    if abs(tilt) > 1e-3:                    # légère rotation, sans coins vides (image déjà agrandie)
+        c = tilt_cover(tl)
+        geo += (f",scale={_even(W * c)}:{_even(H * c)}:flags=lanczos,rotate={_fmt(round(math.radians(tilt), 5))}"
+                f":ow=iw:oh=ih:c=black,crop={W}:{H}")
+    return geo + "," + _look_chain(tl, tag)
 
 
 def _composite_chain(tl: Timeline, lay: dict, parts: list[str], flips: list[str], sw: int, sh: int, tag: str,
@@ -220,9 +270,15 @@ def _composite_chain(tl: Timeline, lay: dict, parts: list[str], flips: list[str]
     return ";".join(out)
 
 
-def _look_chain(tl: Timeline) -> str:
+def _look_chain(tl: Timeline, tag: str = "") -> str:
     f, v = tl.format, tl.video
     look = []
+    name = getattr(v, "look", "") or ""
+    amount = max(0.0, min(1.0, float(getattr(v, "look_amount", 0.7) or 0.0)))
+    if name in LOOKS and amount > 0:        # filtre mêlé à l'image d'origine selon son intensité
+        t = f"lk{tag}"
+        look.append(f"format=yuv420p,split=2[{t}a][{t}b];[{t}b]{LOOKS[name][1]},format=yuv420p[{t}f];"
+                    f"[{t}a][{t}f]blend=all_expr='A*{_fmt(1 - amount)}+B*{_fmt(amount)}'")
     lut = getattr(v, "lut", "") or ""
     if lut and Path(lut).is_file():
         look.append(f"lut3d=file={_filter_path(lut)}")
@@ -353,7 +409,8 @@ class GraphBuilder:
                 self.graph.append(f"{cur}[t{j}]overlay=0:0:eof_action=pass:"
                                   f"enable='between(t,{_fmt(item.start)},{_fmt(item.end)})'[vt{j}]")
                 cur = f"[vt{j}]"
-            self.graph.append(f"{cur}null[vout]")
+            sp = speed_of(tl)                   # vitesse : toute l'image d'un coup (textes compris, en temps)
+            self.graph.append(f"{cur}{'setpts=PTS/' + _fmt(sp) if sp != 1.0 else 'null'}[vout]")
             vout = "[vout]"
         if audio:
             a = tl.audio
@@ -428,6 +485,8 @@ class GraphBuilder:
                 master.append(f"alimiter=limit={_fmt(round(10 ** (min(a.true_peak, -0.5) / 20), 4))}:"
                               "level=disabled:attack=5:release=50")
             master.append(f"atrim=0:{_fmt(total)}")
+            if speed_of(tl) != 1.0 and not analyze:
+                master.append(f"atempo={_fmt(speed_of(tl))}")     # même vitesse, voix à la même hauteur
             self.graph.append(f"{cur}{','.join(master)}[aout]")
             aout = "[aout]"
         args = [x for inp in self.inputs for x in inp]
@@ -682,7 +741,7 @@ def export(tl: Timeline, sources: dict[int, Source], music: Source | None, dest:
             ["-pix_fmt", "yuv420p", "-r", _fmt(tl.format.fps),
              "-c:a", "aac", "-b:a", f"{e.audio_bitrate}k", "-ar", str(SAMPLE_RATE), "-ac", "2",
              "-movflags", "+faststart", "-metadata", "comment=Studio Video",
-             "-t", _fmt(total), str(partial)]
+             "-t", _fmt(output_duration(tl)), str(partial)]
 
         def on_line(line: str) -> None:
             if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
@@ -690,7 +749,7 @@ def export(tl: Timeline, sources: dict[int, Source], music: Source | None, dest:
                     us = int(line.split("=", 1)[1])
                 except ValueError:
                     return
-                progress(0.1 + 0.82 * min(1.0, us / 1e6 / total), "Rendu vidéo")
+                progress(0.1 + 0.82 * min(1.0, us / 1e6 / output_duration(tl)), "Rendu vidéo")
 
         run(cmd, on_line)
         progress(0.93, "Vérification du fichier")
@@ -721,7 +780,7 @@ def verify(path: Path, tl: Timeline) -> dict:
         problems.append("aucune piste audio")
     if (info.width, info.height) != (tl.format.width, tl.format.height):
         problems.append(f"dimensions {info.width}×{info.height} au lieu de {tl.format.width}×{tl.format.height}")
-    expected = tl.duration
+    expected = output_duration(tl)
     if info.duration_s is None or abs(info.duration_s - expected) > max(0.35, 2 / tl.format.fps):
         problems.append(f"durée {info.duration_s or 0:.2f} s au lieu de {expected:.2f} s")
     if problems:

@@ -4,25 +4,30 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (QLabel, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QMessageBox,
-                               QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
-
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import (QButtonGroup, QLabel, QCheckBox, QComboBox, QFileDialog, QGridLayout,
+                               QMessageBox, QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem,
+                               QPlainTextEdit, QPushButton, QScrollArea, QSlider, QTabWidget, QToolButton,
+                               QVBoxLayout, QWidget)
+
+from .scrub import double_spin, int_spin
 from ..core import AppContext
 from ..edit import compose
-from ..edit.model import ASPECTS, Timeline
+from ..edit.model import ASPECTS, TextItem, Timeline
 from ..media.ffmpeg import fmt_timecode
 from .color_picker import ColorButton
 from .widgets import tool, button, label
 
 FIT_MODES = [("fill", "Remplir (recadré)"), ("blur", "Image entière + fond flou"), ("fit", "Image entière + bandes noires")]
 POSITIONS = [("top", "En haut"), ("center", "Au centre"), ("bottom", "En bas"), ("custom", "Libre (X / Y)")]
+TEXT_KINDS = (("title", "Titre"), ("hook", "Accroche"), ("cta", "Call to action"), ("lower", "Nom"))
 LOUDNESS = [(-14.0, "Réseaux sociaux (-14 LUFS)"), (-16.0, "Podcast / voix (-16 LUFS)"),
             (-23.0, "Diffusion TV (-23 LUFS)"), (-11.0, "Très fort (-11 LUFS)")]
 QUALITY = [(18, "Très haute (fichier lourd)"), (20, "Haute (recommandé)"), (23, "Standard"), (27, "Légère")]
 SPEED = [("veryfast", "Rapide"), ("medium", "Équilibré"), ("slow", "Lent (meilleure compression)")]
+SLIDER_W = 96                          # curseurs (largeur max, X, Y, opacité…) : une longueur fixe, courte
+SCRUB_W = 78                           # valeurs réglables à la souris de l'onglet Textes (début, fin, taille)
 
 
 def _get(obj, path: str):
@@ -70,6 +75,7 @@ class FontPicker(QComboBox):
         f = QFont(family)
         f.setPointSizeF(11)
         self.setItemData(self.count() - 1, f, Qt.FontRole)
+        self.setItemData(self.count() - 1, family, Qt.ToolTipRole)      # nom entier au survol
 
     def set_family(self, family: str) -> None:
         i = self.findData(family)
@@ -80,6 +86,7 @@ class FontPicker(QComboBox):
         self.setCurrentIndex(max(0, i))
         self.blockSignals(False)
         self.setFont(QFont(family or self.font().family()))
+        self.setToolTip(family)
 
 
 class Binder:
@@ -99,28 +106,27 @@ class Binder:
         _set(obj, path, value)
         self.panel.changed.emit(path)
 
-    def spin(self, path, lo, hi, step=0.1, decimals=1, suffix="") -> QDoubleSpinBox:
-        w = QDoubleSpinBox()
+    def spin(self, path, lo, hi, step=0.1, decimals=1, suffix=""):
+        """Nombre décimal réglable à la souris (glisser, molette, + / −)."""
+        from .scrub import ScrubNumber
+        w = ScrubNumber(decimals=decimals, step=step, suffix=suffix)
         w.setRange(lo, hi)
-        w.setSingleStep(step)
-        w.setDecimals(decimals)
-        w.setSuffix(suffix)
-        w.setKeyboardTracking(False)
         w.valueChanged.connect(lambda v: self._commit(path, round(v, decimals)))
         self.items.append(("spin", path, w))
         return w
 
-    def ispin(self, path, lo, hi, suffix="") -> QSpinBox:
-        w = QSpinBox()
+    def ispin(self, path, lo, hi, suffix=""):
+        """Nombre entier réglable à la souris."""
+        from .scrub import ScrubNumber
+        w = ScrubNumber(decimals=0, step=1, suffix=suffix)
         w.setRange(lo, hi)
-        w.setSuffix(suffix)
-        w.setKeyboardTracking(False)
         w.valueChanged.connect(lambda v: self._commit(path, int(v)))
         self.items.append(("spin", path, w))
         return w
 
     def slider(self, path, lo, hi, scale=100.0) -> QSlider:
         w = QSlider(Qt.Horizontal)
+        w.setFixedWidth(SLIDER_W)
         w.setRange(int(lo * scale), int(hi * scale))
         w.valueChanged.connect(lambda v: self._commit(path, round(v / scale, 3)))
         w._scale = scale  # type: ignore[attr-defined]
@@ -149,8 +155,40 @@ class Binder:
 
     def font(self, path) -> "FontPicker":
         w = FontPicker()
-        w.fontChanged.connect(lambda fam: self._commit(path, fam))
+        w.fontChanged.connect(lambda fam: (w.setToolTip(fam), self._commit(path, fam)))
         self.items.append(("font", path, w))
+        return w
+
+    def scrub(self, path, lo, hi):
+        """Nombre réglable à la souris (glisser, molette), comme les temps de Clipping."""
+        from .scrub import ScrubNumber
+        w = ScrubNumber()
+        w.setRange(lo, hi)
+        w.edited.connect(lambda v: self._commit(path, int(v)))
+        self.items.append(("scrub", path, w))
+        return w
+
+    def tbtn(self, path, text, tooltip, bold=False, italic=False) -> QToolButton:
+        """Bouton à enfoncer (gras, italique…)."""
+        w = QToolButton()
+        w.setText(text)
+        w.setCheckable(True)
+        w.setToolTip(tooltip)
+        w.setFixedSize(34, 34)
+        f = QFont(w.font())
+        f.setPointSizeF(13)
+        f.setBold(bold)
+        f.setItalic(italic)
+        w.setFont(f)
+        w.toggled.connect(lambda v: self._commit(path, bool(v)))
+        self.items.append(("check", path, w))
+        return w
+
+    def choice(self, path, options) -> "ChoiceButtons":
+        """Boutons-icônes exclusifs (alignement…)."""
+        w = ChoiceButtons(options)
+        w.picked.connect(lambda v: self._commit(path, v))
+        self.items.append(("choice", path, w))
         return w
 
     def load(self) -> None:
@@ -176,7 +214,72 @@ class Binder:
                 w.set(v)
             elif kind == "font":
                 w.set_family(v)
+            elif kind in ("scrub", "choice"):
+                w.setValue(v)
             w.blockSignals(False)
+
+
+def _hint_row(icon: str, tip: str) -> QHBoxLayout:
+    """Ligne de réglages commençant par une petite icône grise (le nom du réglage au survol, sans libellé)."""
+    from . import theme
+    h = QHBoxLayout()
+    h.setSpacing(6)
+    ic = QLabel()
+    ic.setPixmap(theme.icon(icon, theme.color("faint"), 16).pixmap(16, 16))
+    ic.setToolTip(tip)
+    ic.setFixedWidth(18)
+    h.addWidget(ic)
+    return h
+
+
+class ChoiceButtons(QWidget):
+    """Petits boutons-icônes dont un seul est enfoncé (gauche, centre, droite…)."""
+    picked = Signal(str)
+
+    def __init__(self, options, parent=None):
+        super().__init__(parent)
+        from . import theme
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(2)
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self.buttons: dict[str, QToolButton] = {}
+        for val, ic, tip in options:
+            b = tool(ic, tip, checkable=True)
+            b.setIcon(theme.icon(ic, theme.color("muted"), 18))
+            self.group.addButton(b)
+            self.buttons[val] = b
+            b.clicked.connect(lambda _=False, v=val: self.picked.emit(v))
+            h.addWidget(b)
+
+    def setValue(self, v) -> None:                   # noqa: N802
+        for val, b in self.buttons.items():
+            b.setChecked(val == v)
+
+
+def preset_pixmap(params: dict, text: str, px: int = 20) -> QPixmap:
+    """Petit aperçu d'un texte dans son style (police, couleur, contour, fond) : l'image d'un bouton d'ajout,
+    dessinée par le rendu même des textes de la vidéo (`edit/textrender.py`), puis recadrée."""
+    from ..edit.textrender import REFERENCE_HEIGHT, render_text_image
+    dpr = 2
+    item = TextItem(text, **{k: v for k, v in params.items() if k in TextItem.__dataclass_fields__
+                              and k not in ("text", "id", "start", "end")})
+    item.position, item.max_width, item.fade = "center", 1.0, 0.0
+    height = max(60, int(REFERENCE_HEIGHT * px * dpr / max(8, item.size)))     # police de px pixels (x2)
+    width = int(px * dpr * (len(text) + 4))
+    img = render_text_image(item, width, height)
+    font = QFont(item.font)
+    font.setPixelSize(px * dpr)
+    font.setBold(item.bold)
+    font.setItalic(item.italic)
+    fm = QFontMetricsF(font)
+    pad = px * dpr * (0.35 if item.box else 0.0) + item.outline * px * dpr / 72 * 2 + 2
+    bw, bh = fm.horizontalAdvance(text) + 2 * pad, fm.height() * 1.05 + 2 * pad
+    rect = QRectF((width - bw) / 2, (height - bh) / 2, bw, bh).toAlignedRect().intersected(img.rect())
+    pm = QPixmap.fromImage(img.copy(rect))
+    pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 def _shrinkable(root: QWidget) -> None:
@@ -187,6 +290,8 @@ def _shrinkable(root: QWidget) -> None:
         cb.setMinimumContentsLength(8)
         cb.setSizePolicy(QSizePolicy.Expanding, cb.sizePolicy().verticalPolicy())
     for b in root.findChildren(QPushButton):
+        if isinstance(b, ColorButton):
+            continue                                                 # pastille de couleur : carrée
         b.setMinimumWidth(min(b.minimumSizeHint().width(), 56))     # peut rétrécir au lieu de déborder
         if not b.toolTip() and b.text():
             b.setToolTip(b.text())
@@ -200,7 +305,7 @@ def _shrinkable(root: QWidget) -> None:
         if not cb.toolTip():
             cb.setToolTip(cb.text())
     for lb in root.findChildren(QLabel):
-        if not lb.wordWrap() and len(lb.text()) > 22:
+        if not lb.wordWrap() and len(lb.text()) > 22 and lb.textFormat() != Qt.RichText:
             lb.setWordWrap(True)
 
 
@@ -337,8 +442,8 @@ class MontagePanel(QTabWidget):
         w, f = _form()
         self.seg_title = label("Aucun extrait sélectionné", "h2", wrap=True)
         f.addRow(self.seg_title)
-        self.seg_in = QDoubleSpinBox()
-        self.seg_out = QDoubleSpinBox()
+        self.seg_in = double_spin()
+        self.seg_out = double_spin()
         for sp in (self.seg_in, self.seg_out):
             sp.setDecimals(2)
             sp.setRange(0, 1e6)
@@ -350,13 +455,13 @@ class MontagePanel(QTabWidget):
         f.addRow("Fin dans la source", self.seg_out)
         self.seg_dur = label("", "faint")
         f.addRow("", self.seg_dur)
-        self.seg_vol = QDoubleSpinBox()
+        self.seg_vol = double_spin()
         self.seg_vol.setRange(-40, 20)
         self.seg_vol.setSuffix(" dB")
         self.seg_vol.setKeyboardTracking(False)
         self.seg_vol.valueChanged.connect(lambda v: self._seg_set("volume_db", round(v, 1)))
         f.addRow("Volume de l'extrait", self.seg_vol)
-        self.seg_zoom = QDoubleSpinBox()
+        self.seg_zoom = double_spin()
         self.seg_zoom.setRange(100, 200)
         self.seg_zoom.setDecimals(0)
         self.seg_zoom.setSingleStep(5)
@@ -365,7 +470,7 @@ class MontagePanel(QTabWidget):
         self.seg_zoom.setToolTip("Plan resserré sur cet extrait seulement (s'ajoute au zoom du cadrage)")
         self.seg_zoom.valueChanged.connect(lambda v: self._seg_set("zoom", round(v / 100, 3)))
         f.addRow("Zoom de l'extrait", self.seg_zoom)
-        self.seg_fin, self.seg_fout = QDoubleSpinBox(), QDoubleSpinBox()
+        self.seg_fin, self.seg_fout = double_spin(), double_spin()
         for sp, attr in ((self.seg_fin, "fade_in"), (self.seg_fout, "fade_out")):
             sp.setRange(0, 5)
             sp.setDecimals(1)
@@ -399,12 +504,24 @@ class MontagePanel(QTabWidget):
                        "jamais modifiés.", "faint", wrap=True))
         return w
 
-    def _font_row(self, picker) -> QWidget:
+    def _font_row(self, picker, size=None) -> QWidget:
+        """Police (menu court, nom entier au survol), « + » pour en ajouter une, et sa taille réglable à la souris."""
+        from . import theme
         w = QWidget()
         h = QHBoxLayout(w)
         h.setContentsMargins(0, 0, 0, 0)
-        h.addWidget(picker, 1)
-        h.addWidget(tool("plus", "Ajouter une police (.ttf, .otf)…", lambda: self._add_font(picker), size=30))
+        h.setSpacing(2)
+        picker.setMaximumWidth(170)
+        h.addWidget(picker)                               # collé à gauche, comme le reste
+        add = tool("plus", "Ajouter une police (.ttf, .otf)…", lambda: self._add_font(picker), size=20)
+        add.setIcon(theme.icon("plus", theme.color("faint"), 13))          # petit et discret, contre le menu
+        h.addWidget(add)
+        if size is not None:
+            h.addSpacing(4)
+            size.setToolTip("Taille du texte : glisser à gauche ou à droite, molette, ou double-clic pour saisir")
+            size.setFixedWidth(SCRUB_W)                   # même taille que Début et Fin
+            h.addWidget(size)
+        h.addStretch(1)
         return w
 
     def _add_font(self, picker) -> None:
@@ -570,7 +687,7 @@ class MontagePanel(QTabWidget):
         f.addRow("Méthode", self.mask_mode)
         self.mask_spins = {}
         for key, name in (("x", "Gauche"), ("y", "Haut"), ("w", "Largeur"), ("h", "Hauteur")):
-            sp = QDoubleSpinBox()
+            sp = double_spin()
             sp.setRange(0, 100)
             sp.setDecimals(1)
             sp.setSuffix(" %")
@@ -609,11 +726,12 @@ class MontagePanel(QTabWidget):
         for key, name, lo, hi in (("zoom", "Zoom de la vue", 100, 400), ("cx", "Position horizontale", 0, 100),
                                   ("cy", "Position verticale", 0, 100)):
             sl = QSlider(Qt.Horizontal)
+            sl.setFixedWidth(SLIDER_W)
             sl.setRange(lo, hi)
             sl.valueChanged.connect(lambda v, k=key: self._lay_view_set(k, v))
             self.lay_sl[key] = sl
             g.addRow(name, sl)
-        self.lay_ratio = QSpinBox()
+        self.lay_ratio = int_spin()
         self.lay_ratio.setRange(int(compose.RATIO_MIN * 100), int(compose.RATIO_MAX * 100))
         self.lay_ratio.setSuffix(" % en haut")
         self.lay_ratio.setKeyboardTracking(False)
@@ -632,7 +750,7 @@ class MontagePanel(QTabWidget):
         self.lay_second.currentIndexChanged.connect(
             lambda _i: self._lay_set("asset2", self.lay_second.currentData(), reload=True))
         g.addRow("Seconde vidéo", self.lay_second)
-        self.lay_offset = QDoubleSpinBox()
+        self.lay_offset = double_spin()
         self.lay_offset.setRange(-36000, 36000)
         self.lay_offset.setDecimals(2)
         self.lay_offset.setSingleStep(0.1)
@@ -650,14 +768,14 @@ class MontagePanel(QTabWidget):
         for key, name, lo, hi in (("w", "Largeur de l'incrustation", 10, 100),
                                   ("h", "Hauteur de l'incrustation", 6, 100),
                                   ("x", "Incrustation : gauche", 0, 90), ("y", "Incrustation : haut", 0, 94)):
-            sp = QSpinBox()
+            sp = int_spin()
             sp.setRange(lo, hi)
             sp.setSuffix(" %")
             sp.setKeyboardTracking(False)
             sp.valueChanged.connect(lambda v, k=key: self._lay_pip_set(k, v))
             self.lay_pip[key] = sp
             g.addRow(name, sp)
-        self.lay_border = QSpinBox()
+        self.lay_border = int_spin()
         self.lay_border.setRange(0, 40)
         self.lay_border.setSuffix(" px")
         self.lay_border.setKeyboardTracking(False)
@@ -912,51 +1030,126 @@ class MontagePanel(QTabWidget):
         self.text_list.setMaximumHeight(120)
         self.text_list.currentItemChanged.connect(self._text_pick)
         lay.addWidget(self.text_list)
-        for pair in ((("title", "+ Titre"), ("hook", "+ Accroche")), (("cta", "+ Call to action"), ("lower", "+ Nom"))):
-            row = QHBoxLayout()
-            for kind, name in pair:
-                row.addWidget(button(name, on_click=lambda _=False, k=kind: self._add_text(k)))
-            lay.addLayout(row)
+        # boutons d'ajout : chacun montre le texte qu'il ajoute, dans son style
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        self.add_btns: dict[str, QPushButton] = {}
+        for i, (kind, name) in enumerate(TEXT_KINDS):
+            b = QPushButton()
+            b.setToolTip(f"Ajouter : {name}")
+            b.setFixedHeight(32)
+            b.setStyleSheet("padding: 2px 6px;")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=kind: self._add_text(k))
+            grid.addWidget(b, i // 2, i % 2)
+            self.add_btns[kind] = b
+        lay.addLayout(grid)
         fw, f = _form()
+        f.setVerticalSpacing(12)                          # de l'air entre les réglages, sans libellés
         bt = self.bt
         self.text_edit = QPlainTextEdit()
-        self.text_edit.setMaximumHeight(70)
+        self.text_edit.setMaximumHeight(64)
+        self.text_edit.setPlaceholderText("Texte")
         self.text_edit.textChanged.connect(self._text_changed)
-        f.addRow("Texte", self.text_edit)
-        f.addRow("Début", bt.spin("start", 0, 1e5, 0.1, 2, " s"))
-        f.addRow("Fin", bt.spin("end", 0, 1e5, 0.1, 2, " s"))
-        tr = QHBoxLayout()
-        tr.addWidget(button("Début ici", tooltip="Début = tête de lecture", on_click=lambda: self._text_time("start")))
-        tr.addWidget(button("Fin ici", tooltip="Fin = tête de lecture", on_click=lambda: self._text_time("end")))
-        tr.addWidget(button("Tout", tooltip="Pendant toute la vidéo", on_click=lambda: self._text_time("all")))
-        f.addRow(tr)
-        f.addRow("Position", bt.combo("position", POSITIONS))
-        f.addRow("X (libre)", bt.slider("x", 0.0, 1.0))
-        f.addRow("Y (libre)", bt.slider("y", 0.0, 1.0))
-        f.addRow("Police", self._font_row(bt.font("font")))
-        f.addRow("Taille", bt.ispin("size", 16, 240, " px"))
+        f.addRow(self.text_edit)
+        # début et fin réglables à la souris (comme en Clipping), puis « Tout »
+        from .scrub import ScrubTime
+        self.t_start, self.t_end = ScrubTime(), ScrubTime()
+        self.t_start.setToolTip("Début")
+        self.t_end.setToolTip("Fin")
+        for s_ in (self.t_start, self.t_end):
+            s_.setFixedWidth(SCRUB_W)
+        self.t_start.edited.connect(lambda v: self._text_time_set(start=v))
+        self.t_end.edited.connect(lambda v: self._text_time_set(end=v))
+        self.t_all = button("Tout", "mini", tooltip="Pendant toute la vidéo", on_click=lambda: self._text_time("all"))
+        tg = QGridLayout()
+        tg.setHorizontalSpacing(6)
+        tg.setVerticalSpacing(2)
+        tg.addWidget(label("Début", "faint"), 0, 0)
+        tg.addWidget(label("Fin", "faint"), 0, 1)
+        tg.addWidget(self.t_start, 1, 0)
+        tg.addWidget(self.t_end, 1, 1)
+        tg.addWidget(self.t_all, 1, 2)
+        tg.setColumnStretch(3, 1)
+        f.addRow(tg)
+        # position : haut / centre / bas, puis X et Y libres (partent de la position choisie)
+        self.pos_group = QButtonGroup(self)
+        self.pos_group.setExclusive(False)
+        self.pos_btns: dict[str, QPushButton] = {}
+        pr = QHBoxLayout()
+        pr.setSpacing(5)
+        for key, name in (("top", "Haut"), ("center", "Centre"), ("bottom", "Bas")):
+            b = button(name, "mini", tooltip=f"Position : {dict(POSITIONS)[key].lower()}")
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, k=key: self._text_pos(k))
+            self.pos_group.addButton(b)
+            self.pos_btns[key] = b
+            pr.addWidget(b)
+        pr.addStretch(1)
+        f.addRow(pr)
+        self.text_x, self.text_y = QSlider(Qt.Horizontal), QSlider(Qt.Horizontal)
+        xy = QHBoxLayout()
+        xy.setSpacing(6)
+        for name, s_ in (("X", self.text_x), ("Y", self.text_y)):
+            s_.setRange(0, 1000)
+            s_.setFixedWidth(SLIDER_W)
+            s_.setToolTip(f"Position {name} (libre)")
+            s_.valueChanged.connect(self._text_xy)
+            xy.addWidget(label(name, "faint"))
+            xy.addWidget(s_)
+            xy.addSpacing(8)
+        xy.addStretch(1)
+        f.addRow(xy)
+        # police, taille, gras, italique, alignement : sans libellés, comme un éditeur de texte
+        f.addRow(self._font_row(bt.font("font"), bt.scrub("size", 16, 240)))
         st = QHBoxLayout()
-        st.addWidget(bt.check("bold", "Gras"))
-        st.addWidget(bt.check("italic", "Italique"))
-        st.addWidget(bt.combo("align", [("center", "Centré"), ("left", "Gauche"), ("right", "Droite")]))
-        f.addRow("Style", st)
-        cl = QHBoxLayout()
-        cl.addWidget(bt.color("color"))
-        for name, col in (("Blanc", "#FFFFFF"), ("Jaune", "#FFD54A"), ("Noir", "#000000")):
-            cl.addWidget(button(name, "ghost", on_click=lambda _=False, c=col: self._text_color(c)))
+        st.setSpacing(2)
+        st.addWidget(bt.tbtn("bold", "B", "Gras", bold=True))
+        st.addWidget(bt.tbtn("italic", "I", "Italique", italic=True))
+        st.addSpacing(10)
+        st.addWidget(bt.choice("align", [("left", "align-left", "Aligné à gauche"),
+                                         ("center", "align-center", "Centré"),
+                                         ("right", "align-right", "Aligné à droite")]))
+        st.addStretch(1)
+        f.addRow(st)
+        # couleur, contour, fond, largeur, fondu : une icône grise et la commande (le nom au survol)
+        cl = _hint_row("text-color", "Couleur du texte")
+        c_ = bt.color("color")
+        c_.setToolTip("Couleur du texte")
+        cl.addWidget(c_)
         cl.addStretch(1)
-        f.addRow("Couleur", cl)
-        ol = QHBoxLayout()
-        ol.addWidget(bt.color("outline_color"))
-        ol.addWidget(bt.ispin("outline", 0, 30, " px"))
-        f.addRow("Contour", ol)
-        bx = QHBoxLayout()
-        bx.addWidget(bt.check("box", "Rectangle"))
-        bx.addWidget(bt.color("box_color"))
-        bx.addWidget(bt.slider("box_opacity", 0.0, 1.0))
-        f.addRow("Fond", bx)
-        f.addRow("Largeur max.", bt.slider("max_width", 0.3, 1.0))
-        f.addRow("Fondu", bt.spin("fade", 0, 3, 0.1, 1, " s"))
+        f.addRow(cl)
+        ol = _hint_row("text-outline", "Contour")
+        o_ = bt.color("outline_color")
+        o_.setToolTip("Couleur du contour")
+        ol.addWidget(o_)
+        ow = bt.ispin("outline", 0, 30, " px")
+        ow.setToolTip("Épaisseur du contour")
+        ol.addWidget(ow)
+        ol.addStretch(1)
+        f.addRow(ol)
+        bx = _hint_row("text-box", "Fond")
+        b_ = bt.color("box_color")
+        b_.setToolTip("Couleur du fond")
+        bx.addWidget(b_)
+        self.box_op = bt.slider("box_opacity", 0.0, 1.0)  # opacité 0 : pas de fond
+        self.box_op.setToolTip("Fond : opacité (tout à gauche, pas de fond)")
+        self.box_op.valueChanged.connect(self._box_opacity)
+        bx.addWidget(self.box_op)
+        bx.addStretch(1)
+        f.addRow(bx)
+        wl = _hint_row("move-horizontal", "Largeur maximale du texte")
+        mw = bt.slider("max_width", 0.3, 1.0)
+        mw.setToolTip("Largeur maximale du texte")
+        wl.addWidget(mw)
+        wl.addSpacing(14)
+        fl_ = _hint_row("blend", "Fondu (apparition et disparition)")
+        wl.addLayout(fl_)
+        fd = bt.spin("fade", 0, 3, 0.1, 1, " s")
+        fd.setToolTip("Fondu (apparition et disparition)")
+        wl.addWidget(fd)
+        wl.addStretch(1)
+        f.addRow(wl)
         self.text_del = button("Supprimer ce texte", "danger", on_click=self._del_text)
         f.addRow(self.text_del)
         lay.addWidget(fw)
@@ -981,6 +1174,74 @@ class MontagePanel(QTabWidget):
         self.text_edit.blockSignals(False)
         self.text_del.setEnabled(t is not None)
         self.bt.load()
+        if t is not None and not t.box:                   # sans fond : l'opacité est à zéro
+            self.box_op.blockSignals(True)
+            self.box_op.setValue(0)
+            self.box_op.blockSignals(False)
+        for w_ in (self.t_start, self.t_end, self.t_all, self.text_x, self.text_y, *self.pos_btns.values()):
+            w_.setEnabled(t is not None)
+        dur = max(0.2, self.tl.duration)
+        for s_, v in ((self.t_start, t.start if t else 0.0), (self.t_end, t.end if t else 0.0)):
+            s_.setRange(0.0, max(dur, v))
+            s_.setValue(v)
+        self._load_position(t)
+        self._paint_add_buttons()
+
+    def _paint_add_buttons(self) -> None:
+        """Chaque bouton d'ajout montre son texte avec le style qu'il aura dans la vidéo."""
+        style = self.app.montage.text_style_for(self.project_id) if self.project_id else {}
+        for kind, name in TEXT_KINDS:
+            params = {**TextItem("").__dict__, **self._preset_params(kind, style)}
+            pm = preset_pixmap(params, name, 14)
+            b = self.add_btns[kind]
+            b.setIcon(QIcon(pm))
+            b.setIconSize(QSize(min(120, int(pm.width() / pm.devicePixelRatio())),
+                                int(pm.height() / pm.devicePixelRatio())))
+
+    def _load_position(self, t) -> None:
+        from ..edit.textrender import anchor
+        for k, b in self.pos_btns.items():
+            b.setChecked(t is not None and t.position == k)
+        x, y = anchor(t, self.tl.format.width, self.tl.format.height) if t else (0.5, 0.5)
+        for s_, v in ((self.text_x, x), (self.text_y, y)):
+            s_.blockSignals(True)
+            s_.setValue(int(round(v * 1000)))
+            s_.blockSignals(False)
+
+    def _text_pos(self, key: str) -> None:
+        """Haut / Centre / Bas : le texte y retourne, et X / Y prennent ces coordonnées."""
+        t = self.current_text()
+        if not t:
+            return
+        from ..edit.textrender import anchor
+        t.position = key
+        t.x, t.y = anchor(t, self.tl.format.width, self.tl.format.height)
+        self._load_position(t)
+        self.changed.emit("texts")
+
+    def _text_xy(self) -> None:
+        """X / Y bougés : le texte se place librement (plus en haut, au centre ou en bas)."""
+        t = self.current_text()
+        if not t or self._loading:
+            return
+        t.position = "custom"
+        t.x, t.y = self.text_x.value() / 1000, self.text_y.value() / 1000
+        for b in self.pos_btns.values():
+            b.setChecked(False)
+        self.changed.emit("texts")
+
+    def _text_time_set(self, start: float | None = None, end: float | None = None) -> None:
+        t = self.current_text()
+        if not t:
+            return
+        if start is not None:
+            t.start = max(0.0, min(start, t.end - 0.2))
+        if end is not None:
+            t.end = max(end, t.start + 0.2)
+        self._loading = True
+        self._load_texts()
+        self._loading = False
+        self.changed.emit("texts")
 
     def _text_pick(self, it, _prev=None) -> None:
         if it and not self._loading:
@@ -990,18 +1251,27 @@ class MontagePanel(QTabWidget):
             self._loading = False
             self.changed.emit("text-select")
 
-    def _add_text(self, kind: str) -> None:
-        style = self.app.montage.text_style_for(self.project_id) if self.project_id else {}
-        t0 = self.playhead
+    @staticmethod
+    def _preset_params(kind: str, style: dict) -> dict:
         presets = {
             "title": dict(text="Titre", position="top", size=80, box=False),
-            "hook": dict(text="Accroche", position="center", size=96, box=True, box_color="#000000"),
+            "hook": dict(text="Accroche", position="center", size=96, box=True, box_color="#000000",
+                         box_opacity=0.5),
             "cta": dict(text="Abonnez-vous !", position="bottom", size=70, color="#FFD54A"),
             "lower": dict(text="Nom de l'intervenant", position="custom", x=0.5, y=0.7, size=56, box=True),
         }[kind]
-        params = {**style, **presets} if kind != "title" else {**presets, **style, "text": "Titre"}
+        style = {k: v for k, v in style.items() if k not in ("text", "start", "end", "id")}
+        return {**style, **presets} if kind != "title" else {**presets, **style, "text": "Titre"}
+
+    def _add_text(self, kind: str) -> None:
+        style = self.app.montage.text_style_for(self.project_id) if self.project_id else {}
+        t0 = self.playhead
+        params = self._preset_params(kind, style)
         text = params.pop("text")
-        end = min(self.tl.duration, t0 + 3.0) if self.tl.duration > t0 + 0.3 else t0 + 3.0
+        if kind in ("title", "hook") and self.tl.duration > 0.3:
+            t0, end = 0.0, self.tl.duration                 # titre et accroche : toute la vidéo
+        else:
+            end = min(self.tl.duration, t0 + 3.0) if self.tl.duration > t0 + 0.3 else t0 + 3.0
         item = self.tl.add_text(text, t0, end, **params)
         self.sel_text = item.id
         self._loading = True
@@ -1034,12 +1304,13 @@ class MontagePanel(QTabWidget):
         self.refresh()
         self.changed.emit("texts")
 
-    def _text_color(self, c: str) -> None:
+    def _box_opacity(self, v: int) -> None:
+        """Le fond existe dès que son opacité dépasse zéro (plus de case « Rectangle »)."""
         t = self.current_text()
-        if t:
-            t.color = c
-            self.refresh()
-            self.changed.emit("texts")
+        if t is None or self._loading or t.box == (v > 0):
+            return
+        t.box = v > 0
+        self.changed.emit("texts")
 
     def _del_text(self) -> None:
         if self.sel_text:
@@ -1077,13 +1348,15 @@ class MontagePanel(QTabWidget):
             ("pop", "Effet pop + surlignage"), ("fade", "Apparition progressive"), ("none", "Aucune")]))
         f.addRow("Position", b.combo("subtitles.style.position", POSITIONS))
         f.addRow("Hauteur (libre)", b.slider("subtitles.style.y", 0.1, 0.9))
-        f.addRow("Police", self._font_row(b.font("subtitles.style.font")))
-        f.addRow("Taille", b.ispin("subtitles.style.size", 20, 200, " px"))
+        f.addRow(self._font_row(b.font("subtitles.style.font"), b.scrub("subtitles.style.size", 20, 200)))
         st = QHBoxLayout()
-        st.addWidget(b.check("subtitles.style.bold", "Gras"))
-        st.addWidget(b.check("subtitles.style.italic", "Italique"))
+        st.setSpacing(2)
+        st.addWidget(b.tbtn("subtitles.style.bold", "B", "Gras", bold=True))
+        st.addWidget(b.tbtn("subtitles.style.italic", "I", "Italique", italic=True))
+        st.addSpacing(10)
         st.addWidget(b.check("subtitles.style.uppercase", "MAJUSCULES"))
-        f.addRow("Style", st)
+        st.addStretch(1)
+        f.addRow(st)
         cl = QHBoxLayout()
         cl.addWidget(label("Texte", "faint"))
         cl.addWidget(b.color("subtitles.style.color"))
@@ -1114,23 +1387,18 @@ class MontagePanel(QTabWidget):
         self.cue_text.setPlaceholderText("Texte du sous-titre sélectionné")
         self.cue_text.editingFinished.connect(self._cue_text)
         f.addRow("Texte", self.cue_text)
-        tm = QHBoxLayout()
-        self.cue_start = QDoubleSpinBox()
-        self.cue_end = QDoubleSpinBox()
-        for sp in (self.cue_start, self.cue_end):
-            sp.setDecimals(2)
-            sp.setRange(0, 1e6)
-            sp.setSingleStep(0.05)
-            sp.setSuffix(" s")
-            sp.setKeyboardTracking(False)
-            sp.valueChanged.connect(self._cue_times)
-            tm.addWidget(sp)
-        f.addRow("Début / fin", tm)
-        cb = QHBoxLayout()
-        cb.addWidget(button("Début ici", on_click=lambda: self._cue_here("start")))
-        cb.addWidget(button("Fin ici", on_click=lambda: self._cue_here("end")))
-        cb.addWidget(button("Supprimer", "danger", on_click=self._cue_delete))
-        f.addRow(cb)
+        from .scrub import ScrubTime
+        self.cue_start, self.cue_end = ScrubTime(), ScrubTime()      # réglables à la souris
+        tm = QGridLayout()
+        tm.setHorizontalSpacing(6)
+        tm.setVerticalSpacing(2)
+        tm.addWidget(label("Début", "muted"), 0, 0)
+        tm.addWidget(label("Fin", "muted"), 0, 1)
+        for i, sp in enumerate((self.cue_start, self.cue_end)):
+            sp.edited.connect(lambda _v: self._cue_times())
+            tm.addWidget(sp, 1, i)
+        f.addRow(tm)
+        f.addRow(button("Supprimer ce sous-titre", "danger", on_click=self._cue_delete))
         f.addRow(button("+ Sous-titre à la tête de lecture", "ghost", on_click=self._cue_add))
         return w
 
@@ -1188,8 +1456,9 @@ class MontagePanel(QTabWidget):
             wdg.setEnabled(c is not None)
             wdg.blockSignals(True)
         self.cue_text.setText(c.text if c else "")
-        self.cue_start.setValue(c.start if c else 0)
-        self.cue_end.setValue(c.end if c else 0)
+        for sp, v in ((self.cue_start, c.start if c else 0.0), (self.cue_end, c.end if c else 0.0)):
+            sp.setRange(0.0, max(self.tl.duration, v))
+            sp.setValue(v)
         for wdg in (self.cue_text, self.cue_start, self.cue_end):
             wdg.blockSignals(False)
 
@@ -1227,15 +1496,6 @@ class MontagePanel(QTabWidget):
         self._loading = True
         self._load_cues()
         self._loading = False
-
-    def _cue_here(self, which: str) -> None:
-        c = self._cue()
-        if not c:
-            return
-        if which == "start" and self.playhead < c.end - 0.1:
-            self.cue_start.setValue(self.playhead)
-        elif which == "end" and self.playhead > c.start + 0.1:
-            self.cue_end.setValue(self.playhead)
 
     def _cue_delete(self) -> None:
         c = self._cue()

@@ -2,10 +2,19 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from pathlib import Path
 
 from ..db.database import Database
 from ..domain.models import ProjectMode
+
+
+NAV_KEYS = ("last_asset_id", "in_out")          # navigation (média affiché, repères) : pas une modification
+
+
+def _content(data: dict) -> dict:
+    return {k: v for k, v in data.items() if k not in NAV_KEYS}
 
 
 class ProjectService:
@@ -123,6 +132,26 @@ class ProjectService:
         self.db.audit("project.rename", f"{project_id}:{name}")
         return name
 
+    @staticmethod
+    def is_auto_name(name: str) -> bool:
+        """Nom donné d'office (« Clipping 3 », « Traduction (2) »…), pas choisi par l'utilisateur."""
+        labels = {m.label for m in ProjectMode} | {"Traduction et adaptation", "Clipping intelligent", "Projet"}
+        pat = "|".join(re.escape(x) for x in sorted(labels, key=len, reverse=True))
+        return bool(re.fullmatch(rf"(?:{pat})(?: \d+)?(?: \(\d+\))?", (name or "").strip()))
+
+    def name_after_media(self, project_id: int, file_name: str) -> str | None:
+        """Projet encore au nom donné d'office : il prend le nom du média importé (sans l'extension)."""
+        p = self.get(project_id)
+        stem = Path(file_name or "").stem.strip()[:80]
+        if p is None or not stem or not self.is_auto_name(p["name"]):
+            return None
+        data = self.load_data(project_id)
+        new = self.rename(project_id, stem)
+        if data.get("blank"):                       # projet vierge : il n'est plus intact
+            data.pop("blank")
+            self.save_data(project_id, data)
+        return new
+
     def set_mode(self, project_id: int, mode: ProjectMode | str) -> None:
         """Interface dans laquelle le projet a été ouvert en dernier : un même projet passe d'un parcours à
         l'autre (Clipping, Traduction, Création originale, Montage libre) sans être dupliqué."""
@@ -153,26 +182,76 @@ class ProjectService:
         self.db.audit("project.duplicate", f"{project_id} -> {pid}")
         return pid
 
+    # -- versions traduites ------------------------------------------------------------
+    def parent_of(self, project_id: int) -> int | None:
+        """Projet d'origine d'une version traduite (None pour un projet ordinaire)."""
+        p = self.load_data(project_id).get("parent")
+        return p if p and self.get(p) else None
+
+    def root_of(self, project_id: int) -> int:
+        return self.parent_of(project_id) or project_id
+
+    def versions(self, project_id: int) -> list[sqlite3.Row]:
+        """Versions traduites d'un projet (une par langue), par langue."""
+        return self.db.query(
+            "SELECT p.*, json_extract(p.data_json, '$.version_lang') lang FROM project p "
+            "WHERE json_extract(p.data_json, '$.parent') = ? ORDER BY lang", (project_id,))
+
+    def save_version(self, parent_id: int, lang: str, timeline: dict, extra: dict | None = None) -> int:
+        """Version traduite d'un projet : un projet rangé sous lui (« Nom · V-EN »), avec son propre montage
+        (sous-titres et voix de la langue). Préparer de nouveau la langue refait ce montage."""
+        p = self.get(parent_id)
+        if p is None:
+            raise ValueError("Projet introuvable.")
+        cur = next((r["id"] for r in self.versions(parent_id) if r["lang"] == lang), None)
+        if cur is None:
+            pid = self.create(p["concept_id"], self._unique_name(f"{p['name']} · V-{lang.upper()}"), "translation")
+            data = {}
+        else:
+            pid, data = cur, self.load_data(cur)
+        data.update(extra or {})
+        data.update({"parent": parent_id, "version_lang": lang, "timeline": timeline})
+        self.save_data(pid, data)
+        return pid
+
     def published_count(self, project_id: int) -> int:
         return self.db.query_one(
             "SELECT COUNT(*) n FROM publication pu JOIN video_variant v ON v.id = pu.variant_id "
             "JOIN clip cl ON cl.id = v.clip_id WHERE cl.project_id = ?", (project_id,))["n"]
 
     def delete(self, project_id: int) -> None:
-        """Supprime le projet (montage, clips, historique d'export). Les fichiers ne sont jamais effacés ;
+        """Supprime le projet et ses versions traduites (montage, clips, historique d'export). Les fichiers ne sont jamais effacés ;
         les médias restent dans la bibliothèque. Refusé si des publications en dépendent : archivez-le."""
-        if self.published_count(project_id):
+        ids = [project_id] + [r["id"] for r in self.versions(project_id)]      # ses versions traduites aussi
+        if any(self.published_count(i) for i in ids):
             raise ValueError("Des publications utilisent les vidéos de ce projet : archivez-le plutôt que de le "
                              "supprimer, pour garder leur historique.")
+        data = self.load_data(project_id)
+        par = data.get("parent")
+        if data.get("version_lang") and par and self.get(par):
+            # version traduite supprimée : sa langue n'est plus « prête », elle n'est pas recréée d'office
+            pd = self.load_data(par)
+            tr = pd.get("translations") or {}
+            if data["version_lang"] in (tr.get("ready") or []):
+                tr["ready"] = [x for x in tr["ready"] if x != data["version_lang"]]
+                pd["translations"] = tr
+                self.save_data(par, pd)
         with self.db.transaction() as c:
-            c.execute("DELETE FROM project WHERE id = ?", (project_id,))
+            c.executemany("DELETE FROM project WHERE id = ?", [(i,) for i in ids])
         self.db.audit("project.delete", str(project_id))
 
-    def save_data(self, project_id: int, data: dict) -> None:
-        """Sauvegarde automatique de l'état du projet."""
+    def save_data(self, project_id: int, data: dict) -> bool:
+        """Sauvegarde automatique de l'état du projet. Sa date (ordre des listes de projets) ne change que s'il a
+        vraiment été modifié : l'ouvrir ou y naviguer (`NAV_KEYS`) ne le fait pas remonter. Retourne « modifié »."""
+        text = json.dumps(data, ensure_ascii=False)
+        row = self.db.query_one("SELECT data_json FROM project WHERE id = ?", (project_id,))
+        old = json.loads(row["data_json"] or "{}") if row else {}
+        touched = _content(old) != _content(json.loads(text))
         with self.db.transaction() as c:
-            c.execute("UPDATE project SET data_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-                      " WHERE id = ?", (json.dumps(data, ensure_ascii=False), project_id))
+            c.execute("UPDATE project SET data_json = ?" +
+                      (", updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')" if touched else "") +
+                      " WHERE id = ?", (text, project_id))
+        return touched
 
     def load_data(self, project_id: int) -> dict:
         row = self.db.query_one("SELECT data_json FROM project WHERE id = ?", (project_id,))

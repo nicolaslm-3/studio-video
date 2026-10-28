@@ -1,14 +1,15 @@
 """Onglet Export : la vidéo du projet, son nom de fichier, son titre et sa description, adaptés à chaque réseau,
 puis publier, programmer, ou seulement l'enregistrer sur le PC.
 
-Chaque bouton « Exporter » du logiciel mène ici. La vidéo exportée est celle du projet (même montage, même
-format dans tous les onglets), dans la langue d'origine ou dans une langue préparée dans Traduction. Le texte
+Chaque bouton « Exporter » du logiciel mène ici. La vidéo exportée est celle du projet ouvert (même montage, même
+format dans tous les onglets) ; une langue préparée dans Traduction est une version du projet, rangée sous lui. Le texte
 commun (titre + description) est repris sur chaque réseau ; un réseau peut avoir son propre texte. TikTok,
 Facebook et Instagram n'ont pas de champ titre : le titre ouvre la description.
 
-Publier et programmer passent par les publications du Calendrier (`PublicationService`) : la vidéo est d'abord
-exportée (tâche critique), puis les publications sont créées pour les comptes choisis. « Sur mon PC seulement »
-exporte la vidéo dans le dossier choisi, sans rien publier."""
+Publier, programmer et envoyer en brouillon passent par les publications du Calendrier (`PublicationService`) : la
+vidéo est d'abord exportée (tâche critique), puis les publications sont créées pour les comptes choisis. Brouillon :
+la vidéo est envoyée sans être publiée (YouTube en privé, boîte de réception TikTok, brouillon de la Page Facebook ;
+Instagram n'en propose pas). « Sur mon PC seulement » exporte la vidéo dans le dossier choisi, sans rien publier."""
 from __future__ import annotations
 
 import json
@@ -18,21 +19,20 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDateTimeEdit, QFileDialog, QFrame, QHBoxLayout,
-                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QRadioButton, QScrollArea, QToolButton, QVBoxLayout, QWidget,
-                               QWidgetAction)
+from PySide6.QtCore import QDate, QDateTime, QEvent, QLocale, QPoint, QRectF, QSize, Qt, QTime, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCharFormat
+from PySide6.QtWidgets import (QButtonGroup, QCalendarWidget, QCheckBox, QComboBox, QFileDialog, QFrame, QStyle,
+                               QHBoxLayout, QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QRadioButton, QScrollArea, QStyledItemDelegate,
+                               QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from ..core import AppContext
 from ..domain.models import PublicationStatus
-from ..edit import translation as trn
 from ..edit.model import Timeline
 from ..publish import rules
 from . import theme
 from .montage_player import MontagePlayer
-from .simple_views import LANGS, _View, _active_job, _open_folder, _row
+from .simple_views import _View, _active_job, _open_folder, _row
 from .widgets import button, label, tool
 
 # réseaux de l'onglet Export : (clé plateforme, nom affiché)
@@ -50,6 +50,18 @@ def safe_name(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", name).strip(" .")[:120] or "video"
 
 
+def date_prefix(day=None) -> str:
+    """Début de chaque fichier exporté : la date du jour, année-mois-jour (« 2026-04-02 »)."""
+    from datetime import date
+    return (day or date.today()).isoformat()
+
+
+def file_name(name: str, day=None) -> str:
+    """Nom du fichier exporté : « 2026-04-02 Mon nom.mp4 » (une date déjà en tête n'est pas répétée)."""
+    base = re.sub(r"^\d{4}-\d{2}-\d{2}[ _-]*", "", safe_name(name)) or "video"
+    return f"{date_prefix(day)} {base}.mp4"
+
+
 # -- emojis ----------------------------------------------------------------------------------------------
 def _norm(s: str) -> str:
     """Pour la recherche : minuscules, sans accents (« coeur » trouve « cœur »)."""
@@ -65,6 +77,41 @@ def load_emojis() -> tuple[list[str], list[tuple[str, int, str, str]]]:
     except (OSError, ValueError):
         return [], []
     return d["groups"], [(e, g, n.replace(" ", " "), _norm(n + " " + k)) for e, g, n, k in d["emojis"]]
+
+
+_emoji_pix: dict[tuple[str, float], QPixmap] = {}
+
+
+class _EmojiDelegate(QStyledItemDelegate):
+    """Chaque emoji est dessiné une fois puis gardé en image : le défilement reste fluide."""
+
+    def paint(self, p, opt, index) -> None:
+        if opt.state & QStyle.State_MouseOver:
+            p.save()
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(theme.color("hover")))
+            p.drawRoundedRect(QRectF(opt.rect).adjusted(2, 2, -2, -2), 8, 8)
+            p.restore()
+        e = index.data(Qt.UserRole)
+        dpr = p.device().devicePixelRatioF() if p.device() else 1.0
+        pm = _emoji_pix.get((e, dpr))
+        if pm is None:
+            pm = QPixmap(int(30 * dpr), int(30 * dpr))
+            pm.fill(Qt.transparent)
+            q = QPainter(pm)
+            f = QFont(opt.font)
+            f.setPixelSize(int(22 * dpr))
+            q.setFont(f)
+            q.drawText(QRectF(0, 0, 30 * dpr, 30 * dpr), Qt.AlignCenter, e)
+            q.end()
+            pm.setDevicePixelRatio(dpr)
+            _emoji_pix[(e, dpr)] = pm
+        r = opt.rect
+        p.drawPixmap(r.x() + (r.width() - 30) // 2, r.y() + (r.height() - 30) // 2, pm)
+
+    def sizeHint(self, _opt, _index) -> QSize:
+        return QSize(38, 38)
 
 
 class EmojiPicker(QFrame):
@@ -103,12 +150,13 @@ class EmojiPicker(QFrame):
         self.list.setUniformItemSizes(True)
         self.list.setGridSize(QSize(38, 38))
         self.list.setWordWrap(False)
-        f = QFont(self.font())
-        f.setPointSize(17)
-        self.list.setFont(f)
+        self.list.setLayoutMode(QListView.Batched)
+        self.list.setBatchSize(200)
+        self.list.setItemDelegate(_EmojiDelegate(self.list))
+        self.list.setMouseTracking(True)
         self.items: list[tuple[QListWidgetItem, str]] = []
         for e, g, name, keys in items:
-            it = QListWidgetItem(e)
+            it = QListWidgetItem()
             it.setToolTip(name)
             it.setTextAlignment(Qt.AlignCenter)
             it.setData(Qt.UserRole, e)
@@ -165,15 +213,35 @@ def _emoji_menu() -> tuple[QMenu, EmojiPicker]:
 
 
 class EmojiButton(QToolButton):
-    """Bouton 😊 : ouvre tous les emojis (avec recherche) et insère celui choisi à l'endroit du curseur."""
+    """Icône emoji grise, en haut à droite à l'intérieur du champ : ouvre tous les emojis (avec recherche) et
+    insère celui choisi à l'endroit du curseur."""
 
-    def __init__(self, target, parent=None):
-        super().__init__(parent)
+    def __init__(self, target):
+        super().__init__(target)
         self.target = target
-        self.setText("😊")
+        self.setIcon(theme.icon("smile", theme.color("faint"), 16))
+        self.setIconSize(QSize(16, 16))
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Insérer un emoji")
-        self.setStyleSheet("QToolButton { font-size: 16px; border: none; padding: 2px 6px; }")
+        self.setStyleSheet("QToolButton { border: none; padding: 0; border-radius: 6px; background: transparent; }")
         self.clicked.connect(self.open)
+        if isinstance(target, QLineEdit):
+            target.setTextMargins(0, 0, 22, 0)
+        else:
+            target.setViewportMargins(0, 0, 22, 0)
+        target.installEventFilter(self)
+        self._place()
+
+    def _place(self) -> None:
+        t = self.target
+        y = (t.height() - self.height()) // 2 if isinstance(t, QLineEdit) else 4
+        self.move(t.width() - self.width() - 4, max(0, y))
+
+    def eventFilter(self, obj, e) -> bool:
+        if obj is self.target and e.type() == QEvent.Resize:
+            self._place()
+        return super().eventFilter(obj, e)
 
     def open(self) -> None:
         m, picker = _emoji_menu()
@@ -217,6 +285,117 @@ def account_icon(acc, size: int = 22) -> QIcon:
     p.end()
     pm.setDevicePixelRatio(2)
     return QIcon(pm)
+
+
+ADD_ACCOUNT = -1                                   # dernière ligne du menu des comptes : « Ajouter un compte »
+CONNECT_ACCOUNT = -2                               # « Connecter ce compte… » (réglages et connexion)
+
+
+class RoundCalendar(QCalendarWidget):
+    """Calendrier dessiné jour par jour : le jour choisi dans un rond plein, les jours passés ou hors du mois
+    grisés."""
+
+    def paintCell(self, painter, rect, date) -> None:     # noqa: N802
+        from PySide6.QtGui import QPainter
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(rect, QColor(theme.color("raised")))
+        off = (date < self.minimumDate() or date > self.maximumDate() or date.month() != self.monthShown()
+               or date.year() != self.yearShown())
+        if date == self.selectedDate():
+            d = min(rect.width(), rect.height()) - 6
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(theme.color("accent")))
+            painter.drawEllipse(QRectF(rect.center().x() - d / 2 + 1, rect.center().y() - d / 2 + 1, d, d))
+            painter.setPen(QColor(theme.color("accent_text")))
+            f = painter.font()
+            f.setBold(True)
+            painter.setFont(f)
+        else:
+            painter.setPen(QColor(theme.color("faint" if off else "text")))
+        painter.drawText(rect, Qt.AlignCenter, str(date.day()))
+        painter.restore()
+
+
+class WhenPicker(QWidget):
+    """Date et heure de publication : un calendrier épuré (dans un menu), l'heure et les minutes (par 5)."""
+    dateTimeChanged = Signal(QDateTime)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        self.date_btn = QToolButton()
+        self.date_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.date_btn.setPopupMode(QToolButton.InstantPopup)
+        self.date_btn.setIcon(theme.icon("calendar-days", theme.color("muted"), 16))
+        self.date_btn.setProperty("role", "field")
+        self.date_btn.setCursor(Qt.PointingHandCursor)
+        self.date_btn.setStyleSheet("QToolButton::menu-indicator { image: none; }")
+        self.cal = RoundCalendar()
+        self.cal.setProperty("role", "cal")
+        self.cal.setLocale(QLocale(QLocale.French))
+        self.cal.setGridVisible(False)
+        self.cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+        self.cal.setHorizontalHeaderFormat(QCalendarWidget.SingleLetterDayNames)
+        self.cal.setFirstDayOfWeek(Qt.Monday)
+        self.cal.setMinimumDate(QDate.currentDate())
+        self.cal.setFixedSize(300, 250)
+        self.cal.clicked.connect(self._date_picked)
+        m = QMenu(self.date_btn)
+        m.aboutToShow.connect(self._style_cal)             # couleurs du thème affiché
+        act = QWidgetAction(m)
+        act.setDefaultWidget(self.cal)
+        m.addAction(act)
+        self.date_btn.setMenu(m)
+        self._style_cal()
+        h.addWidget(self.date_btn)
+        self.hour, self.minute = QComboBox(), QComboBox()
+        for k in range(24):
+            self.hour.addItem(f"{k:02d} h", k)
+        for k in range(0, 60, 5):
+            self.minute.addItem(f"{k:02d}", k)
+        self.hour.setToolTip("Heure")
+        self.minute.setToolTip("Minutes")
+        for c in (self.hour, self.minute):
+            c.setMaxVisibleItems(12)
+            c.currentIndexChanged.connect(lambda _i: self.dateTimeChanged.emit(self.dateTime()))
+            h.addWidget(c)
+        h.addStretch(1)
+        self.setDateTime(QDateTime.currentDateTime().addSecs(3600))
+
+    def _style_cal(self) -> None:
+        plain = QTextCharFormat()
+        plain.setForeground(QColor(theme.color("text")))
+        for d in (Qt.Saturday, Qt.Sunday):                 # week-end sans rouge : calendrier sobre
+            self.cal.setWeekdayTextFormat(d, plain)
+        head = QTextCharFormat()
+        head.setForeground(QColor(theme.color("faint")))
+        self.cal.setHeaderTextFormat(head)
+
+    def _date_picked(self, d: QDate) -> None:
+        self.date_btn.menu().close()
+        self._show_date(d)
+        self.dateTimeChanged.emit(self.dateTime())
+
+    def _show_date(self, d: QDate) -> None:
+        self.cal.setSelectedDate(d)
+        self.date_btn.setText(QLocale(QLocale.French).toString(d, "ddd d MMM yyyy"))
+
+    def dateTime(self) -> QDateTime:                     # noqa: N802 — comme QDateTimeEdit
+        return QDateTime(self.cal.selectedDate(), QTime(self.hour.currentData() or 0, self.minute.currentData() or 0))
+
+    def setDateTime(self, dt: QDateTime) -> None:        # noqa: N802
+        m = dt.time().hour() * 60 + dt.time().minute()
+        k = -(-m // 5)                                    # arrondi aux 5 minutes suivantes
+        d = dt.date().addDays(1) if k >= 288 else dt.date()
+        k %= 288
+        self.blockSignals(True)
+        self._show_date(d)
+        self.hour.setCurrentIndex(k // 12)
+        self.minute.setCurrentIndex(k % 12)
+        self.blockSignals(False)
 
 
 class PhonePreview(QWidget):
@@ -326,11 +505,14 @@ class NetworkCard(QFrame):
         v.addWidget(self.preview, 0, Qt.AlignHCenter)
         self.account = QComboBox()
         self.account.setIconSize(QSize(22, 22))
-        self.account.currentIndexChanged.connect(self.view._changed)
+        self.account.currentIndexChanged.connect(self._account_changed)
         v.addWidget(self.account)
-        self.no_account = label(f"Aucun compte {rules.RULES[platform].label} : ajoute-le dans Concepts → Comptes.",
-                                "muted", wrap=True, hint=False)
-        v.addWidget(self.no_account)
+        self.no_account = button("Ajouter un compte", "ghost", icon="user-plus",
+                                 tooltip=f"Ajouter un compte {rules.RULES[platform].label}",
+                                 on_click=lambda: self.view.add_account(self.platform))
+        self.no_account.setStyleSheet("font-size: 12px; padding: 3px 8px;")
+        v.addWidget(self.no_account, 0, Qt.AlignLeft)
+        self._last_account: int | None = None
         r = rules.RULES[platform]
         self.title = QLineEdit()
         self.title.setPlaceholderText("Titre (100 caractères au plus)")
@@ -340,19 +522,18 @@ class NetworkCard(QFrame):
         tr_.setContentsMargins(0, 0, 0, 0)
         tr_.setSpacing(2)
         tr_.addWidget(self.title, 1)
-        tr_.addWidget(EmojiButton(self.title))
+        EmojiButton(self.title)
         if r.title_max is not None:
             v.addWidget(label("Titre", "muted", hint=False))
             v.addWidget(self.title_row)
         else:
             self.title_row.hide()
-        v.addWidget(label("Description" + ("" if r.title_max else " (titre au début)"), "muted", hint=False))
+        v.addWidget(label("Description", "muted", hint=False))
         self.text = QPlainTextEdit()
         self.text.setFixedHeight(104)
         self.text.textChanged.connect(self._edited)
-        tr2 = _row(self.text, spacing=2)
-        tr2.addWidget(EmojiButton(self.text), 0, Qt.AlignTop)
-        v.addLayout(tr2)
+        EmojiButton(self.text)
+        v.addWidget(self.text)
         self.count = label("", "faint", wrap=True, hint=False)
         v.addWidget(self.count)
         self.reset = button("Reprendre le texte commun", "ghost", on_click=self._reset)
@@ -370,6 +551,20 @@ class NetworkCard(QFrame):
         self.view._changed()
         self.view.refresh_texts()
 
+    def _account_changed(self) -> None:
+        pick = self.account.currentData()
+        if pick in (ADD_ACCOUNT, CONNECT_ACCOUNT):         # actions du menu : le compte d'avant reste choisi
+            self.account.blockSignals(True)
+            self.account.setCurrentIndex(max(0, self.account.findData(self._last_account)))
+            self.account.blockSignals(False)
+            if pick == ADD_ACCOUNT:
+                self.view.add_account(self.platform)
+            elif self._last_account:
+                self.view.add_account(self.platform, self._last_account)
+            return
+        self._last_account = self.account.currentData()
+        self.view._changed()
+
     def fill_accounts(self, accounts, chosen: int | None) -> None:
         self._loading = True
         self.account.blockSignals(True)
@@ -377,8 +572,14 @@ class NetworkCard(QFrame):
         for a in accounts:
             st = "" if a.connection_status == "connected" else "  · non connecté (publication manuelle)"
             self.account.addItem(account_icon(a), a.name + st, a.id)
+        if accounts:
+            self.account.insertSeparator(self.account.count())
+            self.account.addItem(theme.icon("plug-zap", theme.color("muted"), 18), "Connecter ce compte…",
+                                 CONNECT_ACCOUNT)
+            self.account.addItem(theme.icon("user-plus", theme.color("muted"), 18), "Ajouter un compte", ADD_ACCOUNT)
         if chosen is not None:
             self.account.setCurrentIndex(max(0, self.account.findData(chosen)))
+        self._last_account = self.account.currentData()
         self.account.blockSignals(False)
         has = bool(accounts)
         self.account.setVisible(has)
@@ -402,17 +603,23 @@ class NetworkCard(QFrame):
         self.reset.setVisible(self.custom)
 
     def value(self) -> dict:
-        return {"on": self.on.isChecked(), "account": self.account.currentData(), "custom": self.custom,
+        acc = self.account.currentData()
+        return {"on": self.on.isChecked(), "account": acc if acc not in (ADD_ACCOUNT, CONNECT_ACCOUNT) else None,
+                "custom": self.custom,
                 "title": self.title.text().strip() if rules.RULES[self.platform].title_max else "",
                 "text": self.text.toPlainText().strip()}
 
 
-ACTIONS = ("publish", "schedule", "local")
+ACTIONS = ("publish", "schedule", "draft", "local")
+LOCAL = ACTIONS.index("local")
+DRAFT_HELP = ("La vidéo est envoyée sans être publiée : en privé sur YouTube (à publier depuis YouTube Studio), dans "
+              "la boîte de réception TikTok, en brouillon sur la Page Facebook. Instagram ne propose pas de brouillon "
+              "par son API : la vidéo y sera à publier à la main.")
 
 
 class ExportView(_View):
-    """Onglet Export : en haut, la vidéo (aperçu, nom du fichier, dossier, titre, description) et l'action ;
-    en bas, une colonne par réseau."""
+    """Onglet Export : en haut, un cadre avec la vidéo (aperçu, nom du fichier, dossier, titre, description) et ce
+    qu'on en fait ; en bas, une colonne par réseau."""
 
     def __init__(self, app: AppContext, host, export_dir: Path, parent=None):
         super().__init__(app, host, parent)
@@ -434,77 +641,73 @@ class ExportView(_View):
         sc.setFrameShape(QFrame.NoFrame)
         sc.setWidget(content)
         outer.addWidget(sc)
-        top = QHBoxLayout()
-        top.setSpacing(14)
-        # -- la vidéo : aperçu (clic : lecture / pause), nom du fichier, dossier, titre, description
-        info = QFrame()
-        info.setProperty("role", "card")
-        il = QHBoxLayout(info)
-        il.setContentsMargins(14, 14, 18, 14)
-        il.setSpacing(16)
+        # -- un seul cadre : la vidéo (aperçu, nom du fichier, dossier, titre, description) | ce qu'on en fait
+        top = QFrame()
+        top.setProperty("role", "card")
+        tl_ = QHBoxLayout(top)
+        tl_.setContentsMargins(14, 14, 18, 14)
+        tl_.setSpacing(16)
         self.player = MontagePlayer()
         self.player.note.setMaximumHeight(0)
         self.player.set_compact()
+        self.player.track_resolver = lambda aid: self.host._tracks_for(aid, self.player.tl)   # voix doublée
         self.player.setFixedSize(210, 330)
-        il.addWidget(self.player, 0, Qt.AlignTop)
+        tl_.addWidget(self.player, 0, Qt.AlignTop)
         fl = QVBoxLayout()
         fl.setSpacing(6)
         fl.addWidget(label("Nom du fichier", "muted", hint=False))
         self.file_name = QLineEdit()
         self.file_name.setPlaceholderText("Nom de la vidéo exportée")
         self.file_name.textChanged.connect(self._changed)
-        fl.addLayout(_row(self.file_name, label(".mp4", "muted", hint=False), spacing=4))
+        self.date_lbl = label(date_prefix(), "muted", hint=False)        # le fichier commence par la date du jour
+        self.date_lbl.setToolTip("Le nom du fichier commence par la date du jour (année-mois-jour)")
+        fl.addLayout(_row(self.date_lbl, self.file_name, label(".mp4", "muted", hint=False), spacing=4))
         self.folder = str(export_dir)
         self.folder_lbl = label("", "faint", hint=False)
         self.folder_lbl.setMinimumWidth(80)
         self.folder_btn = tool("folder", "Choisir le dossier où enregistrer la vidéo", self._pick_folder)
         fl.addLayout(_row(self.folder_btn, self.folder_lbl, "stretch", spacing=4))
-        self.version_row = QWidget()
-        self.version = QComboBox()
-        self.version.setToolTip("Langue de la vidéo : d'origine, ou une langue préparée dans Traduction")
-        self.version.currentIndexChanged.connect(self._version_changed)
-        vr = QHBoxLayout(self.version_row)
-        vr.setContentsMargins(0, 0, 0, 0)
-        vr.addWidget(label("Langue", "muted", hint=False))
-        vr.addWidget(self.version, 1)
-        fl.addWidget(self.version_row)
         fl.addWidget(label("Titre sur les réseaux", "muted", hint=False))
         self.title = QLineEdit()
         self.title.setPlaceholderText("Titre de la vidéo")
         self.title.textChanged.connect(self._common_changed)
-        fl.addLayout(_row(self.title, EmojiButton(self.title), spacing=2))
+        EmojiButton(self.title)
+        fl.addWidget(self.title)
         fl.addWidget(label("Description", "muted", hint=False))
         self.desc = QPlainTextEdit()
         self.desc.setPlaceholderText("Description, hashtags…")
-        self.desc.setMinimumHeight(90)
+        self.desc.setFixedHeight(66)
         self.desc.textChanged.connect(self._common_changed)
-        dr = _row(self.desc, spacing=2)
-        dr.addWidget(EmojiButton(self.desc), 0, Qt.AlignTop)
-        fl.addLayout(dr, 1)
-        il.addLayout(fl, 1)
-        top.addWidget(info, 3)
-        # -- l'action : publier, programmer, ou seulement sur le PC
-        act = QFrame()
-        act.setProperty("role", "card")
-        al = QVBoxLayout(act)
-        al.setContentsMargins(18, 16, 18, 16)
+        EmojiButton(self.desc)
+        fl.addWidget(self.desc)
+        fl.addStretch(1)
+        tl_.addLayout(fl, 3)
+        sep = QFrame()
+        sep.setProperty("role", "vsep")
+        sep.setFixedWidth(1)
+        tl_.addSpacing(4)
+        tl_.addWidget(sep)
+        tl_.addSpacing(4)
+        # -- ce qu'on en fait : publier, programmer, brouillon, ou seulement sur le PC
+        al = QVBoxLayout()
         al.setSpacing(10)
         al.addWidget(label("Que faire de la vidéo ?", "h2"))
         self.actions = QButtonGroup(self)
         self.act_publish = QRadioButton("Publier maintenant")
         self.act_schedule = QRadioButton("Programmer le")
+        self.act_draft = QRadioButton("Brouillon sur les réseaux")
+        self.act_draft.setToolTip(DRAFT_HELP)
         self.act_local = QRadioButton("Sur mon PC seulement")
         self.act_local.setToolTip("Enregistre la vidéo dans le dossier choisi, sans rien publier")
-        for i, b in enumerate((self.act_publish, self.act_schedule, self.act_local)):
+        for i, b in enumerate((self.act_publish, self.act_schedule, self.act_draft, self.act_local)):
             self.actions.addButton(b, i)
         self.actions.idToggled.connect(lambda _i, on: on and self._changed())
-        self.when = QDateTimeEdit()
-        self.when.setCalendarPopup(True)
-        self.when.setDisplayFormat("dd/MM/yyyy HH:mm")
-        self.when.setDateTime(QDateTime.currentDateTime().addSecs(3600))
+        self.when = WhenPicker()
         self.when.dateTimeChanged.connect(self._changed)
         al.addWidget(self.act_publish)
-        al.addLayout(_row(self.act_schedule, self.when, "stretch"))
+        al.addWidget(self.act_schedule)
+        al.addWidget(self.when)
+        al.addWidget(self.act_draft)
         al.addWidget(self.act_local)
         al.addStretch(1)
         self.progress = QProgressBar()
@@ -519,9 +722,12 @@ class ExportView(_View):
                                on_click=lambda: _open_folder(Path(self._last_path()).parent))
         self.open_dir.hide()
         al.addWidget(self.open_dir, 0, Qt.AlignLeft)
-        act.setMinimumWidth(300)
-        top.addWidget(act, 2)
-        root.addLayout(top)
+        aw = QFrame()
+        aw.setProperty("role", "dim")
+        aw.setLayout(al)
+        aw.setMinimumWidth(290)
+        tl_.addWidget(aw, 2)
+        root.addWidget(top)
         # -- une colonne par réseau
         nets = QHBoxLayout()
         nets.setSpacing(12)
@@ -535,11 +741,11 @@ class ExportView(_View):
 
     # -- état enregistré dans le projet ---------------------------------------------------
     def _state(self) -> dict:
-        st = {"title": "", "description": "", "version": "", "action": "local", "when": "", "nets": {},
-              "file_name": "", "folder": ""}
+        st = {"title": "", "description": "", "action": "local", "when": "", "nets": {}, "file_name": "",
+              "folder": ""}
         if self.pid:
             st.update(self.app.projects.load_data(self.pid).get("export_ui") or {})
-        if st["action"] not in ACTIONS:              # ancien « brouillon » : rien n'est publié
+        if st["action"] not in ACTIONS:
             st["action"] = "local"
         return st
 
@@ -555,15 +761,13 @@ class ExportView(_View):
 
     def _default_name(self) -> str:
         p = self.app.projects.get(self.pid)
-        lang = self.version.currentData() or ""
-        return safe_name((p["name"] if p else "video") + (f" {lang.upper()}" if lang else ""))
+        return safe_name(p["name"] if p else "video")
 
     def _changed(self, *_a) -> None:
         if self._loading or not self.pid:
             return
         a = self.actions.checkedId()
         st = {"title": self.title.text(), "description": self.desc.toPlainText(),
-              "version": self.version.currentData() or "",
               "action": ACTIONS[a] if 0 <= a < len(ACTIONS) else "local",
               "when": self.when.dateTime().toString("yyyy-MM-ddTHH:mm"),
               "file_name": self.file_name.text().strip(), "folder": self.folder,
@@ -602,6 +806,21 @@ class ExportView(_View):
         fm = self.folder_lbl.fontMetrics()
         self.folder_lbl.setText(fm.elidedText(self.folder, Qt.ElideMiddle, 320))
 
+    def add_account(self, platform: str, account_id: int | None = None) -> None:
+        """« Ajouter un compte » (ou « Connecter ce compte… ») : le compte, les réglages de l'application du réseau
+        et la connexion, ici même (`account_setup.py`)."""
+        from .account_setup import AccountSetupDialog
+        dlg = AccountSetupDialog(self.app, platform, account_id, self)
+        if not dlg.exec():
+            return
+        data = self.app.projects.load_data(self.pid)
+        st = data.setdefault("export_ui", {})
+        st.setdefault("nets", {}).setdefault(platform, {}).update({"account": dlg.account_id, "on": True})
+        self.app.projects.save_data(self.pid, data)
+        self.refresh()
+        if dlg.connect_job:
+            self.status.setText("Autorisez l'accès dans la page de connexion ouverte dans votre navigateur…")
+
     # -- affichage ----------------------------------------------------------------------
     def refresh(self) -> None:
         if not self.pid:
@@ -609,17 +828,6 @@ class ExportView(_View):
         self._loading = True
         try:
             st = self._state()
-            data = self.app.projects.load_data(self.pid)
-            ready = (data.get("translations") or {}).get("ready") or []
-            self.version.blockSignals(True)
-            self.version.clear()
-            self.version.addItem("Langue d'origine", "")
-            names = dict(LANGS)
-            for lg in ready:
-                self.version.addItem(names.get(lg, lg.upper()), lg)
-            self.version.setCurrentIndex(max(0, self.version.findData(st["version"])))
-            self.version.blockSignals(False)
-            self.version_row.setVisible(bool(ready))        # seulement s'il y a une langue préparée
             self.folder = st["folder"] or str(self.export_dir)
             self._show_folder()
             name = st["file_name"] or self._default_name()
@@ -638,13 +846,14 @@ class ExportView(_View):
                 acc.sort(key=lambda a: (a.id not in linked, a.name.lower()))
                 saved = st["nets"].get(k) or {}
                 t.fill_accounts(acc, saved.get("account"))
-                t.on.setChecked(bool(acc) and saved.get("on", bool(acc)))
+                # un réseau qui n'avait pas de compte est coché dès qu'il en a un
+                t.on.setChecked(bool(acc) and (saved.get("on", True) if saved.get("account") else True))
                 t.on.setEnabled(bool(acc))
                 t.custom = bool(saved.get("custom"))
                 if t.custom:
                     t.set_texts(saved.get("title", ""), saved.get("text", ""))
-            {"publish": self.act_publish, "schedule": self.act_schedule}.get(st["action"], self.act_local) \
-                .setChecked(True)
+            {"publish": self.act_publish, "schedule": self.act_schedule, "draft": self.act_draft}.get(
+                st["action"], self.act_local).setChecked(True)
             if st["when"]:
                 self.when.setDateTime(QDateTime.fromString(st["when"], "yyyy-MM-ddTHH:mm"))
         finally:
@@ -654,30 +863,12 @@ class ExportView(_View):
         self._update_status()
         self._update_go()
 
-    def _version_changed(self) -> None:
-        self._changed()
-        self._preview()
-
-    def version_timeline(self, lang: str | None = None) -> Timeline | None:
-        """Le montage du projet, ou sa version traduite (préparée dans Traduction)."""
-        lang = self.version.currentData() if lang is None else lang
-        tl = self.host.tl
-        if not lang:
-            return tl
-        v = self.video()
-        tr = self.app.transcripts.translation(v["id"], lang) if v else None
-        if tr is None:
-            return None
-        t = (self.app.projects.load_data(self.pid).get("translations") or {})
-        return trn.translated_timeline(tl, v["id"], float(v["duration_s"] or 0), lang, tr, t.get("preset") or "white",
-                                       top_text=(t.get("top_texts") or {}).get(lang, ""), masks=t.get("masks"),
-                                       dubbed=bool(t.get("dubbed")), keep_music=bool(t.get("keep_music", True)),
-                                       text_style=self.app.montage.text_style_for(self.pid))
+    def version_timeline(self) -> Timeline:
+        """Le montage du projet ouvert (une version traduite a le sien, avec ses sous-titres et sa voix)."""
+        return self.host.tl
 
     def _preview(self) -> None:
         tl = self.version_timeline()
-        if tl is None:
-            return
         self.player.set_timeline(tl, self.host.assets)
         key = json.dumps(tl.to_dict(), sort_keys=True)
         if key != self._frame_key and tl.segments:
@@ -687,7 +878,7 @@ class ExportView(_View):
     def _ask_frame(self) -> None:
         """Image de la vidéo (rendu réel : cadrage, textes, sous-titres) pour les aperçus des réseaux."""
         tl = self.version_timeline()
-        if tl is None or not tl.segments or not self.isVisible():
+        if not tl.segments or not self.isVisible():
             return
         if self._frame_job and _active_job(self.app, "preview_frame", "project_id", self.pid):
             self.app.jobs.cancel(self._frame_job)
@@ -716,16 +907,16 @@ class ExportView(_View):
         running = _active_job(self.app, "export_timeline", "project_id", self.pid)
         pending = self.app.projects.load_data(self.pid).get("export_pending")
         busy = bool(running and pending)
-        nets = [t.name for t in self.nets.values() if t.on.isChecked() and t.account.count()]
+        nets = [t.name for t in self.nets.values() if t.on.isChecked() and t.value()["account"]]
         a = self.actions.checkedId()
-        if a == 2:
+        if a == LOCAL:
             self.go.setText("Exporter sur mon PC")
         else:
-            verb = "Exporter et publier" if a == 0 else "Exporter et programmer"
+            verb = {0: "Exporter et publier", 1: "Exporter et programmer", 2: "Exporter en brouillon"}.get(a, "Exporter")
             self.go.setText(verb + (f"  ·  {', '.join(nets)}" if nets else ""))
         tl = self.version_timeline()
-        self.go.setEnabled(not busy and bool(tl is not None and tl.segments) and (a == 2 or bool(nets)))
-        self.go.setToolTip("" if a == 2 or nets else "Coche au moins un réseau, avec un compte")
+        self.go.setEnabled(not busy and bool(tl.segments) and (a == LOCAL or bool(nets)))
+        self.go.setToolTip("" if a == LOCAL or nets else "Coche au moins un réseau, avec un compte")
         self.when.setEnabled(a == 1)
         self.progress.setVisible(busy)
         if busy:
@@ -738,8 +929,8 @@ class ExportView(_View):
         data = self.app.projects.load_data(self.pid)
         last = data.get("export_last")
         if data.get("export_pending") and _active_job(self.app, "export_timeline", "project_id", self.pid):
-            self.status.setText("Export de la vidéo en cours… La suite (publication ou programmation) se fera "
-                                "ensuite d'elle-même.")
+            self.status.setText("Export de la vidéo en cours… La suite (publication, programmation ou brouillon) se "
+                                "fera ensuite d'elle-même.")
         elif last:
             self.status.setText(last.get("summary", ""))
         else:
@@ -751,7 +942,7 @@ class ExportView(_View):
     def _destination(self, st: dict) -> Path | None:
         """Fichier de sortie : nom et dossier choisis ; un fichier du même nom n'est remplacé qu'avec accord."""
         folder = Path(st["folder"] or self.export_dir)
-        dest = folder / f"{safe_name(st['file_name'] or self._default_name())}.mp4"
+        dest = folder / file_name(st['file_name'] or self._default_name())
         if dest.exists() and QMessageBox.question(
                 self, "Exporter", f"« {dest.name} » existe déjà dans ce dossier.\n\nLe remplacer ?") != QMessageBox.Yes:
             return None
@@ -759,7 +950,7 @@ class ExportView(_View):
 
     def _go(self) -> None:
         tl = self.version_timeline()
-        if not self.pid or tl is None or not tl.segments:
+        if not self.pid or not tl.segments:
             return
         self.host.flush()
         st = self._state()
@@ -780,13 +971,14 @@ class ExportView(_View):
         dest = self._destination(st)
         if dest is None:
             return
-        lang = st["version"]
+        data = self.app.projects.load_data(self.pid)
+        lang = data.get("version_lang") or ""
         jid = self.app.jobs.submit("export_timeline", f"Export · {dest.name}",
                                    {"timeline": tl.to_dict(), "dest": str(dest), "project_id": self.pid},
                                    critical=True)
         data = self.app.projects.load_data(self.pid)
         data["export_pending"] = {"job": jid, "action": a, "when": st["when"], "title": st["title"],
-                                  "description": st["description"], "language": lang or "",
+                                  "description": st["description"], "language": lang,
                                   "nets": {k: {"account": v["account"], "title": v.get("title", ""),
                                                "text": v.get("text", "")} for k, v in nets.items()}}
         self.app.projects.save_data(self.pid, data)
@@ -795,7 +987,8 @@ class ExportView(_View):
         self._update_go()
 
     def finish(self, pid: int, job) -> None:
-        """Export terminé : publications créées puis publiées ou programmées ; sur le PC seulement : rien d'autre."""
+        """Export terminé : publications créées puis publiées, programmées ou envoyées en brouillon ; sur le PC
+        seulement : rien d'autre."""
         data = self.app.projects.load_data(pid)
         pend = data.get("export_pending")
         if not pend or pend.get("job") != job.id:
@@ -808,7 +1001,8 @@ class ExportView(_View):
             return
         path = (job.result or {}).get("path", "")
         name = Path(path).name
-        if pend["action"] not in ("publish", "schedule"):
+        action = pend["action"]
+        if action not in ("publish", "schedule", "draft"):
             data["export_last"] = {"summary": f"✓ « {name} » enregistrée dans « {Path(path).parent} ».",
                                    "path": path}
             self.app.projects.save_data(pid, data)
@@ -816,7 +1010,7 @@ class ExportView(_View):
         variant = (job.result or {}).get("variant_id")
         p = self.app.projects.get(pid)
         ps = self.app.publications
-        when = pend["when"] if pend["action"] == "schedule" else None
+        when = pend["when"] if action == "schedule" else None
         mid = ps.create_master(p["concept_id"], pend["title"], pend["description"], "",
                                language=pend.get("language") or "fr", variant_id=variant, planned_at=when)
         accounts = {v["account"]: k for k, v in pend["nets"].items()}
@@ -828,17 +1022,25 @@ class ExportView(_View):
                 v = pend["nets"].get(k) or {}
                 ps.override(pub.id, title=v.get("title", ""), description=v.get("text", ""))
                 label_ = rules.RULES[pub.account.platform.value].label
-                if pend["action"] == "schedule":
+                if action == "schedule":
                     ps.schedule(pub.id, when)
+                elif action == "draft" and pub.account.platform.value == "instagram":
+                    ps.mark_manual(pub.id, "Instagram ne permet pas d'envoyer un brouillon : publication à faire à "
+                                           "la main.")
+                    notes.append(f"{label_} : pas de brouillon possible, à publier à la main depuis le Calendrier")
                 elif pub.account.connection_status == "connected":
                     ps.set_status(pub.id, PublicationStatus.UPLOADING)
-                    self.app.jobs.submit("publish_upload", f"{label_} · {pend['title'] or 'sans titre'}",
-                                         {"publication_id": pub.id, "now": True}, critical=True)
+                    self.app.jobs.submit("publish_upload", f"{label_} · {pend['title'] or 'sans titre'}"
+                                         + (" · brouillon" if action == "draft" else ""),
+                                         {"publication_id": pub.id, "now": True, "draft": action == "draft"},
+                                         critical=True)
                 else:
                     ps.mark_manual(pub.id, "Compte non connecté : publication à faire à la main.")
                     notes.append(f"{label_} : compte non connecté, à publier à la main depuis le Calendrier")
-        if pend["action"] == "publish":
+        if action == "publish":
             summary = f"✓ « {name} » exportée, mise en ligne lancée (suivi dans les tâches)."
+        elif action == "draft":
+            summary = f"✓ « {name} » exportée, envoi en brouillon lancé (suivi dans les tâches)."
         else:
             d = datetime.strptime(when, "%Y-%m-%dT%H:%M")
             summary = f"✓ « {name} » exportée et programmée le {d:%d/%m/%Y à %H:%M} (Calendrier)."

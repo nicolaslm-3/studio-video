@@ -246,7 +246,8 @@ def instagram_stats(media_ids: list[str], token: str, ep: Endpoints | None = Non
 
 # -- Facebook ------------------------------------------------------------------------------------
 def facebook_reel(path: Path, description: str, page_id: str, token: str, progress=lambda f, m: None,
-                  ep: Endpoints | None = None) -> dict:
+                  ep: Endpoints | None = None, draft: bool = False) -> dict:
+    """Reel de la Page ; draft : laissé en brouillon (à publier depuis Meta Business Suite)."""
     ep = ep or Endpoints.from_env()
     path = Path(path)
     if not path.exists():
@@ -257,10 +258,10 @@ def facebook_reel(path: Path, description: str, page_id: str, token: str, progre
         raise MetaError("Facebook n'a pas fourni d'adresse d'envoi.")
     progress(0.1, "Envoi vers Facebook")
     _rupload(url, path, path.stat().st_size, token)
-    progress(0.8, "Publication sur la Page")
+    progress(0.8, "Brouillon sur la Page" if draft else "Publication sur la Page")
     fin = _call("POST", ep.graph + f"/{page_id}/video_reels", {
-        "upload_phase": "finish", "video_id": vid, "video_state": "PUBLISHED", "description": description[:5000],
-        "access_token": token})
+        "upload_phase": "finish", "video_id": vid, "video_state": "DRAFT" if draft else "PUBLISHED",
+        "description": description[:5000], "access_token": token})
     if not fin.get("success", True):
         raise MetaError("Facebook n'a pas confirmé la publication.")
     return {"id": vid, "url": f"https://www.facebook.com/reel/{vid}"}

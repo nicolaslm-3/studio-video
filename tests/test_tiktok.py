@@ -64,10 +64,21 @@ class T(BaseHTTPRequestHandler):
             return self._json({"data": {"publish_id": "PUB1",
                                         "upload_url": f"http://127.0.0.1:{self.server.server_port}/up?x=1"},
                                "error": {"code": "ok"}})
+        if u.path == "/v2/post/publish/inbox/video/init/":          # brouillon : boîte de réception
+            body = json.loads(raw)
+            assert "post_info" not in body
+            T.st["inbox"] = body
+            T.st["data"] = b""
+            T.st["polls"] = 0
+            return self._json({"data": {"publish_id": "INBOX1",
+                                        "upload_url": f"http://127.0.0.1:{self.server.server_port}/up?x=2"},
+                               "error": {"code": "ok"}})
         if u.path == "/v2/post/publish/status/fetch/":
             T.st["polls"] += 1
             if T.st["polls"] < 2:
                 return self._json({"data": {"status": "PROCESSING_UPLOAD"}, "error": {"code": "ok"}})
+            if json.loads(raw)["publish_id"] == "INBOX1":
+                return self._json({"data": {"status": "SEND_TO_USER_INBOX"}, "error": {"code": "ok"}})
             ids = [] if T.st["init"]["post_info"]["privacy_level"] == "SELF_ONLY" else [7380000000000000001]
             return self._json({"data": {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": ids},
                                "error": {"code": "ok"}})
@@ -126,6 +137,10 @@ def test_connect_and_publish(server, tmp_path):
     T.st["options"] = ["SELF_ONLY"]                       # application non auditée
     res = tiktok.upload(video, "x", "PUBLIC_TO_EVERYONE", "A2", poll_s=0.01)
     assert res["privacy"] == "SELF_ONLY" and res["post_ids"] == []
+    res = tiktok.upload_draft(video, "A2", poll_s=0.01)                  # brouillon : boîte de réception
+    assert res == {"publish_id": "INBOX1", "status": "SEND_TO_USER_INBOX"} and T.st["data"] == video.read_bytes()
+    assert T.st["inbox"]["source_info"]["video_size"] == 300_000
+    assert "video.upload" in tiktok.SCOPES
     assert tiktok.video_stats("A2", ["1", "2"])["2"] == {"views": 900, "likes": 50, "comments": 4, "shares": 2}
 
 
@@ -139,6 +154,7 @@ def test_jobs(server, tmp_path, monkeypatch):
     import webbrowser
     monkeypatch.setattr(webbrowser, "open", _browser)
     monkeypatch.setattr(tiktok, "upload", lambda *a, **k: _orig_upload(*a, **dict(k, poll_s=0.01)))
+    monkeypatch.setattr(tiktok, "upload_draft", lambda *a, **k: _orig_draft(*a, **dict(k, poll_s=0.01)))
     app = build_context(tmp_path / "d")
 
     def wait(jid):
@@ -180,11 +196,18 @@ def test_jobs(server, tmp_path, monkeypatch):
         j = wait(app.jobs.submit("publish_upload", "TikTok", {"publication_id": p2, "now": True}))
         assert j.status == "succeeded" and app.publications.get(p2)["status"] == "manual_action"
         assert "auditée" in app.publications.get(p2)["last_error"]
+        m3 = app.publications.create_master(c.id, "Brouillon", "", "", variant_id=1)
+        p3 = app.publications.set_destinations(m3, [acc.id])[0]
+        j = wait(app.jobs.submit("publish_upload", "TikTok", {"publication_id": p3, "now": True, "draft": True}))
+        assert j.status == "succeeded" and j.result["state"] == "envoyée en brouillon", j.error
+        r = app.publications.get(p3)                            # jamais « publiée » : à finir dans l'application
+        assert r["status"] == "manual_action" and "boîte de réception" in r["last_error"]
     finally:
         app.close()
 
 
 _orig_upload = tiktok.upload
+_orig_draft = tiktok.upload_draft
 
 
 def test_tiktok_stats_job(server, tmp_path, monkeypatch):

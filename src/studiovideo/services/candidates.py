@@ -28,6 +28,16 @@ class CandidateService:
                      json.dumps(req.__dict__, ensure_ascii=False))).lastrowid)
         return ids
 
+    def add(self, project_id: int, asset_id: int, k: Candidate) -> int:
+        """Extrait ajouté à la main (bouton « + » de Clipping), à côté des propositions."""
+        with self.db.transaction() as c:
+            return c.execute(
+                "INSERT INTO clip_candidate(project_id, source_asset_id, start_s, end_s, subject, category, score,"
+                " rationale, hook, context_flags, speakers, engine, request_json, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+                (project_id, asset_id, k.start, k.end, k.subject, k.category, k.score, k.rationale, k.hook,
+                 json.dumps(k.context_flags, ensure_ascii=False), ", ".join(k.speakers), "manual", "{}")).lastrowid
+
     def list(self, project_id: int, asset_id: int | None = None, states: tuple[str, ...] | None = None
              ) -> list[sqlite3.Row]:
         sql = ("SELECT k.*, a.file_name FROM clip_candidate k JOIN source_asset a ON a.id = k.source_asset_id "

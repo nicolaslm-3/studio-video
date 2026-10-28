@@ -1,9 +1,10 @@
 """Composants d'interface réutilisables."""
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QPropertyAnimation, QRectF, QSize, Qt, Property, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
+                               QWidget)
 
 
 HINT_MIN_CHARS = 60
@@ -24,6 +25,226 @@ def label(text: str = "", role: str | None = None, wrap: bool = False, hint: boo
         lb.setToolTip(text)
         lb.setVisible(False)
     return lb
+
+
+class Popover(QFrame):
+    """Petit rectangle volant, ouvert au-dessus d'un bouton (en dessous s'il n'y a pas la place), toujours dans
+    l'écran. Son contenu va dans `body`."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        box = QFrame()
+        box.setProperty("role", "popover")
+        outer.addWidget(box)
+        self.body = QVBoxLayout(box)
+        self.body.setContentsMargins(14, 12, 14, 12)
+        self.body.setSpacing(10)
+
+    def show_at(self, w: QWidget) -> None:
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QGuiApplication
+        self.adjustSize()
+        top = w.mapToGlobal(w.rect().topLeft())
+        scr = (w.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+        y = top.y() - self.height() - 4
+        if y < scr.top():                                  # pas la place au-dessus : en dessous
+            y = top.y() + w.height() + 4
+        x = max(scr.left(), min(top.x(), scr.right() - self.width()))
+        self.move(QPoint(x, max(scr.top(), min(y, scr.bottom() - self.height()))))
+        self.show()
+
+
+class _HistoryEntry(QFrame):
+    clicked = Signal()
+
+    def __init__(self, title: str, sub: str, active: bool, tip: str = ""):
+        super().__init__()
+        self.setProperty("role", "projitem")             # même forme que la barre des projets
+        self.setProperty("selected", "true" if active else "false")
+        self.setCursor(Qt.PointingHandCursor)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 6, 10, 6)
+        v.setSpacing(1)
+        self.title = ElidedLabel(("✓ " if active else "") + title)
+        self.title.setStyleSheet("font-weight: 700;")
+        v.addWidget(self.title)
+        self.sub = ElidedLabel(sub, "faint")
+        v.addWidget(self.sub)
+        if tip:
+            for w in (self, self.title, self.sub):
+                w.setToolTip(tip)
+
+    def mouseReleaseEvent(self, e) -> None:          # noqa: N802
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+
+class HistoryPopover(Popover):
+    """Historique (transcriptions, traductions, voix) : chaque version, la plus récente en haut — le moteur en
+    écriture principale, en petit et en gris le début du texte ; un clic l'applique. `entries` :
+    (identifiant, titre, sous-titre, appliquée, infobulle)."""
+    picked = Signal(int)
+
+    def __init__(self, title: str, entries: list, parent=None, empty: str = "Rien pour l'instant."):
+        super().__init__(parent)
+        self.body.addWidget(label(title, "h2"))
+        host = QWidget()
+        lay = QVBoxLayout(host)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        self.entries: list[_HistoryEntry] = []
+        for x in entries:
+            if isinstance(x, str):                        # titre d'un groupe (une langue)
+                lay.addWidget(label(x, "muted", hint=False))
+                continue
+            hid, t, sub, active, tip = x
+            e = _HistoryEntry(t, sub, active, tip)
+            e.clicked.connect(lambda hid=hid: (self.picked.emit(hid), self.hide()))
+            e.hid = hid
+            lay.addWidget(e)
+            self.entries.append(e)
+        if not entries:
+            lay.addWidget(label(empty, "faint", hint=False))
+        lay.addStretch(1)
+        from PySide6.QtWidgets import QScrollArea
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setWidget(host)
+        sc.setFixedWidth(320)
+        sc.setMinimumHeight(min(360, max(60, 54 * len(entries) + 8)))
+        sc.setMaximumHeight(360)
+        self.body.addWidget(sc)
+
+
+def local_time(iso: str | None, fmt: str = "%d/%m/%Y %H:%M") -> str:
+    """Date enregistrée en temps universel (« 2026-10-28T09:05:00Z ») → à l'heure du PC."""
+    from datetime import datetime, timezone
+    if not iso:
+        return ""
+    s = iso.strip().rstrip("Z").replace(" ", "T")[:19]
+    for f in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(s, f).replace(tzinfo=timezone.utc).astimezone().strftime(fmt)
+        except ValueError:
+            continue
+    return iso[:16].replace("T", " ")
+
+
+class ToggleSwitch(QAbstractButton):
+    """Interrupteur façon iPhone : la pastille glisse de gauche (arrêt, gris) à droite (marche, en couleur)."""
+
+    def __init__(self, tooltip: str = "", parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tooltip)
+        self.setFixedSize(38, 22)
+        self._pos = 0.0
+        self._anim = QPropertyAnimation(self, b"knob", self)
+        self._anim.setDuration(120)
+        self.toggled.connect(self._slide)
+
+    def sizeHint(self) -> QSize:                     # noqa: N802
+        return QSize(38, 22)
+
+    def _get_knob(self) -> float:
+        return self._pos
+
+    def _set_knob(self, v: float) -> None:
+        self._pos = v
+        self.update()
+
+    knob = Property(float, _get_knob, _set_knob)
+
+    def _slide(self, on: bool) -> None:
+        self._anim.stop()
+        if self.isVisible():
+            self._anim.setStartValue(self._pos)
+            self._anim.setEndValue(1.0 if on else 0.0)
+            self._anim.start()
+        else:
+            self._set_knob(1.0 if on else 0.0)
+
+    def setChecked(self, on: bool) -> None:          # noqa: N802 — sans animation quand c'est le programme
+        super().setChecked(on)
+        self._anim.stop()
+        self._set_knob(1.0 if on else 0.0)
+
+    def paintEvent(self, _e) -> None:                # noqa: N802
+        from . import theme
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        on = QColor(theme.color("accent"))
+        off = QColor(theme.color("border"))
+        c = QColor(round(off.red() + (on.red() - off.red()) * self._pos),
+                   round(off.green() + (on.green() - off.green()) * self._pos),
+                   round(off.blue() + (on.blue() - off.blue()) * self._pos))
+        if not self.isEnabled():
+            c.setAlpha(110)
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        d = r.height() - 4
+        x = r.x() + 2 + (r.width() - d - 4) * self._pos
+        p.setBrush(QColor("#FFFFFF"))
+        p.drawEllipse(QRectF(x, r.y() + 2, d, d))
+        p.end()
+
+
+class ElidedLabel(QLabel):
+    """Une ligne de texte qui finit par « … » quand la place manque, sans jamais élargir son cadre (texte entier
+    au survol)."""
+
+    def __init__(self, text: str = "", role: str | None = None, parent=None):
+        super().__init__(parent)
+        if role:
+            self.setProperty("role", role)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(8)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:            # noqa: N802
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, e) -> None:                # noqa: N802
+        super().resizeEvent(e)
+        self._elide()
+
+    def changeEvent(self, e) -> None:                # noqa: N802 — police ou style changé : recalcul
+        super().changeEvent(e)
+        self._elide()
+
+    def _elide(self) -> None:
+        QLabel.setText(self, self.fontMetrics().elidedText(self._full, Qt.ElideRight, max(8, self.width())))
+
+
+TENTH_PX = 9          # dixième de seconde : bien plus petit que les chiffres (Qt ignore les tailles en %)
+
+
+def tc_html(t: float, total: float | None = None) -> str:
+    """Timecode « 1:23.4 » en texte riche : le dixième de seconde moitié moins haut et grisé ; `total` : durée
+    ajoutée après « / » (sans dixième)."""
+    from ..media.ffmpeg import fmt_timecode
+    from . import theme
+    s = fmt_timecode(t, True)
+    head, _, tenth = s.rpartition(".")
+    out = (f"<span style='color:{theme.color('text')}'>{head}</span><span style='color:{theme.color('faint')}; "
+           f"font-size:{TENTH_PX}px'>.{tenth}</span>") if head else s
+    if total is not None:
+        out += f"<span style='color:{theme.color('muted')}'> / {fmt_timecode(total)}</span>"
+    return out
 
 
 def hint_icon(text: str, size: int = 15) -> QLabel:
@@ -82,14 +303,15 @@ def tool(icon: str, tooltip: str = "", on_click=None, size: int = 34, icon_px: i
 class PlayButton(QPushButton):
     """Lecture / pause rond, couleur d'accent ; setText("❚❚") bascule l'icône (compatibilité)."""
 
-    def __init__(self, tooltip: str = "", on_click=None):
+    def __init__(self, tooltip: str = "", on_click=None, size: int = 40):
         super().__init__()
         from PySide6.QtCore import QSize
-        self.setFixedSize(40, 40)
-        self.setIconSize(QSize(18, 18))
+        self.setFixedSize(size, size)
+        self.icon_px = round(size * 0.42)
+        self.setIconSize(QSize(self.icon_px, self.icon_px))
         self.setCursor(Qt.PointingHandCursor)
         self.setProperty("kind", "primary")
-        self.setStyleSheet("QPushButton { border-radius: 20px; padding: 0; }")
+        self.setStyleSheet(f"QPushButton {{ border-radius: {size // 2}px; padding: 0; }}")
         if tooltip:
             self.setToolTip(tooltip)
         if on_click:
@@ -99,7 +321,7 @@ class PlayButton(QPushButton):
 
     def _apply(self) -> None:
         from . import theme
-        self.setIcon(theme.icon("pause" if self._playing else "play", theme.color("accent_text"), 18))
+        self.setIcon(theme.icon("pause" if self._playing else "play", theme.color("accent_text"), self.icon_px))
 
     def setText(self, text: str) -> None:            # noqa: N802 — API Qt
         self._playing = "❚" in text

@@ -17,7 +17,6 @@ from .dialogs import ConceptDialog, NewProjectDialog
 from .importing import pick_and_import
 from .jobs_panel import JobsPanel
 from .shell import Dock, Drawer, Popover, TipFilter, Toast
-from .pages.dashboard import DashboardPage
 from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
 from .pages.concepts import ConceptsPage
@@ -29,9 +28,10 @@ from .widgets import JobBridge, button, label
 log = logging.getLogger(__name__)
 
 # (index de page, nom, icône, raccourci)
-NAV = [(0, "Accueil", "house", "Ctrl+1"), (1, "Studio", "clapperboard", "Ctrl+2"), (2, "Médias", "film", "Ctrl+3"),
-       (3, "Calendrier", "calendar-days", "Ctrl+4"), (4, "Analytics", "chart-no-axes-column", "Ctrl+5"),
-       (6, "Concepts et projets", "folder-kanban", "Ctrl+6"), (5, "Paramètres", "settings", "Ctrl+7")]
+# pas de page d'accueil : le logiciel s'ouvre dans Montage libre (la page 0 reste vide, les numéros ne changent pas)
+NAV = [(1, "Studio", "clapperboard", "Ctrl+1"), (2, "Médias", "film", "Ctrl+2"),
+       (3, "Calendrier", "calendar-days", "Ctrl+3"), (4, "Analytics", "chart-no-axes-column", "Ctrl+4"),
+       (6, "Concepts et projets", "folder-kanban", "Ctrl+5"), (5, "Paramètres", "settings", "Ctrl+6")]
 
 
 class MainWindow(QMainWindow):
@@ -60,14 +60,13 @@ class MainWindow(QMainWindow):
 
         # pages
         self.pages = QStackedWidget()
-        self.dashboard = DashboardPage(app)
         self.studio = StudioPage(app)
         self.library = LibraryPage(app)
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
         self.calendar = CalendarPage(app)
         self.analytics = AnalyticsPage(app)
         self.concepts_page = ConceptsPage(app, self.settings_page)
-        for p in (self.dashboard, self.studio, self.library, self.calendar, self.analytics, self.settings_page,
+        for p in (QWidget(), self.studio, self.library, self.calendar, self.analytics, self.settings_page,
                   self.concepts_page):
             self.pages.addWidget(p)
         root.addWidget(self.pages, 1)
@@ -93,14 +92,15 @@ class MainWindow(QMainWindow):
         self.jobs_pop.lay.setContentsMargins(4, 4, 4, 4)
         self.jobs_pop.lay.addWidget(self.jobs_panel)
         self.studio.jobs_btn.clicked.connect(lambda: self.toggle_jobs(True))
+        self.studio.saved.connect(self.jobs_panel.set_saved)          # « Enregistré » en haut des tâches
+        self.studio.save_lbl.changed.connect(self.jobs_panel.set_message)
         self.toast = Toast(self.dock)
         self.tips = TipFilter(self)                      # infobulles aux couleurs du logiciel
         QApplication.instance().installEventFilter(self.tips)
         self.statusBar().hide()
 
         # signaux
-        for page in (self.dashboard, self.studio):
-            page.new_project.connect(self.new_project)
+        self.studio.new_project.connect(self.new_project)
         self.studio.open_models.connect(lambda: (self.go(5), self.settings_page.show_models()))
         self.studio.new_blank.connect(self.new_blank)
         self.studio.view_changed.connect(self._sync_dock)
@@ -109,14 +109,6 @@ class MainWindow(QMainWindow):
         self.concepts_page.edit_concept.connect(self.edit_concept)
         self.concepts_page.open_project.connect(self.open_project)
         self.settings_page.llm_changed.connect(self.studio.highlights.refresh_engines)
-        self.dashboard.open_project.connect(self.open_project)
-        self.dashboard.edit_concept.connect(self.edit_concept)
-        self.dashboard.show_jobs.connect(lambda: self.toggle_jobs(True))
-        self.dashboard.open_calendar.connect(lambda: self.go(3))
-        self.dashboard.import_project.connect(self.import_project)
-        self.dashboard.all_projects.connect(self.show_projects)
-        self.dashboard.open_settings.connect(
-            lambda tab: self.go(6) if tab == "Concepts et comptes" else (self.go(5), self.settings_page.show_tab(tab)))
         self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(self.set_theme)
         self.settings_page.check_updates.connect(self.updater.check_now)
@@ -137,7 +129,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._restore_layout()
         app.projects.purge_untouched()
-        self.go(0)
+        self.start_parcours("free_edit")                  # ouverture dans Montage libre
         self._update_jobs_btn()
         app.importer().refresh_missing()
         resumed = app.jobs.resume_pending()
@@ -231,7 +223,6 @@ class MainWindow(QMainWindow):
         dlg = ProjectsDialog(self.app, self, self.studio.project_id)
         dlg.open_project.connect(self.open_project)
         dlg.exec()
-        self.dashboard.refresh() if hasattr(self.dashboard, "refresh") else None
         self.studio.refresh()
 
     def show_shortcuts(self) -> None:
@@ -293,6 +284,13 @@ class MainWindow(QMainWindow):
         Un projet vierge n'est conservé qu'à la première modification (voir `ProjectService.is_untouched`).
         Le bouton « Nouveau projet » en ouvre un nouveau dans le parcours affiché."""
         pid = self.studio.project_id
+        p = self.app.projects.get(pid) if pid else None
+        if p is not None and mode != "export" and p["mode"] != mode and self.app.projects.is_untouched(pid) \
+                and self.studio.tl.format.aspect == theme.DEFAULT_ASPECT.get(p["mode"], "9:16"):
+            self.new_blank(mode)                   # projet vierge intact (format non choisi) : refait pour cet onglet
+            self.app.projects.discard_if_untouched(pid)
+            self.go(1)
+            return
         if not (pid and self.app.projects.get(pid)):
             recent = self.app.projects.recent(1)
             if not recent:
@@ -371,14 +369,12 @@ class MainWindow(QMainWindow):
             if r["missing"]:
                 msg += f"\n\nMédias introuvables ({len(r['missing'])}) : {', '.join(r['missing'][:5])}"
             QMessageBox.information(self, "Importer un projet", msg)
-            self.dashboard.refresh()
             self.open_project(r["project_id"])
         elif j.status == "failed":
             QMessageBox.warning(self, "Importer un projet", j.error[:600])
 
     def edit_concept(self, concept_id=None) -> None:
         if ConceptDialog(self.app, concept_id, self).exec():
-            self.dashboard.refresh()
             self.settings_page.refresh()
 
     def _on_job(self, job_id: int) -> None:

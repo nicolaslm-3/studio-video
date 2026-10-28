@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPainterPath, QPen,
                            QTextLayout, QTextOption)
 
+from . import emoji
 from .model import TextItem
 
 REFERENCE_HEIGHT = 1920
@@ -45,6 +46,23 @@ def _lines(text: str, font: QFont, max_width: float) -> list[str]:
     return out
 
 
+def anchor(item: TextItem, width: int = 1080, height: int = 1920) -> tuple[float, float]:
+    """Centre du bloc de texte, en fractions de l'image : celui de la position choisie (en haut, au centre, en bas)
+    — les réglages X / Y partent de là, sans saut."""
+    if item.position not in ("top", "center", "bottom"):
+        return item.x, item.y
+    _ensure_app()
+    font = QFont(item.font)
+    font.setPixelSize(max(8, int(item.size * height / REFERENCE_HEIGHT)))
+    font.setBold(item.bold)
+    font.setItalic(item.italic)
+    fm = QFontMetricsF(font)
+    block_h = fm.height() * 1.05 * len(_lines(item.text, font, width * item.max_width))
+    top = {"top": height * 0.12, "center": (height - block_h) / 2, "bottom": height * 0.78 - block_h}[item.position]
+    top = max(0.0, min(height - block_h, top))
+    return 0.5, round((top + block_h / 2) / height, 3)
+
+
 def render_text(item: TextItem, width: int, height: int, dest: Path) -> Path:
     """Dessine `item` sur une image transparente de la taille de la vidéo et l'enregistre en PNG."""
     img = render_text_image(item, width, height)
@@ -70,7 +88,7 @@ def render_text_image(item: TextItem, width: int, height: int) -> QImage:
     max_w = width * item.max_width
     lines = _lines(item.text, font, max_w)
     line_h = fm.height() * 1.05
-    block_w = max((fm.horizontalAdvance(l) for l in lines), default=0)
+    block_w = max((emoji.width(fm, font, l) for l in lines), default=0)
     block_h = line_h * len(lines)
 
     cx = width / 2
@@ -101,19 +119,21 @@ def render_text_image(item: TextItem, width: int, height: int) -> QImage:
         p.drawRoundedRect(rect, pad * 0.6, pad * 0.6)
 
     path = QPainterPath()
+    marks = []                                            # emojis : en couleur, par-dessus le texte
     for i, line in enumerate(lines):
-        lw = fm.horizontalAdvance(line)
+        lw = emoji.width(fm, font, line)
         if item.align == "left":
             x = left
         elif item.align == "right":
             x = left - lw
         else:
             x = cx - lw / 2
-        path.addText(QPointF(x, top + i * line_h + fm.ascent()), font, line)
+        marks += emoji.add_line(path, font, fm, x, top + i * line_h + fm.ascent(), line)
     if item.outline > 0:
         pen = QPen(QColor(item.outline_color), item.outline * k * 2)
         pen.setJoinStyle(Qt.RoundJoin)
         p.strokePath(path, pen)
     p.fillPath(path, QColor(item.color))
+    emoji.draw(p, marks)
     p.end()
     return img

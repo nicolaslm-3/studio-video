@@ -52,11 +52,14 @@ def test_local_engine_respects_request():
 
 def test_categories_and_keywords_steer_results():
     tr = debate()
-    deb = LocalEngine().propose(tr, Request(count=3, min_duration=10, max_duration=30, categories=["debat"]))
-    assert all(c.category == "debat" for c in deb)
-    assert any("intervenant" in c.rationale or "mots" in c.rationale for c in deb)
-    hum = LocalEngine().propose(tr, Request(count=2, min_duration=10, max_duration=25, categories=["humour"]))
+    pol = LocalEngine().propose(tr, Request(count=3, min_duration=10, max_duration=30, categories=["politique"]))
+    assert all(c.category == "politique" for c in pol)
+    assert any("ministre" in c.rationale or "réforme" in c.rationale for c in pol)
+    assert all(3 <= len(c.subject.replace("·", " ").split()) <= 8 for c in pol)      # titre de 3 à 8 mots
+    hum = LocalEngine().propose(tr, Request(count=2, min_duration=10, max_duration=25, categories=["rire"]))
     assert any("drôle" in c.rationale or "blague" in c.rationale or "mdr" in c.rationale.lower() for c in hum)
+    deb = LocalEngine().propose(tr, Request(count=2, min_duration=10, max_duration=30, categories=["polarisant"]))
+    assert any("contradiction" in c.rationale for c in deb)
     kw = LocalEngine().propose(tr, Request(count=5, min_duration=10, max_duration=30, keywords=["météo"]))
     assert kw and all("météo" in " ".join(s.text for s in tr.segments[c.first:c.last + 1]) for c in kw)
 
@@ -118,7 +121,7 @@ class FakeOllama(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         prompt = body["messages"][0]["content"]
         assert "Transcription" in prompt and body["model"] == "llama3.1:8b"
-        clips = [{"start": 13.0, "end": 39.5, "subject": "Retraites", "category": "debat", "score": 92,
+        clips = [{"start": 13.0, "end": 39.5, "subject": "Retraites", "category": "polarisant", "score": 92,
                   "rationale": "Échange vif sur les chiffres", "hook": "C'est faux, les chiffres disent l'inverse !"},
                  {"start": 2000, "end": 2030, "subject": "hors bornes"},          # hors transcription
                  {"start": 1.0, "end": 3.0, "subject": "trop court"}]
@@ -143,7 +146,7 @@ def test_llm_engine_snaps_and_validates(ollama):
     cands = eng.propose(tr, Request(count=5, min_duration=15, max_duration=45))
     assert len(cands) == 1
     c = cands[0]
-    assert c.category == "debat" and c.hook.startswith("C'est faux")
+    assert c.category == "polarisant" and c.hook.startswith("C'est faux")
     assert c.start == tr.segments[c.first].start and c.end == tr.segments[c.last].end
     assert c.context_flags  # contrôles appliqués aussi aux propositions du modèle
 
@@ -151,3 +154,27 @@ def test_llm_engine_snaps_and_validates(ollama):
 def test_llm_unreachable():
     with pytest.raises(LLMError):
         check_llm("ollama", "http://127.0.0.1:9")
+
+
+def test_laughter_and_shouting_from_sound():
+    """Rire et Émotion s'appuient aussi sur le son : éclats hors parole, cris, micro qui sature."""
+    from studiovideo.ai.highlights import AudioProfile, summary
+    segs, t = [], 0.0
+    for k in range(12):
+        segs.append(TSegment(t, t + 4.0, f"On parle du sujet numéro {k} tranquillement ici.", [], "A"))
+        t += 6.0                                     # 2 s sans parole entre chaque phrase
+    tr = Transcript(segs, "fr", "test")
+    n = int(t / 0.5) + 2
+    rms, clip, bright, burst = [-30.0] * n, [0.0] * n, [1000.0] * n, [1.0] * n
+    for k in range(int(36 / 0.5), int(48 / 0.5)):   # 36-48 s : éclats saccadés et saturés entre les phrases
+        if k * 0.5 % 6 >= 4:
+            rms[k], clip[k], burst[k] = -12.0, 0.01, 4.0
+    for k in range(int(6 / 0.5), int(18 / 0.5)):    # 6-18 s : la voix monte et crie
+        rms[k], bright[k] = -14.0, 2200.0
+    eng = LocalEngine(audio=AudioProfile(0.5, rms, clip, bright, burst))
+    laugh = eng.propose(tr, Request(count=1, min_duration=8, max_duration=14, categories=["rire"]))[0]
+    assert 30 <= laugh.start <= 42 and "hors parole" in laugh.rationale
+    shout = eng.propose(tr, Request(count=1, min_duration=8, max_duration=14, categories=["emotion"]))[0]
+    assert shout.start <= 12 and "monte" in shout.rationale
+    assert summary(["Bah honnêtement je pense que le rap français est mort, c'est ridicule !"]).startswith(
+        "honnêtement je pense que le rap")

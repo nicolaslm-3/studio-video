@@ -1,0 +1,13 @@
+<!-- Studio Vidéo : « A » gras (dessin maison) -->
+<svg
+  class="lucide lucide-text-box"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  fill-rule="evenodd"
+  stroke="none"
+>
+  <path d="M2 3 H22 V21 H2 Z M 6.90 18.12 L 10.64 5.88 H 13.36 L 17.10 18.12 H 14.45 L 13.70 15.54 H 10.30 L 9.55 18.12Z  M 10.98 13.22 H 13.02 L 12.00 9.69Z " />
+</svg>

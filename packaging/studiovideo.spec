@@ -10,6 +10,7 @@ SRC = ROOT / "src"
 # Fichiers de migration SQL (indispensables : la base ne peut pas être créée sans eux)
 datas = [(str(SRC / "studiovideo" / "db" / "migrations" / "*.sql"), "studiovideo/db/migrations"),
          (str(SRC / "studiovideo" / "ui" / "icons" / "*"), "studiovideo/ui/icons"),
+         (str(SRC / "studiovideo" / "ui" / "flags" / "*"), "studiovideo/ui/flags"),
          (str(SRC / "studiovideo" / "ui" / "assets" / "*"), "studiovideo/ui/assets")]
 binaries = []
 for name in ("ffmpeg.exe", "ffprobe.exe"):

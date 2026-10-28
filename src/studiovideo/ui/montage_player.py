@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QRectF, QSizeF, Qt, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QGuiApplication, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTransform
-from PySide6.QtWidgets import (QCheckBox, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView,
-                               QHBoxLayout, QSlider, QStackedLayout, QVBoxLayout, QWidget)
+from PySide6.QtCore import QRectF, QSize, QSizeF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap,
+                           QShortcut, QTransform)
+from PySide6.QtWidgets import (QCheckBox, QFrame, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem,
+                               QGraphicsScene, QGraphicsView, QHBoxLayout, QMenu, QSlider, QStackedLayout,
+                               QToolButton, QVBoxLayout, QWidget)
 
 from ..edit import compose
 from ..edit.model import Timeline
 from ..edit.subrender import render_state, strip_geometry
 from ..edit.subtitles import State, states
 from ..edit.textrender import render_text_image
-from ..media.ffmpeg import fmt_timecode
-from .widgets import PlayButton, button, label, tool
+from . import theme
+from .widgets import PlayButton, button, label, tc_html, tool
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
@@ -55,11 +57,15 @@ def reframe_offset(tl: Timeline, seg, src_t: float, sw: int, sh: int) -> float |
 
 
 def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = None,
-                 seg_zoom: float = 1.0) -> tuple[float, float, float, float]:
-    """Position (x, y, w, h) de l'image source (déjà tournée) dans l'image de sortie."""
+                 seg_zoom: float = 1.0, pan: bool = False) -> tuple[float, float, float, float]:
+    """Position (x, y, w, h) de l'image source (déjà tournée) dans l'image de sortie ; `pan` : mouvement subtil
+    en cours (image un peu agrandie pour glisser)."""
     W, H = tl.format.width, tl.format.height
     v = tl.video
     zoom = max(1.0, v.zoom) * max(1.0, seg_zoom)
+    if pan and tl.format.fit == "fill":
+        from ..edit.render import pan_zoom
+        zoom *= pan_zoom(tl)
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
     if ox_override is not None:
         ox = ox_override
@@ -74,6 +80,21 @@ def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = Non
     else:
         x, y = (W - w) / 2 * (1 + ox), (H - h) / 2 * (1 + oy)
     return x, y, w, h
+
+
+# filtres approchés dans l'aperçu (l'image exacte est celle de l'export) : teinte, force à pleine intensité
+LOOK_TINTS = {"chaud": ("#FF9A3C", 0.22), "froid": ("#3C8CFF", 0.22), "cinema": ("#2E8C8C", 0.15),
+              "vintage": ("#B38B59", 0.35), "nb": ("#808080", 1.0), "vif": None, "doux": None}
+
+
+class _Frame(QGraphicsPathItem):
+    """Cadre de l'image, aux coins arrondis (comme les aperçus de l'onglet Export) ; découpe son contenu."""
+
+    def setRect(self, x: float, y: float, w: float, h: float) -> None:      # noqa: N802 — comme QGraphicsRectItem
+        path = QPainterPath()
+        r = min(w, h) * 0.035
+        path.addRoundedRect(QRectF(x, y, w, h), r, r)
+        self.setPath(path)
 
 
 class _View:
@@ -97,6 +118,8 @@ class _View:
 class LivePreview(QGraphicsView):
     layout_edited = Signal()                # vue déplacée ou zoomée à la souris
     clicked = Signal()                      # clic sur l'aperçu (lecteur compact : lecture / pause)
+    frame_moved = Signal(float, float)      # bords gauche et droit de l'image dans l'aperçu (barre de lecture)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.click_toggles = False
@@ -104,10 +127,15 @@ class LivePreview(QGraphicsView):
         self.setFrameShape(QGraphicsView.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(QColor("#0B0C0E"))
+        # autour de l'image : le fond de la page (pas de bandes noires), image posée sur la barre de lecture
+        self.setBackgroundBrush(Qt.NoBrush)
+        self.setStyleSheet("QGraphicsView { background: transparent; border: none; }")
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet("background: transparent;")
+        self.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         self.scene_ = QGraphicsScene(self)
         self.setScene(self.scene_)
-        self.frame = QGraphicsRectItem()
+        self.frame = _Frame()
         self.frame.setBrush(QColor("#000000"))
         self.frame.setPen(Qt.NoPen)
         self.frame.setFlag(QGraphicsRectItem.ItemClipsChildrenToShape, True)
@@ -149,12 +177,13 @@ class LivePreview(QGraphicsView):
                 sk.videoFrameChanged.connect(lambda fr, k=k: self.set_frame(k, fr))
                 self.sinks.append(sk)
 
-    def set_ox(self, ox: float | None) -> None:
-        """Recadrage automatique : décalage horizontal à l'instant affiché (None = réglage manuel)."""
-        if ox == self.ox_override or (ox is not None and self.ox_override is not None
-                                      and abs(ox - self.ox_override) < 0.002):
+    def set_ox(self, ox: float | None, panning: bool = False) -> None:
+        """Recadrage automatique ou mouvement subtil : décalage horizontal à l'instant affiché (None = réglage
+        manuel)."""
+        if panning == getattr(self, "panning", False) and (ox == self.ox_override or (
+                ox is not None and self.ox_override is not None and abs(ox - self.ox_override) < 0.002)):
             return
-        self.ox_override = ox
+        self.ox_override, self.panning = ox, panning
         self._geometry()
 
     def set_fade(self, level: float) -> None:
@@ -195,16 +224,45 @@ class LivePreview(QGraphicsView):
             sw, sh = src_size
             rot = tl.video.rotation % 360
             rw, rh = (sh, sw) if rot in (90, 270) else (sw, sh)
-            x, y, w, h = display_rect(tl, rw, rh, getattr(self, "ox_override", None), getattr(self, "seg_zoom", 1.0))
+            x, y, w, h = display_rect(tl, rw, rh, getattr(self, "ox_override", None), getattr(self, "seg_zoom", 1.0),
+                                      getattr(self, "panning", False))
             iw, ih = (h, w) if rot in (90, 270) else (w, h)
             self.video_item.setSize(QSizeF(iw, ih))
             t = QTransform()
+            tilt = float(getattr(tl.video, "tilt", 0.0) or 0.0)
+            if abs(tilt) > 1e-3:                  # légère rotation : autour du centre du cadre, image agrandie
+                from ..edit.render import tilt_cover
+                W, H = tl.format.width, tl.format.height
+                c = tilt_cover(tl)
+                t.translate(W / 2, H / 2)
+                t.rotate(tilt)
+                t.scale(c, c)
+                t.translate(-W / 2, -H / 2)
             t.translate(x + w / 2, y + h / 2)
             t.scale(-1 if tl.video.mirror else 1, -1 if tl.video.flip else 1)
             t.rotate(rot)
             t.translate(-iw / 2, -ih / 2)
             self.video_item.setTransform(t)
             self.video_item.setPos(0, 0)
+            self._look()
+
+    def _look(self) -> None:
+        """Filtre colorimétrique approché dans l'aperçu (teinte réglée par l'intensité)."""
+        from PySide6.QtWidgets import QGraphicsColorizeEffect
+        v = self.tl.video
+        tint = LOOK_TINTS.get(getattr(v, "look", "") or "")
+        amount = float(getattr(v, "look_amount", 0.0) or 0.0)
+        key = (tint, round(amount, 3))
+        if key == getattr(self, "_look_key", None):
+            return
+        self._look_key = key
+        if not tint or amount <= 0:
+            self.video_item.setGraphicsEffect(None)
+            return
+        fx = QGraphicsColorizeEffect()
+        fx.setColor(QColor(tint[0]))
+        fx.setStrength(tint[1] * amount)
+        self.video_item.setGraphicsEffect(fx)
 
     # -- mise en page à deux vues ------------------------------------------------------
     def _view_source(self, i: int) -> int:
@@ -412,6 +470,8 @@ class LivePreview(QGraphicsView):
 
     def fit(self) -> None:
         self.fitInView(self.scene_.sceneRect(), Qt.KeepAspectRatio)
+        r = self.mapFromScene(self.scene_.sceneRect()).boundingRect()
+        self.frame_moved.emit(float(max(0, r.left())), float(max(0, self.width() - r.right() - 1)))
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
@@ -446,9 +506,69 @@ def audio_plan(tl: Timeline, tracks: dict | None) -> dict:
     return {"main": 1.0, "aux": [], "note": ""}
 
 
+# Formats proposés partout (sous chaque aperçu) : format, icône, nom
+FORMATS = (("16:9", "rectangle-horizontal", "Horizontal 16:9"), ("1:1", "square", "Carré 1:1"),
+           ("9:16", "rectangle-vertical", "Vertical 9:16"))
+
+
+class FormatPicker(QToolButton):
+    """Format de la vidéo : un bouton (icône du format choisi) et son menu (horizontal, carré, vertical), puis,
+    séparées, les zones masquées par TikTok / Reels (`zone_act`)."""
+    changed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value: str | None = None
+        self.setPopupMode(QToolButton.InstantPopup)
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setIconSize(QSize(18, 18))
+        self.setFixedHeight(34)
+        self.setCursor(Qt.PointingHandCursor)
+        self.menu_ = QMenu(self)
+        self.actions_: dict[str, object] = {}
+        for asp, ic, name in FORMATS:
+            a = self.menu_.addAction(name, lambda asp=asp: self._pick(asp))
+            a.setCheckable(True)
+            a.setData(ic)
+            self.actions_[asp] = a
+        self.menu_.addSeparator()
+        self.zone_act = self.menu_.addAction("Zones masquées par TikTok / Reels")
+        self.zone_act.setCheckable(True)
+        self.zone_act.setData("smartphone")
+        self.setMenu(self.menu_)
+        self.restyle()
+
+    def _pick(self, asp: str) -> None:
+        self.set_value(asp)
+        self.changed.emit(asp)
+
+    def value(self) -> str | None:
+        return self._value
+
+    def set_value(self, aspect: str) -> None:
+        """Format du montage (aucun coché si c'est un autre format, 4:5 d'un ancien projet par exemple)."""
+        self._value = aspect if aspect in self.actions_ else None
+        for asp, a in self.actions_.items():
+            a.setChecked(asp == aspect)
+        name = next((n for a, _i, n in FORMATS if a == aspect), f"Format {aspect}")
+        self.setToolTip(f"Format de la vidéo : {name}")
+        self.restyle()
+
+    def restyle(self) -> None:
+        mut = theme.color("muted")
+        ic = next((i for a, i, _n in FORMATS if a == self._value), "rectangle-vertical")
+        self.setIcon(theme.icon(ic, mut, 18))
+        self.setText("▾")
+        self.setStyleSheet(f"QToolButton {{ padding: 4px 6px; color: {mut}; font-size: 11px; }} "
+                           "QToolButton::menu-indicator { image: none; }")
+        for a in (*self.actions_.values(), self.zone_act):
+            a.setIcon(theme.icon(a.data(), mut, 18))
+
+
 class MontagePlayer(QWidget):
     time_changed = Signal(float)
     layout_edited = Signal()
+    fx_changed = Signal()                   # effets de l'image modifiés (bouton robot)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -462,9 +582,11 @@ class MontagePlayer(QWidget):
         self.track_resolver = None          # asset_id -> {"dub", "voice", "music"} (chemins ou None)
         self._plan = {"main": 1.0, "aux": [], "note": ""}
         self._aux_loaded: list[str | None] = [None, None]
+        self._aux_pending: list[int | None] = [None, None]   # position à prendre une fois la piste chargée
+        self._aux_fixed = [0.0, 0.0]                         # dernier recalage de chaque piste (horloge)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        lay.setSpacing(2)
         self.stack = QStackedLayout()
         self.view = LivePreview()
         self.view.setMinimumHeight(170)
@@ -472,7 +594,8 @@ class MontagePlayer(QWidget):
         self._second_loaded: int | None = None
         self._output = self.view.video_item          # sortie d'image actuelle du lecteur
         self.stack.addWidget(self.view)
-        holder = QWidget()
+        holder = QFrame()
+        holder.setProperty("role", "dim")                  # transparent : le fond de la carte autour de l'image
         holder.setLayout(self.stack)
         lay.addWidget(holder, 1)
 
@@ -491,44 +614,54 @@ class MontagePlayer(QWidget):
             self.player.positionChanged.connect(self._on_pos)
             self.player.mediaStatusChanged.connect(self._on_status)
             self.aux = []
-            for _ in range(2):
+            for k in range(2):
                 ap, ao = QMediaPlayer(self), QAudioOutput(self)
                 ap.setAudioOutput(ao)
+                ap.mediaStatusChanged.connect(lambda st, k=k: self._aux_status(k, st))
                 self.aux.append((ap, ao))
+            from .audio_out import follow_default_output    # écouteurs Bluetooth : le son les suit
+            self._sync_audio = follow_default_output(
+                self, lambda: [self.audio, self.audio2] + [ao for _, ao in self.aux])
         else:
             self.player = self.player2 = None
             self.aux = []
             self.view.set_placeholder("Lecture vidéo indisponible ici")
 
         self.slider = QSlider(Qt.Horizontal)
+        self.slider.setFixedHeight(22)                  # la poignée ronde n'est jamais coupée
         self.slider.sliderMoved.connect(lambda v: self.seek(v / 1000))
-        lay.addWidget(self.slider)
+        self.slider_row = QHBoxLayout()                  # barre de lecture : exactement sous l'image
+        self.slider_row.setContentsMargins(0, 0, 0, 0)
+        self.slider_row.addWidget(self.slider)
+        lay.addLayout(self.slider_row)
+        self.view.frame_moved.connect(self._frame_moved)
         ctr = QHBoxLayout()
-        ctr.setSpacing(4)
+        ctr.setSpacing(2)                                 # outils collés les uns aux autres
         self.ctr = ctr
-        self.step_prev = tool("step-back", "Image précédente (←)", lambda: self.step(-1))
-        ctr.addWidget(self.step_prev)
-        self.play_btn = PlayButton("Lire le montage (Espace)", self.toggle)
+        self.play_btn = PlayButton("Lire le montage (Espace)", self.toggle, size=26)
         ctr.addWidget(self.play_btn)
-        self.step_next = tool("step-forward", "Image suivante (→)", lambda: self.step(1))
-        ctr.addWidget(self.step_next)
-        self.tc = label("0:00.0 / 0:00", "muted")
-        self.tc.setMinimumWidth(118)
+        self.tc = label("", "muted")
+        self.tc.setTextFormat(Qt.RichText)
+        self.tc.setMinimumWidth(92)
         ctr.addSpacing(6)
         ctr.addWidget(self.tc)
         ctr.addStretch(1)
         self.zone = QCheckBox("Zones TikTok / Reels")
         self.zone.setToolTip("Affiche les zones masquées par l'interface TikTok / Reels (boutons, légende).")
         self.zone.toggled.connect(lambda on: self.view.set_zone("TikTok" if on else None))
-        self.zone_btn = tool("smartphone", "Zones masquées par TikTok / Reels", None, checkable=True)
-        self.zone_btn.toggled.connect(self.zone.setChecked)
         self.zone.hide()
-        ctr.addWidget(self.zone_btn)
+        self.fx_btn = tool("bot", "Effets de l'image : miroir, zoom, mouvement, filtre, rotation, vitesse",
+                           self._open_fx)
+        ctr.addWidget(self.fx_btn)
+        self.format_pick = FormatPicker()                 # format, et dans son menu les zones TikTok / Reels
+        self.format_pick.zone_act.toggled.connect(self.zone.setChecked)
+        ctr.addWidget(self.format_pick)
+        self.fx_target = None                             # () -> montage à modifier (celui du projet)
         if self.enabled:
             self.vol = QSlider(Qt.Horizontal)
             self.vol.setRange(0, 100)
             self.vol.setValue(80)
-            self.vol.setFixedWidth(80)
+            self.vol.setFixedWidth(60)
             self.vol.setToolTip("Volume d'écoute")
             self.vol.valueChanged.connect(lambda _v: self._apply_volumes())
             self._apply_volumes()
@@ -543,25 +676,73 @@ class MontagePlayer(QWidget):
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
 
+    def _frame_moved(self, a: float, b: float) -> None:
+        """Barre de lecture sous l'image, à sa largeur ; les outils aussi s'ils y tiennent, sinon toute la largeur
+        (jamais les uns sur les autres)."""
+        self.slider_row.setContentsMargins(int(a), 0, int(b), 0)
+        need = self.ctr.minimumSize().width() - self.ctr.contentsMargins().left() - self.ctr.contentsMargins().right()
+        if self.width() - a - b < need:
+            a = b = 0
+        self.ctr.setContentsMargins(int(a), 0, int(b), 0)
+
+    def _open_fx(self) -> None:
+        """Le rectangle des effets ; ils modifient la vidéo du projet (`fx_target`), pas les textes."""
+        from .effects import EffectsPopover
+        tl = self.fx_target() if self.fx_target else self.tl
+        self.fx_pop = EffectsPopover(tl.video, self)
+        self.fx_pop.changed.connect(self.fx_changed.emit)
+        if tl is self.tl:
+            self.fx_pop.changed.connect(lambda: (self._apply_geometry(), self._apply_rate()))
+        self.fx_pop.show_at(self.fx_btn)
+
+    def _apply_rate(self) -> None:
+        """Vitesse de l'aperçu : celle de la vidéo exportée."""
+        if not self.player:
+            return
+        from ..edit.render import speed_of
+        r = speed_of(self.tl)
+        for p in [self.player, self.player2] + [ap for ap, _ in self.aux]:
+            if p is not None and hasattr(p, "playbackRate") and abs(p.playbackRate() - r) > 1e-3:
+                p.setPlaybackRate(r)
+
     def add_tool(self, w: QWidget) -> None:
-        """Bouton ajouté à la barre de lecture, juste avant celui des zones TikTok / Reels (même taille)."""
-        w.setFixedSize(self.zone_btn.size())
-        self.ctr.insertWidget(self.ctr.indexOf(self.zone_btn), w)
+        """Bouton ajouté à la barre de lecture, juste avant le robot (même taille)."""
+        w.setFixedSize(self.fx_btn.size())
+        self.ctr.insertWidget(self.ctr.indexOf(self.fx_btn), w)        # robot et format restent côte à côte
 
     def set_compact(self) -> None:
         """Lecteur réduit : barre de lecture et temps seulement ; un clic sur l'image lit ou met en pause."""
-        for w in (self.step_prev, self.play_btn, self.step_next, self.zone_btn, self.vol_):
+        for w in (self.play_btn, self.format_pick, self.vol_):
             if w is not None:
                 w.hide()
         self.view.click_toggles = True
-        self.view.clicked.connect(self.toggle)
+        self.view.clicked.connect(self._compact_click)
         self.view.setCursor(Qt.PointingHandCursor)
         self.view.setToolTip("Clic : lecture / pause")
+        from PySide6.QtWidgets import QLabel
+        self._flash = QLabel(self.view)                   # icône lecture / pause au centre, 1,5 s
+        self._flash.setFixedSize(54, 54)
+        self._flash.setAlignment(Qt.AlignCenter)
+        self._flash.setStyleSheet("background: rgba(0, 0, 0, 115); border-radius: 27px;")
+        self._flash.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._flash.hide()
+        self._flash_timer = QTimer(self, singleShot=True, interval=1500)
+        self._flash_timer.timeout.connect(self._flash.hide)
+
+    def _compact_click(self) -> None:
+        self.toggle()
+        from . import theme
+        self._flash.setPixmap(theme.icon("play" if self._playing else "pause", "#FFFFFF", 24).pixmap(24, 24))
+        self._flash.move((self.view.width() - 54) // 2, (self.view.height() - 54) // 2)
+        self._flash.show()
+        self._flash.raise_()
+        self._flash_timer.start()
 
     # -- données -----------------------------------------------------------
     def set_timeline(self, tl: Timeline, assets: dict[int, dict]) -> None:
         self.tl, self.assets = tl, assets
         self.slider.setRange(0, int(tl.duration * 1000))
+        self._apply_rate()
         self._setup_layout()
         self._apply_geometry()
         if not tl.segments:
@@ -639,6 +820,9 @@ class MontagePlayer(QWidget):
             self._pending = src_t
             self.player.setSource(QUrl.fromLocalFile(a.get("preview_path") or a["path"]))
         else:
+            st = getattr(self.player, "mediaStatus", None)
+            if self._pending is not None or (st is not None and st() == QMediaPlayer.LoadingMedia):
+                self._pending = src_t                     # encore en chargement : position reprise une fois chargé
             self.player.setPosition(int(src_t * 1000))
         self._sync_aux(src_t, keep_playing)
         self._sync_second(src_t, keep_playing)
@@ -660,6 +844,7 @@ class MontagePlayer(QWidget):
         else:
             if self.t >= self.tl.duration - 0.05:
                 self.seek(0)
+            self._sync_audio()
             self._playing = True
             self.seek(self.t, keep_playing=True)
         self._update_ui()
@@ -713,26 +898,67 @@ class MontagePlayer(QWidget):
             ao.setVolume(base * min(1.0, gain))
 
     def _sync_aux(self, src_t: float, play: bool) -> None:
+        """Pistes d'écoute (voix doublée, musique séparée) calées sur la vidéo. Une piste qui vient d'être choisie
+        se charge d'abord : sa position est reprise une fois chargée (`_aux_status`), sinon elle partirait du début
+        ou resterait muette."""
         for k, (ap, _) in enumerate(self.aux):
             path = self._plan["aux"][k][0] if k < len(self._plan["aux"]) else None
             path = str(path) if path else None
             if path != self._aux_loaded[k]:
                 self._aux_loaded[k] = path
                 ap.setSource(QUrl.fromLocalFile(path) if path else QUrl())
+                self._aux_pending[k] = None
             if not path:
                 continue
             ap.setPosition(int(src_t * 1000))
+            if not self._aux_ready(ap):
+                self._aux_pending[k] = int(src_t * 1000)
             if play:
                 ap.play()
             else:
                 ap.pause()
 
+    @staticmethod
+    def _aux_ready(ap) -> bool:
+        st = getattr(ap, "mediaStatus", None)
+        return st is None or st() in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia)
+
+    def _aux_status(self, k: int, status) -> None:
+        """Piste d'écoute chargée : elle se place là où en est la vidéo et joue si la lecture est en cours."""
+        if status not in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia) or self._aux_pending[k] is None:
+            return
+        ap = self.aux[k][0]
+        pos = self.player.position() if (self._playing and self.player and self._pending is None) \
+            else self._aux_pending[k]
+        self._aux_pending[k] = None
+        ap.setPosition(int(pos))
+        if self._playing:
+            ap.play()
+        else:
+            ap.pause()
+
     def _on_status(self, status) -> None:
         if self._pending is not None and status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
-            self.player.setPosition(int(self._pending * 1000))
+            pos = int(self._pending * 1000)
+            self.player.setPosition(pos)
             self._pending = None
             if self._playing:
                 self.player.play()
+            else:
+                self._peek(pos)
+
+    def _peek(self, pos: int) -> None:
+        """Vidéo chargée à l'arrêt : une image est décodée (lecture très brève, son coupé) pour que l'aperçu
+        montre l'endroit du timecode au lieu d'un écran noir."""
+        self.audio.setMuted(True)
+        self.player.play()
+
+        def done() -> None:
+            if not self._playing:
+                self.player.pause()
+                self.player.setPosition(pos)
+            self.audio.setMuted(False)
+        QTimer.singleShot(90, done)
 
     def _on_pos(self, ms: int) -> None:
         if self._pending is not None or self.index < 0 or self.index >= len(self.tl.segments):
@@ -742,9 +968,15 @@ class MontagePlayer(QWidget):
         if src < seg.src_in - 0.25:
             return
         self.t = self.tl.segment_start(self.index) + max(0.0, src - seg.src_in)
-        for k, (ap, _) in enumerate(self.aux):               # recalage si une piste dérive (> 120 ms)
-            if self._aux_loaded[k] and self._playing and abs(ap.position() - ms) > 120:
+        import time
+        now = time.monotonic()
+        for k, (ap, _) in enumerate(self.aux):
+            # recalage si une piste dérive (> 250 ms), une fois chargée et au plus une fois par seconde : recaler
+            # sans cesse une piste qui se charge encore la rendait muette
+            if self._aux_loaded[k] and self._playing and self._aux_pending[k] is None and self._aux_ready(ap) \
+                    and abs(ap.position() - ms) > 250 and now - self._aux_fixed[k] > 1.0:
                 ap.setPosition(ms)
+                self._aux_fixed[k] = now
         if self._second_loaded is not None and self._playing:
             want = ms + int(float(compose.norm(self.tl.video.layout)["offset"]) * 1000)
             if want >= 0 and abs(self.player2.position() - want) > 150:
@@ -764,7 +996,7 @@ class MontagePlayer(QWidget):
     def _update_ui(self) -> None:
         if not self.slider.isSliderDown():
             self.slider.setValue(int(self.t * 1000))
-        self.tc.setText(f"{fmt_timecode(self.t, True)} / {fmt_timecode(self.tl.duration)}")
+        self.tc.setText(tc_html(self.t, self.tl.duration))
         self.play_btn.setText("❚❚" if self._playing else "▶")
         loc = self.tl.locate(self.t)
         ox, z, lv = None, 1.0, 1.0
@@ -775,8 +1007,13 @@ class MontagePlayer(QWidget):
             a = self.assets.get(seg.asset_id) or {}
             if a.get("width"):
                 ox = reframe_offset(self.tl, seg, loc[1], a["width"], a["height"])
+        panning = False
+        if loc and ox is None and float(getattr(self.tl.video, "pan", 0.0) or 0.0) > 0:
+            seg = self.tl.segments[loc[0]]             # mouvement subtil : d'un bord à l'autre (sens alterné)
+            p = max(0.0, min(1.0, (loc[1] - seg.src_in) / max(0.1, seg.duration)))
+            ox, panning = ((1 - 2 * p) if loc[0] % 2 else (2 * p - 1)), True
         self.view.set_seg_zoom(z)
         self.view.set_fade(lv)
-        self.view.set_ox(ox)
+        self.view.set_ox(ox, panning)
         self.view.set_time(self.t)
         self.time_changed.emit(self.t)

@@ -3,6 +3,7 @@
 Tout moteur expose `transcribe(audio_path, language, progress, is_cancelled) -> Transcript`.
 Le moteur local par défaut est faster-whisper (CPU, int8) ; ses modèles sont
 téléchargés après installation dans %LOCALAPPDATA%\\StudioVideo\\models.
+Autre choix (roue crantée de la transcription) : ElevenLabs Scribe v2, en ligne, avec la clé ElevenLabs.
 """
 from __future__ import annotations
 
@@ -197,6 +198,87 @@ class FasterWhisperEngine:
             out.append(TSegment(float(s.start), float(s.end), s.text.strip(), words))
             progress(min(0.99, 0.05 + 0.94 * s.end / total), f"Transcription : {int(s.end)} / {int(total)} s")
         return Transcript(out, info.language, self.name)
+
+
+# moteurs proposés : (nom, qualité, coût, ce qu'il faut, adresse)
+TRANSCRIBERS = {
+    "local": ("Sur ce PC (Whisper)", "Bonne, selon le modèle téléchargé ; rien ne quitte le PC",
+              "Gratuit, sans Internet", "Un modèle de transcription téléchargé (ci-dessous)", ""),
+    "elevenlabs": ("ElevenLabs Scribe v2", "Excellente, même sur le bruit et les accents ; reconnaît les intervenants",
+                   "Payant à l'usage, décompté du crédit ElevenLabs (forfait gratuit compris)",
+                   "Une clé API ElevenLabs (elle commence par « sk_ »)", "https://elevenlabs.io/app/settings/api-keys"),
+}
+
+
+def words_to_segments(words: list[dict]) -> list[TSegment]:
+    """Mots horodatés (ElevenLabs) → phrases : coupure à la ponctuation finale, sur un blanc ou une phrase
+    trop longue, et au changement d'intervenant."""
+    import math
+    out: list[TSegment] = []
+    cur: list[Word] = []
+    speaker = ""
+
+    def close() -> None:
+        if cur:
+            text = "".join(w.text for w in cur).strip()
+            out.append(TSegment(cur[0].start, cur[-1].end, " ".join(text.split()), list(cur), speaker))
+            cur.clear()
+
+    space = ""
+    for w in words:
+        kind = w.get("type", "word")
+        if kind == "spacing":
+            space = " "
+            continue
+        if kind != "word" or w.get("start") is None:
+            continue
+        start, end = float(w["start"]), float(w.get("end") or w["start"])
+        spk = w.get("speaker_id") or ""
+        if cur and (start - cur[-1].end > 0.8 or (spk and spk != speaker) or end - cur[0].start > 12
+                    or len(cur) >= 30):
+            close()
+        if not cur:
+            speaker, space = spk, ""
+        lp = w.get("logprob")
+        cur.append(Word(start, end, (space if cur else "") + w.get("text", ""),
+                        math.exp(lp) if isinstance(lp, (int, float)) else 1.0))
+        space = ""
+        if w.get("text", "").rstrip().endswith((".", "?", "!", "…")) and len(cur) >= 3:
+            close()
+    close()
+    return out
+
+
+class ScribeEngine:
+    """ElevenLabs Scribe v2 (en ligne) : le son, compressé, est envoyé à ElevenLabs."""
+    name = "elevenlabs:scribe_v2"
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise EngineUnavailable("Clé ElevenLabs absente : roue crantée de la transcription.")
+        self.key = api_key
+
+    def transcribe(self, audio: Path, language: str | None, progress: Progress,
+                   is_cancelled: Callable[[], bool]) -> Transcript:
+        from ..ai import elevenlabs
+        mp3 = audio.with_suffix(".mp3")
+        p = subprocess.run([ffmpeg.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                            "-i", str(audio), "-ac", "1", "-b:a", "64k", str(mp3)], capture_output=True, text=True,
+                           creationflags=_NOWIN)
+        if p.returncode != 0 or not mp3.exists():
+            raise RuntimeError(f"Compression du son impossible : {p.stderr[-300:]}")
+        if is_cancelled():
+            raise Cancelled()
+        progress(0.1, "Envoi du son à ElevenLabs (Scribe v2)")
+        try:
+            d = elevenlabs.speech_to_text(self.key, mp3, language)
+        except elevenlabs.ElevenLabsError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if is_cancelled():
+            raise Cancelled()
+        progress(0.95, "Mise en phrases")
+        return Transcript(words_to_segments(d.get("words") or []), elevenlabs.short_lang(d.get("language_code")),
+                          self.name)
 
 
 def transcribe_file(engine: TranscriptionEngine, src: Path, language: str | None, progress: Progress,

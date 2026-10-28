@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QWidget, Q
                                QMessageBox, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from ..core import AppContext
-from .widgets import button, label
+from .widgets import button, label, local_time
 
 COLS = ["Projet", "Concept", "Médias", "Vidéos", "Modifié", "État"]
 
@@ -66,7 +66,7 @@ class ProjectsPanel(QWidget):
         self.table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             vals = [r["name"], r["concept_name"], str(r["n_media"]), str(r["n_videos"]),
-                    (r["updated_at"] or "")[:16].replace("T", " "), "archivé" if r["status"] == "archived" else ""]
+                    local_time(r["updated_at"]), "archivé" if r["status"] == "archived" else ""]
             for j, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 it.setData(Qt.UserRole, r["id"])

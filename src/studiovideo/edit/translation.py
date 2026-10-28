@@ -40,7 +40,7 @@ def apply_preset(tl: Timeline, key: str) -> None:
 def translated_timeline(template: Timeline, asset_id: int, duration: float, lang: str, transcript,
                         preset: str = "white", aspect: str | None = None, top_text: str = "",
                         masks: list | None = None, dubbed: bool = False, keep_music: bool = True,
-                        text_style: dict | None = None) -> Timeline:
+                        text_style: dict | None = None, subtitles: bool = True) -> Timeline:
     tl = Timeline.from_dict(copy.deepcopy(template.to_dict()))
     if not tl.segments:                         # pas encore de montage : la vidéo entière
         tl.add_segment(asset_id, 0.0, duration)
@@ -50,7 +50,7 @@ def translated_timeline(template: Timeline, asset_id: int, duration: float, lang
         tl.set_aspect(aspect, min(tl.format.width, tl.format.height))
     apply_preset(tl, preset)
     tl.subtitles.language = lang
-    tl.subtitles.cues = generate(tl, {asset_id: transcript}) if transcript is not None else []
+    tl.subtitles.cues = generate(tl, {asset_id: transcript}) if transcript is not None and subtitles else []
     tl.subtitles.enabled = tl.subtitles.burn = bool(tl.subtitles.cues)
     if dubbed:
         tl.voice.mode, tl.voice.language = "dub", lang

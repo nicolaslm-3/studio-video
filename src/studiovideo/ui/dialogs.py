@@ -88,7 +88,7 @@ class ConceptDialog(QDialog):
         self.theme_ = QLineEdit(c.theme if c else "")
         self.theme_.setPlaceholderText("Ex. : humour")
         n = len(app.concepts.list_concepts(True))
-        self.color = ColorButton(c.color if c else CONCEPT_COLORS[n % len(CONCEPT_COLORS)], (34, 26))
+        self.color = ColorButton(c.color if c else CONCEPT_COLORS[n % len(CONCEPT_COLORS)], (26, 26))
         self.lang = language_combo(c.language if c else "fr")
         form.addRow("Nom", self.name)
         form.addRow("Thématique", self.theme_)

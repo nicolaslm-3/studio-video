@@ -10,6 +10,8 @@ pytest.importorskip("PySide6")
 
 from studiovideo.core import build_context  # noqa: E402
 from studiovideo.domain.models import Platform  # noqa: E402
+from PySide6.QtWidgets import QLabel  # noqa: E402
+from studiovideo.ui.widgets import ToggleSwitch  # noqa: E402
 
 
 @pytest.fixture
@@ -76,8 +78,10 @@ def test_studio_timeline_editing_persists(window, tmp_path):
     assert len(st.tl.segments) == 1
     st.redo()
     assert len(st.tl.segments) == 2
-    st.panel._add_text("hook")
-    assert st.tl.texts and st.tl.texts[0].start == 2.0
+    st.panel._add_text("hook")                                  # accroche : toute la vidéo
+    assert st.tl.texts and (st.tl.texts[0].start, st.tl.texts[0].end) == (0.0, st.tl.duration)
+    st.panel._add_text("cta")                                   # les autres : à la tête de lecture
+    assert st.tl.texts[1].start == 2.0
     st.flush()
     reloaded = ctx.montage.load(pid)
     assert len(reloaded.segments) == 2 and reloaded.texts[0].text == "Accroche"
@@ -498,16 +502,11 @@ def test_reframe_flow(window, monkeypatch):
     assert st.tl.segments[0].reframe == []
 
 
-def test_getting_started_card(window):
+def test_opens_in_free_edit_without_home(window):
     w, ctx = window
-    w.go(0)
-    items = w.dashboard.setup_items()
-    assert items[0][1] is True                      # le fixture a créé un compte
-    assert not all(done for _, done, _, _ in items)
-    w.dashboard.open_settings.emit("Publication")
-    assert w.settings_page.tabs.tabText(w.settings_page.tabs.currentIndex()) == "Publication"
-    w.dashboard._hide_start()
-    assert ctx.settings.get("hide_getting_started") is True
+    assert w.pages.currentWidget() is w.studio and w.studio._mode() == "free_edit"    # pas de page d'accueil
+    assert "Accueil" not in [b.text() for b in w.nav_group.buttons()]
+    assert "Publication" not in [w.settings_page.tabs.tabText(i) for i in range(w.settings_page.tabs.count())]
 
 
 def test_propose_copy_in_publication(window, tmp_path, monkeypatch):
@@ -776,7 +775,7 @@ def test_dock_parcours_and_drafts(window):
     from studiovideo.ui import theme
     w, ctx = window
     assert set(w.dock.buttons) == set(theme.PARCOURS) | {"export"}
-    w.go(0)
+    w.go(2)
     w.start_parcours("translation")                             # aucun projet du parcours : projet vierge ouvert
     pid = w.studio.project_id
     p = ctx.projects.get(pid)
@@ -787,10 +786,11 @@ def test_dock_parcours_and_drafts(window):
     assert theme.current["accent"].lower() == theme.PARCOURS["translation"][2].lower()
     w.start_parcours("translation")                             # même parcours : rien ne change
     assert w.studio.project_id == pid
-    assert set(w.studio.format_pick.buttons) == {"16:9", "1:1", "9:16"}     # format en trois icônes
-    w.studio.format_pick.buttons["1:1"].click()
+    fp = w.studio.format_pick                                   # format : un bouton et son menu (trois icônes)
+    assert set(fp.actions_) == {"16:9", "1:1", "9:16"} and fp.menu() is not None
+    fp.actions_["1:1"].trigger()
     assert w.studio.tl.format.aspect == "1:1" and ctx.projects.is_untouched(pid)
-    assert w.studio.format_pick.value() == "1:1"
+    assert fp.value() == "1:1" and "Carré" in fp.toolTip()
     w.start_parcours("original")                                # un projet traverse tous les parcours
     assert w.studio.project_id == pid and ctx.projects.get(pid)["mode"] == "original"
     assert w.dock.buttons["original"].isChecked() and w.studio.tl.format.aspect == "1:1"
@@ -800,10 +800,10 @@ def test_dock_parcours_and_drafts(window):
                              "640,360)", (bid,))
     w.start_parcours("smart_clipping")                          # même projet, même vidéo, autre interface
     assert w.studio.project_id == bid and w.studio.stack.currentWidget() is w.studio.clip_view
-    assert "d.mp4" in w.studio.clip_view.meta.text()
+    assert "d.mp4" in w.studio.clip_view.full_card.sub.text()
     w.start_parcours("translation")
     assert w.studio.project_id == bid and w.studio.tr_view.left.currentIndex() == 1
-    w.go(0)
+    w.go(2)
     w.start_parcours("original")                                # hors Studio : le projet ouvert reprend
     assert w.studio.project_id == bid and ctx.projects.get(bid)["mode"] == "original"
     w.studio.new_blank.emit("original")                            # bouton « + » : projet vierge du même parcours
@@ -812,7 +812,7 @@ def test_dock_parcours_and_drafts(window):
     w.close()                                                   # fermeture : projet vierge intact non conservé
     assert ctx.projects.get(nid) is None and ctx.projects.get(bid) is not None
     w.show()
-    w.go(0)                                                     # hors Studio : plus de parcours actif
+    w.go(2)                                                     # hors Studio : plus de parcours actif
     assert not w.dock.buttons["original"].isChecked()
     w.drawer.navigate.emit(6)
     assert w.pages.currentWidget() is w.concepts_page
@@ -832,21 +832,16 @@ def test_workspaces_show_only_their_tools(window):
     assert st.stack.currentWidget() is st.clip_view and not st.full_btn.isVisibleTo(st)
     w.start_parcours("translation")
     assert st.stack.currentWidget() is st.tr_view and st.guide.isHidden()
-    assert st.full_btn.isVisibleTo(st) and "Tous les outils" in st.full_btn.toolTip()
-    st.tr_view.open_editor.emit()                               # « Tous les outils » : montage complet
-    assert st.stack.currentWidget() is st.editor and st.timeline_box.isVisibleTo(st)
-    assert not st.export_card.isVisibleTo(st)                   # l'export a son propre onglet
-    assert "Revenir" in st.full_btn.toolTip()
-    st.full_btn.click()                                         # retour à l'écran simplifié
-    assert st.stack.currentWidget() is st.tr_view
-    w.start_parcours("texts")                                   # Textes : textes, sous-titres et export
+    assert not st.full_btn.isVisibleTo(st)                      # Traduction : plus de « Tous les outils »
+    w.start_parcours("texts")                                   # Textes : textes et sous-titres seulement
     assert st.stack.currentWidget() is st.editor and st.guide.isHidden()
     assert [st.panel.tab_name(i) for i in range(st.panel.count()) if st.panel.isTabVisible(i)] == \
-        ["Textes", "Sous-titres", "Export"]
-    assert [i for i in range(st.left_tabs.count()) if st.left_tabs.isTabVisible(i)] == [0]     # import à gauche
+        ["Textes", "Sous-titres"]
+    assert not st.left_tabs.isVisibleTo(st) and st.sidebar.isVisibleTo(st)   # à gauche : la barre des projets
+    assert st.sidebar.title.text() == "Textes"
     assert not st.timeline_box.isVisibleTo(st)
     assert not any(b.isVisibleTo(st) for b in (st.full_btn, st.undo_btn, st.redo_btn))
-    assert st.mplayer.note.text() == ""                         # plus de phrase sous l'aperçu
+    assert not st.mplayer.note.isVisibleTo(st)                  # plus de phrase sous l'aperçu
     for mode in ("original",):
         w.start_parcours(mode)
         lay = LAYOUTS[mode]
@@ -871,13 +866,20 @@ def test_import_bar_same_in_every_tab_and_attach_existing_video(window):
     st = w.studio
     w.start_parcours("free_edit")
     bar = (st.import_btn, st.link_edit, st.media_btn)
-    assert st.import_btn.text() == "" and st.export_quick.text() == ""         # icônes seules
-    assert st.export_quick.property("kind") == "export"         # fond rouge de l'onglet Export
+    assert st.import_btn.text() == "" and st.media_btn.text() == ""   # icônes
+    assert not hasattr(st, "export_quick")                      # Exporter : l'onglet Export du dock, en bas
     assert st.link_edit.placeholderText() == "" and not st.link_icon.icon().isNull()   # icône de lien seule
+    lay = st.topbar.layout()                                    # à gauche : Médias, Importer, lien
+    assert [lay.itemAt(i).widget() for i in range(3)] == [st.media_btn, st.import_btn, st.link_edit]
     assert not hasattr(st, "doc_action") and not hasattr(st, "format_combo")    # plus de menu « … »
+    assert not hasattr(st, "concept_lbl")                       # plus de rectangle « Brouillons »
+    assert st.project_combo.toolTip() == "Tous les projets"
     assert st.jobs_btn.isVisibleTo(st)                           # tâches : en haut
-    st._autosave()
-    assert st.save_lbl.text() != "Enregistré"
+    st.tl.set_aspect("1:1")                                     # une modification…
+    st._autosave()                                              # « Enregistré » : en haut de la liste des tâches
+    assert w.jobs_panel.note.text().startswith("✓ Enregistré à")
+    st.save_lbl.setText("Import en cours…")
+    assert "Import en cours…" in w.jobs_panel.note.text()
     w.start_parcours("smart_clipping")
     assert st.clip_view.body.currentIndex() == 0                # pas encore de vidéo : zone d'import
     con = ctx.db.connect()
@@ -886,7 +888,7 @@ def test_import_bar_same_in_every_tab_and_attach_existing_video(window):
     aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     st.attach_asset(aid)                                        # vidéo déjà importée (Médias)
     assert st.asset_id == aid and st.clip_view.body.currentIndex() == 1
-    assert "e.mp4" in st.clip_view.meta.text()
+    assert "e.mp4" in st.clip_view.full_card.sub.text()
     assert [(g.asset_id, g.src_out) for g in st.tl.segments] == [(aid, 90)]       # devenue la vidéo du projet
     assert not hasattr(st.tr_view, "link")                      # plus d'import propre à Traduction
     for mode in ("translation", "original", "texts", "free_edit", "export"):
@@ -896,7 +898,6 @@ def test_import_bar_same_in_every_tab_and_attach_existing_video(window):
         if mode == "original":
             assert st.media_list.isVisibleTo(st)                # médias importés visibles (images des scènes)
     assert st.stack.currentWidget() is st.export_view and w.dock.buttons["export"].isChecked()
-    assert not st.export_quick.isVisibleTo(st)
 
 
 def test_transcribe_button_sends_spoken_language(window, monkeypatch):
@@ -971,7 +972,7 @@ def test_drop_video_creates_draft_with_auto_clips(window, tmp_path):
     subprocess.run([ffmpeg.ffmpeg_bin(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:d=2:r=25",
                     "-f", "lavfi", "-i", "sine=f=300:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(v)], check=True)
-    w.go(0)
+    w.go(2)
     pid = w.drop_files([str(v)])
     p = ctx.projects.get(pid)
     assert p["name"] == "Mon interview" and p["mode"] == "smart_clipping"
@@ -1125,7 +1126,7 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert "Importe" in cv.b_title.text() and cv.b_action.isVisibleTo(cv)
     assert cv.import_extra() == {"auto_clips": True}            # import : transcription puis extraits, d'office
     assert st._import_extra() == {"auto_clips": True}           # même réglage depuis l'en-tête commun
-    assert [lb.text() for lb in cv.step_lbls] == ["Vidéo", "Transcription", "Sélection", "Vidéo"]
+    assert not hasattr(cv, "step_lbls")                         # plus d'étapes en haut
     con = ctx.db.connect()
     con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
                 "duration_s, width, height) VALUES (1,?,'video',?,'debat.mp4','fd',1,300,1920,1080)", (pid, __file__))
@@ -1134,18 +1135,22 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert [(g.asset_id, g.src_out) for g in st.tl.segments] == [(aid, 300)]      # vidéo entière dans le montage
     assert cv.body.currentIndex() == 1 and cv.left_stack.currentIndex() == 1   # question des critères
     assert "Politique" in cv.ask_note.text() and not cv.ask_go.isEnabled()     # pas encore transcrite
-    assert "rire" in cv.ask_crit.cats["humour"].toolTip() and "contradiction" in cv.ask_crit.cats["debat"].toolTip()
-    cv.ask_crit.cats["humour"].setChecked(True)                 # choisi pendant la transcription
-    assert ctx.projects.load_data(pid)["clip_criteria"]["categories"] == ["humour"]
-    assert cv.crit.cats["humour"].isChecked()                   # même choix dans la colonne de droite
+    assert list(cv.ask_crit.cats) == ["rire", "polarisant", "emotion", "politique"]   # les quatre critères
+    assert "mort de rire" in cv.ask_crit.cats["rire"].toolTip() and "sature" in cv.ask_crit.cats["rire"].toolTip()
+    assert "je pense que" in cv.ask_crit.cats["polarisant"].toolTip()
+    assert "voix qui monte" in cv.ask_crit.cats["emotion"].toolTip()
+    cv.ask_crit.cats["rire"].setChecked(True)                   # choisi pendant la transcription
+    assert ctx.projects.load_data(pid)["clip_criteria"]["categories"] == ["rire"]
+    assert cv.crit.cats["rire"].isChecked()                     # même choix dans la bulle des critères
+    assert cv.crit.window() is cv.popup and not cv.popup.isVisible()   # pas dans la colonne de droite
     ctx.transcripts.store_original(aid, Transcript([TSegment(0, 5, "Bonjour", [])], "fr", "t"))
     sent = []
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params)) or
                         900 + len(sent))
     cv.refresh()
-    assert "Cherche les extraits" in cv.b_title.text() and cv.ask_go.isEnabled()
+    assert not cv.banner.isVisibleTo(cv) and cv.ask_go.isEnabled()   # rien au-dessus : la carte des critères
     cv._find()
-    assert sent[-1][0] == "find_highlights" and sent[-1][1]["request"]["categories"] == ["humour"]
+    assert sent[-1][0] == "find_highlights" and sent[-1][1]["request"]["categories"] == ["rire"]
     ids = ctx.candidates.replace_proposals(pid, aid, [
         Candidate(start=10, end=40, subject="la dette", category="debat", score=91, rationale="Désaccord net",
                   hook="Ils ne sont pas d'accord"),
@@ -1157,16 +1162,25 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     cv.refresh()
     assert list(cv.cards) == ids and cv.left_stack.currentIndex() == 0 and "Coche" in cv.b_title.text()
     assert not cv.gen.isEnabled()
-    texts = [lb.text() for lb in cv.cards[ids[0]].findChildren(type(cv.meta))]
+    texts = [lb.text() for lb in cv.cards[ids[0]].findChildren(QLabel)]
     assert "la dette" in texts and not any("/10" in t for t in texts)          # pas de note sur 10
+    assert cv.cards[ids[0]].sub.text() == "Ils ne sont pas d'accord"   # sans parole transcrite : l'accroche
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 5, "Bonjour", []),
+                                                    TSegment(9, 14, "La dette publique explose", [])], "fr", "t"))
+    cv.refresh()
+    assert cv.cards[ids[0]].sub.text() == "La dette publique explose"   # en gris : le début de la transcription
+    assert len({c.height() for c in cv.cards.values()}) == 1    # hauteur fixe
+    assert cv.full_card.title.text() == "Vidéo complète" and cv.full_card.sub.text() == "debat.mp4"
+    cv._more()                                                  # « Proposer d'autres extraits » : la bulle
+    assert cv.popup.isVisible() and cv.popup.crit.cats["rire"].isChecked()
+    cv.popup.hide()
     assert sent == [] and not cv.follow.isChecked()             # suivi de la tête : désactivé par défaut
     assert cv.follow.text() == "" and "parle" in cv.follow.toolTip()         # icône seule, phrase au survol
     lay = cv.player.ctr                                         # à gauche des zones TikTok / Reels, même taille
-    assert lay.indexOf(cv.follow) == lay.indexOf(cv.player.zone_btn) - 1
-    assert cv.follow.size() == cv.player.zone_btn.size()
+    assert lay.indexOf(cv.follow) == lay.indexOf(cv.player.fx_btn) - 1
+    assert cv.follow.size() == cv.player.fx_btn.size()
     assert not hasattr(cv, "title_edit") and not hasattr(cv, "caption") and not hasattr(cv, "hook")
-    assert cv.meta.parent() is not cv.banner.parent()           # « Vidéo source » : en bas de la colonne d'outils
-    assert "Vidéo source" in cv.meta.text()
+    assert not hasattr(cv, "meta")                              # « Vidéo source » : la carte « Vidéo complète »
     cv.follow.click()                                           # bouton : analyse des visages
     assert ctx.projects.load_data(pid)["clip_criteria"]["reframe"] is True
     assert [k for k, _ in sent] == ["reframe"] and sent[0][1]["candidate_id"] == ids[0]
@@ -1187,17 +1201,19 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     mouse(QEvent.MouseMove, 140)
     mouse(QEvent.MouseButtonRelease, 140)
     assert abs(ctx.candidates.get(ids[1])["start_s"] - 62.0) < 1e-6        # 40 px = 20 crans de 0,1 s
-    cv.out_s.plus.click()                                       # + : 0,5 s de plus
-    assert abs(ctx.candidates.get(ids[1])["end_s"] - 95.5) < 1e-6
-    cv.player.t = 3.0                                           # « Début ici » selon la lecture
-    cv.here_in.click()
+    cv.out_s.plus.click()                                       # + : une seconde de plus
+    assert abs(ctx.candidates.get(ids[1])["end_s"] - 96.0) < 1e-6
+    assert cv.out_s.plus.geometry().x() == cv.out_s.minus.geometry().x()    # + au-dessus de −, à droite
+    assert not hasattr(cv, "here_in") and not hasattr(cv, "here_out")   # plus de « Début ici » / « Fin ici »
+    cv.in_s.edit.setText("1:05")                                # double-clic : saisie au clavier
+    cv.in_s._typed()
     assert abs(ctx.candidates.get(ids[1])["start_s"] - 65.0) < 1e-6
     ctx.candidates.set_hook(ids[1], "Le chômage en chiffres")
     cv._create()                                                # un projet par extrait coché
     data = ctx.projects.load_data(pid)
     assert data["clip_of"] == ids[1] and data["clip_projects"][str(ids[1])] == pid
     seg = st.tl.segments[0]
-    assert (seg.asset_id, seg.src_in, seg.src_out) == (aid, 65.0, 95.5)    # la vidéo du projet = l'extrait
+    assert (seg.asset_id, seg.src_in, seg.src_out) == (aid, 65.0, 96.0)    # la vidéo du projet = l'extrait
     assert st.tl.texts[0].text == "Le chômage en chiffres" and st.tl.format.aspect == "9:16"
     other = data["clip_projects"][str(ids[2])]
     assert other != pid and ctx.projects.get(other)["name"] == "les retraites"
@@ -1205,12 +1221,11 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert (ot.segments[0].src_in, ot.segments[0].src_out) == (120, 150) and ot.texts[0].text == "Et les retraites ?"
     assert [r["state"] for r in ctx.candidates.list(other)] == ["accepted"]      # son extrait, déjà choisi
     cv.refresh()
-    assert "prête" in cv.b_title.text() and not cv.gen.isVisibleTo(cv) and cv.next.isVisibleTo(cv)
-    assert cv.next.go.text() == "Suivant : Traduction et adaptation"
-    tags = {c: [lb.text() for lb in card.findChildren(type(cv.meta))] for c, card in cv.cards.items()}
+    assert "prête" in cv.b_title.text() and not cv.gen.isVisibleTo(cv) and not hasattr(cv, "next")
+    tags = {c: [lb.text() for lb in card.findChildren(QLabel)] for c, card in cv.cards.items()}
     assert "Vidéo de ce projet" in tags[ids[1]] and "Vidéo créée" in tags[ids[2]]
     cv.out_s.minus.click()                                      # l'extrait réglé : la vidéo du projet suit
-    assert st.tl.segments[0].src_out == 95.0
+    assert st.tl.segments[0].src_out == 95.0                    # − : une seconde de moins
     cv.on_job(JobInfo(id=950, kind="reframe", label="", status="succeeded", progress=1, message="", error="",
                       critical=False, created_at="", result={"keys": [[65.0, 0.3], [95.0, 0.7]]},
                       params={"project_id": pid, "candidate_id": ids[1], "src_in": 65.0, "src_out": 95.0,
@@ -1218,17 +1233,29 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert ctx.projects.load_data(pid)["clip_reframe"][str(ids[1])]["keys"] == [[65.0, 0.3], [95.0, 0.7]]
     calls = []                                                  # clic droit sur un projet : renommer, supprimer
     monkeypatch.setattr(st, "project_menu", lambda *a: calls.append(a))
-    item = cv.projects.itemAt(0).widget()
+    items = [st.sidebar.items.itemAt(i).widget() for i in range(st.sidebar.items.count())]
+    assert {it.pid for it in items} >= {pid, other}             # barre de gauche : les nouveaux projets aussi
+    item = next(it for it in items if it.pid == pid)
+    assert item.name.text() == "debat"                          # le nom du média source
+    assert item.sub.text() == "publique · explose · dette"       # en gris : les mots-clés de la transcription
     QApplication.sendEvent(item, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(3, 3), QPoint(30, 30)))
     assert calls and calls[0][0] == item.pid and calls[0][1] == "smart_clipping"
-    acts = cv.next.more.menu().actions()                        # la flèche : les autres onglets
-    assert [a.text() for a in acts] == ["Traduction et adaptation", "Textes", "Montage libre", "Export"]
-    acts[3].trigger()                                           # vers Export
-    assert st.stack.currentWidget() is st.export_view and w.dock.buttons["export"].isChecked()
-    w.start_parcours("smart_clipping")
-    cv.next.go.click()                                          # « Suivant » : la même vidéo, dans Traduction
+    w.start_parcours("translation")                             # le dock en bas : la même vidéo, dans Traduction
     assert w.dock.buttons["translation"].isChecked() and st.stack.currentWidget() is st.tr_view
     assert st.tr_view.player.tl.duration == 30.0 and st.tr_view.player.tl.format.aspect == "9:16"
+    w.start_parcours("smart_clipping")
+    cv._select(-1)                                              # « Vidéo complète » : toute la vidéo
+    assert cv.player.tl.duration == 300 and not cv.edit_box.isVisibleTo(cv)
+    n = len(ctx.candidates.list(pid))
+    cv._add_clip()                                              # « + » : un petit rectangle, pas une fenêtre
+    assert cv.add_popup.isVisible() and cv.add_popup.windowFlags() & Qt.Popup
+    cv.add_popup.start.setValue(200)
+    cv.add_popup.length.setValue(20)
+    cv.add_popup.go.click()                                     # un extrait choisi à la main
+    assert not cv.add_popup.isVisible()
+    new = [r for r in ctx.candidates.list(pid) if r["engine"] == "manual"]
+    assert len(ctx.candidates.list(pid)) == n + 1 and (new[0]["start_s"], new[0]["end_s"]) == (200, 220)
+    assert new[0]["state"] == "accepted" and cv.sel == new[0]["id"]
 
 
 def test_delete_and_rename_project_from_list(window, monkeypatch):
@@ -1248,8 +1275,8 @@ def test_delete_and_rename_project_from_list(window, monkeypatch):
     assert st.delete_project(b, "smart_clipping")               # projet ouvert supprimé : le suivant s'ouvre
     assert ctx.projects.get(b) is None and st.project_id == a
     assert st.stack.currentWidget() is st.clip_view
-    names = [st.clip_view.projects.itemAt(i).widget() for i in range(st.clip_view.projects.count())]
-    assert [it.pid for it in names] == [a]
+    items = [st.sidebar.items.itemAt(i).widget() for i in range(st.sidebar.items.count())]
+    assert [it.pid for it in items] == [a]                     # barre des projets à jour
 
 
 def test_translation_screen_generate(window, monkeypatch):
@@ -1271,18 +1298,22 @@ def test_translation_screen_generate(window, monkeypatch):
     st.refresh()
     assert st.tl.format.aspect == "9:16"                                  # format de la vidéo d'origine
     assert tv.left.currentIndex() == 1 and not tv.chips["fr"].isEnabled()      # langue d'origine
-    assert "Français détecté" in tv.video_lbl.text()
-    assert tv.engine.currentData() == "auto" and "Automatique" in tv.engine.currentText()   # gratuit par défaut
-    ctx.settings.set("llm", {"kind": "ollama", "model": "m"})
-    tv.refresh()
-    assert [tv.engine.itemData(i) for i in range(tv.engine.count())][:2] == ["auto", "llm"]
+    assert "Français détecté" in tv.video_lbl.text() and "court.mp4" in tv.video_lbl.text()   # sous l'aperçu
+    assert tv.video_lbl.parent() is not tv.go.parent()
+    steps = [lb.text() for lb in tv.findChildren(type(tv.video_lbl)) if lb.property("role") == "step"]
+    assert "VIDÉO" not in " ".join(steps) and not any("·" in s for s in steps)   # ni étape vidéo ni numéros
+    assert tv.do_voice.toolTip().startswith("Voulez-vous traduire la voix") and not tv.do_voice.isChecked()
+    assert isinstance(tv.do_voice, ToggleSwitch) and isinstance(tv.do_subs, ToggleSwitch)   # interrupteurs
+    assert tv.subs_row.engine.text().startswith("Automatique") and tv.subs_row.ok      # gratuit, prêt (vert)
+    assert not tv.voice_row.ok and "Aucune voix" in tv.voice_row.state.toolTip()       # pas de voix : rouge
+    assert tv.voice_row.gear is not None and tv.subs_row.gear is not None             # roues crantées
+    assert not hasattr(tv, "do_top") and not hasattr(tv, "engine")                    # texte du haut : Textes
+    assert tv.chips["de"].text() == "" and tv.chips["de"].toolTip().startswith("Allemagne")   # drapeau
     tv.chips["de"].setChecked(True)
     assert tv.go.isEnabled() and tv.go.text() == "Préparer  ·  2 langues"      # anglais coché par défaut
     next(b for b in tv.presets.buttons() if b.property("preset") == "yellow").setChecked(True)
-    tv.top_text.setText("Recette facile")
-    tv._preview()
-    assert tv.player.tl.subtitles.style.color == "#FFD54A" and tv.player.tl.format.aspect == "9:16"
-    assert tv.player.tl.texts[0].text == "Recette facile"
+    tv._preview()                                               # projet d'origine : la vidéo originale
+    assert tv.player.tl is st.tl and tv.player.tl.format.aspect == "9:16"
     assert ctx.projects.load_data(pid)["translate_ui"]["preset"] == "yellow"   # choix gardés dans le projet
     sent = []
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
@@ -1290,17 +1321,36 @@ def test_translation_screen_generate(window, monkeypatch):
     tv._go()
     kind, params, kw = sent[0]
     assert kind == "translate_video" and params["languages"] == ["en", "de"] and params["export"] is False
-    assert params["preset"] == "yellow" and params["top_text"] == "Recette facile" and params["voice"] is None
+    assert params["preset"] == "yellow" and params["top_text"] == "" and params["voice"] is None
+    assert params["subtitles"] is True and params["root_id"] == pid
     assert params["timeline"]["segments"][0]["asset_id"] == aid                # le montage du projet
     assert tv.go.text() == "Annuler"
+    tv._show_task("EN · voix · Synthèse 3/40", 0.5)             # ce que fait le logiciel, en clair
+    assert tv.task.text() == "Anglais — doublage de la voix · 50 %" and tv.task_detail.text() == "Synthèse 3/40"
     tv.on_job(JobInfo(id=77, kind="translate_video", label="", status="succeeded", progress=1, message="", error="",
                       critical=False, created_at="", params=params,
                       result={"ready": ["en", "de"], "top_texts": {"en": "Easy recipe", "de": "Einfaches Rezept"},
                               "masks": [], "dubbed": False, "keep_music": True}))
     tr = ctx.projects.load_data(pid)["translations"]
     assert tr["ready"] == ["de", "en"] and tr["top_texts"]["en"] == "Easy recipe" and tr["preset"] == "yellow"
+    ctx.transcripts.store_translation(aid, Transcript([TSegment(0, 4, "Hello everyone", [])], "en", "t"))
     tv.refresh()
-    assert tv.next.isVisibleTo(tv) and tv.next.go.text() == "Suivant : Textes"   # vers l'onglet suivant
+    assert not hasattr(tv, "next")                              # plus de « Suivant » : le dock en bas
+    rep = tv.status.text()                                      # résultat outil par outil
+    assert "Sous-titres traduits" in rep and "Réussi" in rep and "Voix traduite" in rep and "non demandé" in rep
+    report = tv._report({"status": "succeeded", "result": {"status": {
+        "en": {"subtitles": "ok", "voice": "ok"}, "tr": {"subtitles": "ok", "voice": "pas de voix en turc"}}}},
+        ["en", "tr"])
+    assert "✓ Réussi :</span> Anglais, Turc" in report and "✗ Échec · Turc :</span> pas de voix en turc" in report
+    vers = ctx.projects.versions(pid)                           # langue prête : une version sous le projet
+    assert [r["lang"] for r in vers] == ["en"] and vers[0]["name"].endswith("V-EN")
+    vtl = ctx.montage.load(vers[0]["id"])
+    assert vtl.subtitles.language == "en" and vtl.subtitles.cues[0].text == "Hello everyone"
+    entries = st.sidebar.entries()
+    assert [(e[0], e[3]) for e in entries if e[0] in (pid, vers[0]["id"])] == [(pid, False), (vers[0]["id"], True)]
+    assert entries[[e[0] for e in entries].index(vers[0]["id"])][1] == "V-EN"
+    tv.refresh()
+    assert len(ctx.projects.versions(pid)) == 1                 # pas de doublon
 
 
 def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path):
@@ -1323,26 +1373,42 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
                 "duration_s, width, height) VALUES (1,?,'video',?,'x.mp4','fx',1,20,1080,1920)", (pid, __file__))
     aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     st.refresh()
-    st.export_quick.click()                                     # « Exporter » mène à l'onglet Export
+    st.show_export()                                            # l'onglet Export du dock
     ev = st.export_view
     assert st.stack.currentWidget() is ev and w.dock.buttons["export"].isChecked()
     assert list(ev.nets) == ["youtube", "tiktok", "facebook", "instagram"]    # une colonne par réseau
     assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet
     assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
-    assert not ev.version_row.isVisibleTo(ev)                   # pas de langue préparée : pas de choix
-    assert ev.file_name.text() == p["name"] and ev.act_local.isChecked()      # par défaut : sur le PC
-    assert not hasattr(ev, "act_draft") and not hasattr(ev, "tabs")
+    assert not hasattr(ev, "version") and not hasattr(ev, "version_row")    # langues : versions du projet
+    assert ctx.projects.get(pid)["name"] == "x"                 # le projet a pris le nom du média
+    assert ev.file_name.text() == "x" and ev.act_local.isChecked()      # par défaut : sur le PC
+    from studiovideo.ui.export_view import date_prefix, file_name
+    assert ev.date_lbl.text() == date_prefix() and len(date_prefix()) == 10   # le fichier commence par la date
+    assert file_name("2020-01-01 Clip") == f"{date_prefix()} Clip.mp4"
+    assert "Instagram" in ev.act_draft.toolTip() and not hasattr(ev, "tabs")  # brouillon sur les réseaux
     assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
+    assert ev.desc.height() <= 70                                # description moins haute
     acc = ev.nets["youtube"].account
-    assert acc.count() == 1 and not acc.itemIcon(0).isNull()    # pastille du compte
+    from studiovideo.ui.export_view import ADD_ACCOUNT, CONNECT_ACCOUNT
+    assert acc.itemData(0) == yt.id and not acc.itemIcon(0).isNull()    # pastille du compte
+    assert acc.itemData(acc.count() - 1) == ADD_ACCOUNT and acc.itemText(acc.count() - 1) == "Ajouter un compte"
+    assert acc.itemData(acc.count() - 2) == CONNECT_ACCOUNT          # « Connecter ce compte… »
+    added = []
+    monkeypatch.setattr(ev, "add_account", added.append)
+    acc.setCurrentIndex(acc.count() - 1)                        # « Ajouter un compte » : le compte reste choisi
+    assert added == ["youtube"] and acc.currentData() == yt.id
+    assert [lb.text() for lb in ev.findChildren(type(st.mode_icon)) if "Langue" in lb.text()] == []
     ev.title.setText("Le vrai chiffre")
     ev.desc.setPlainText("Ce qu'on ne vous dit pas #politique")
     yt_tab, tk_tab = ev.nets["youtube"], ev.nets["tiktok"]
     assert yt_tab.title.text() == "Le vrai chiffre" and yt_tab.text.toPlainText() == "Ce qu'on ne vous dit pas #politique"
     assert tk_tab.title_row.isHidden() and tk_tab.text.toPlainText() == \
         "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"               # TikTok : titre puis description
-    assert not ev.nets["facebook"].on.isEnabled()               # pas de compte Facebook : signalé
+    assert not ev.nets["facebook"].on.isEnabled()               # pas de compte Facebook : bouton pour l'ajouter
     assert ev.nets["facebook"].no_account.isVisibleTo(ev.nets["facebook"])
+    assert ev.nets["facebook"].no_account.text() == "Ajouter un compte"
+    assert ev.nets["facebook"].no_account.property("kind") == "ghost"    # sans fond rouge, petit
+    assert not [lb for lb in ev.findChildren(QLabel) if "titre au début" in lb.text()]   # « Description »
     tk_tab.text.setPlainText("Texte rien que pour TikTok 🔥")      # texte propre au réseau
     ev.desc.setPlainText("Nouvelle description")
     assert tk_tab.text.toPlainText() == "Texte rien que pour TikTok 🔥" and tk_tab.reset.isVisibleTo(tk_tab)
@@ -1350,6 +1416,7 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     ev.nets["youtube"].text.setFocus()
     from studiovideo.ui.export_view import EmojiButton
     eb = next(b for b in ev.findChildren(EmojiButton) if b.target is ev.title)
+    assert eb.parent() is ev.title and eb.text() == ""          # icône grise, dans le champ, en haut à droite
     eb.insert("🔥")                                              # menu d'emojis
     assert "🔥" in ev.title.text()
     ui = ctx.projects.load_data(pid)["export_ui"]
@@ -1363,13 +1430,14 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     ev._changed()
     ev._go()                                                    # sur le PC seulement : aucune publication
     kind, params, kw = sent[-1]
-    assert kind == "export_timeline" and params["dest"] == str(tmp_path / "Mon export   final.mp4")
+    dest = tmp_path / f"{date_prefix()} Mon export   final.mp4"   # date du jour, puis le nom choisi
+    assert kind == "export_timeline" and params["dest"] == str(dest)
     pend = ctx.projects.load_data(pid)["export_pending"]
     assert pend["action"] == "local" and pend["nets"] == {}
-    (tmp_path / "Mon export   final.mp4").write_bytes(b"x")
+    dest.write_bytes(b"x")
     ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
                       error="", critical=True, created_at="", params=params,
-                      result={"path": str(tmp_path / "Mon export   final.mp4")}))
+                      result={"path": str(dest)}))
     data = ctx.projects.load_data(pid)
     assert "enregistrée" in data["export_last"]["summary"] and "master_id" not in data["export_last"]
     assert ev.open_dir.isVisibleTo(ev)
@@ -1397,6 +1465,32 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert pubs["tiktok"].description == "Texte rien que pour TikTok 🔥" and pubs["tiktok"].title == ""
     assert all(pb.status.value == "scheduled_local" for pb in pubs.values())     # programmées (Calendrier)
     assert p["concept_id"] and yt.id
+    # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram n'en propose pas
+    ctx.concepts.create_account(Platform.INSTAGRAM, "moninsta")
+    con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
+    ev.refresh()
+    assert ev.nets["instagram"].on.isChecked()
+    ev.act_draft.setChecked(True)
+    assert ev.go.text().startswith("Exporter en brouillon") and not ev.when.isEnabled()
+    ev.file_name.setText("brouillon")
+    ev._go()
+    kind, params, kw = sent[-1]
+    pend = ctx.projects.load_data(pid)["export_pending"]
+    assert pend["action"] == "draft" and set(pend["nets"]) == {"youtube", "tiktok", "instagram"}
+    out2 = tmp_path / "b.mp4"
+    out2.write_bytes(b"x")
+    vid2 = ctx.montage.record_export(pid, st.tl, {"path": str(out2)}, None)
+    n = len(sent)
+    ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
+                      error="", critical=True, created_at="", params=params,
+                      result={"path": str(out2), "variant_id": vid2}))
+    ups = [pr for k, pr, _ in sent[n:] if k == "publish_upload"]
+    assert len(ups) == 1 and ups[0]["draft"] is True and ups[0]["now"] is True
+    data = ctx.projects.load_data(pid)
+    assert "brouillon" in data["export_last"]["summary"] and "Instagram" in data["export_last"]["summary"]
+    pubs = {pb.account.platform.value: pb for pb in ctx.publications.list_for_master(data["export_last"]["master_id"])}
+    assert pubs["instagram"].status.value == "manual_action" and pubs["tiktok"].status.value == "manual_action"
+    assert pubs["youtube"].status.value == "uploading"
     monkeypatch.setattr(ctx.jobs, "submit", real_submit)
 
 
@@ -1405,9 +1499,296 @@ def test_llm_model_is_a_dropdown(window, monkeypatch):
     w, ctx = window
     sp = w.settings_page
     monkeypatch.setattr(hl, "check_llm", lambda kind, url="", key="": ["gpt-4o-mini", "tts-1", "gpt-4o"])
-    assert not sp.llm_model.isEditable()                        # rien à taper
-    sp.llm_kind.setCurrentIndex(sp.llm_kind.findData("openai"))   # la liste se remplit d'elle-même
-    assert [sp.llm_model.itemText(i) for i in range(sp.llm_model.count())] == ["gpt-4o", "gpt-4o-mini"]
-    sp.llm_model.setCurrentText("gpt-4o-mini")
-    sp._llm_save()
+    lp = sp.llm_panel
+    assert not lp.model.isEditable()                            # rien à taper
+    lp.kind.setCurrentIndex(lp.kind.findData("openai"))         # la liste se remplit d'elle-même
+    assert [lp.model.itemText(i) for i in range(lp.model.count())] == ["gpt-4o", "gpt-4o-mini"]
+    lp.model.setCurrentText("gpt-4o-mini")
+    lp.save()
     assert ctx.settings.get("llm", None)["model"] == "gpt-4o-mini"
+
+
+def test_texts_tools_voice_track_and_preview(window, tmp_path):
+    """Onglet Textes : boutons d'ajout dans leur style, début / fin à la souris, position (haut, centre, bas puis
+    X / Y libres), police courte, taille à la souris, B / I, alignement ; sous-titres réglables à la souris ;
+    piste Voix de la timeline ; aperçu sans bandes noires, barre de lecture sous l'image."""
+    from studiovideo.edit.dubbing import DubLine, DubManifest
+    from studiovideo.edit.textrender import anchor
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("texts")
+    pid = st.project_id
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'v.mp4','fv',1,10,1080,1920)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.refresh()
+    pn = st.panel
+    assert st.tl.duration == 10.0 and pn.isTabVisible(2) and not pn.isTabVisible(5)     # pas d'onglet Export
+    assert all(not b.icon().isNull() and b.text() == "" for b in pn.add_btns.values())   # le texte, dans son style
+    assert not [b for b in pn.findChildren(type(pn.t_all)) if b.text() in ("Début ici", "Fin ici")]
+    pn._add_text("title")
+    t = pn.current_text()
+    assert (t.start, t.end, t.position) == (0.0, 10.0, "top")            # titre : toute la vidéo
+    pn.t_start._commit(1.5)                                              # début réglé à la souris
+    assert t.start == 1.5 and pn.t_start.value() == 1.5
+    pn.t_all.click()                                                     # « Tout » : à droite des réglages
+    assert (t.start, t.end) == (0.0, 10.0)
+    assert pn.pos_btns["top"].isChecked() and abs(pn.text_y.value() / 1000 - anchor(t, 1080, 1920)[1]) < 0.002
+    pn.pos_btns["bottom"].click()                                        # Bas : le texte y va, X / Y suivent
+    assert t.position == "bottom" and pn.text_y.value() > 700 and (t.x, t.y) == anchor(t, 1080, 1920)
+    pn.text_y.setValue(400)                                              # Y bougé : placement libre
+    assert t.position == "custom" and t.y == 0.4 and not any(b.isChecked() for b in pn.pos_btns.values())
+    pn.pos_btns["top"].click()                                           # Haut de nouveau : retour en haut
+    assert t.position == "top" and pn.pos_btns["top"].isChecked()
+    font = next(w_ for k, p_, w_ in pn.bt.items if p_ == "font")
+    assert font.maximumWidth() <= 170 and font.toolTip() == t.font                 # nom entier au survol
+    assert font.itemData(0, 3) == font.itemText(0)                                  # 3 = Qt.ToolTipRole
+    size = next(w_ for k, p_, w_ in pn.bt.items if p_ == "size")
+    size._commit(100)                                                    # taille réglée à la souris
+    assert t.size == 100 and size.val.text() == "100 px"
+    bold = next(w_ for k, p_, w_ in pn.bt.items if p_ == "bold")
+    assert bold.text() == "B" and bold.isCheckable() and bold.isChecked()
+    bold.click()
+    assert t.bold is False
+    align = next(w_ for k, p_, w_ in pn.bt.items if p_ == "align")
+    align.buttons["left"].click()
+    assert t.align == "left" and align.buttons["left"].isChecked()
+    labels = {lb.text() for lb in pn.widget(2).findChildren(type(st.mode_icon))}      # onglet Textes
+    assert not {"Police", "Taille", "Style"} & labels                    # ça se comprend sans libellés
+    pn.playhead = 2.0                                                    # sous-titres : début / fin à la souris
+    pn._cue_add()
+    c = pn._cue()
+    pn.cue_end._commit(3.4)
+    assert abs(c.end - 3.4) < 1e-6 and not hasattr(pn, "_cue_here")
+    # piste Voix : les phrases de la voix doublée (version traduite)
+    d = tmp_path / "dub"
+    d.mkdir()
+    ctx.dubs.store(DubManifest(aid, "en", "piper", {}, 10.0, [DubLine(0, 1.0, 3.0, "Hello everyone", "", "v",
+                                                                       placed_start=1.0, placed_end=2.8)]), d)
+    st.tl.voice.mode, st.tl.voice.language = "dub", "en"
+    st._push_views()
+    cv = st.timeline.canvas
+    assert cv.voice_name == "Voix doublée · anglais" and cv.voice_lines == [(1.0, 2.8, "Hello everyone")]
+    # aperçu : pas de bandes noires (fond de la page), barre de lecture sous l'image, à sa largeur
+    view = st.mplayer.view
+    from PySide6.QtCore import Qt
+    assert view.backgroundBrush().style() == Qt.NoBrush and view.alignment() & Qt.AlignBottom   # image en bas
+    view.frame_moved.emit(40.0, 25.0)
+    m = st.mplayer.slider_row.contentsMargins()
+    assert (m.left(), m.right()) == (40, 25)
+    w.start_parcours("export")
+    ep = st.export_view.player                                           # clic : icône lecture / pause 1,5 s
+    ep._compact_click()
+    assert not ep._flash.isHidden() and ep._flash_timer.interval() == 1500
+
+
+def test_engine_dialogs_have_one_choice_pastille(window):
+    """Réglages des moteurs : une pastille par alternative, une seule cochée ; un moteur pas prêt ne se choisit pas."""
+    from studiovideo.ui.engines import TranslationEnginesDialog, VoiceEnginesDialog
+    w, ctx = window
+    d = TranslationEnginesDialog(ctx, w)
+    assert d.picks["auto"].isChecked() and d.choice.exclusive()
+    assert d.picks["google_free"].isEnabled() and not d.picks["deepl"].isEnabled()   # sans clé : pas choisissable
+    d.picks["google_free"].setChecked(True)
+    assert not d.picks["auto"].isChecked() and ctx.settings.get("translate_engine") == "google_free"
+    d.close()
+    w.start_parcours("translation")
+    tv = w.studio.tr_view
+    tv.refresh()
+    assert tv.subs_row.engine.text().startswith("Google Traduction")   # le moteur affiché suit
+    v = VoiceEnginesDialog(ctx, w)
+    assert set(v.picks) == {"elevenlabs", "eleven_dub", "openai", "piper"} and v.chosen is None
+    v.close()
+
+def test_refresh_keeps_playing_and_sidebar_stable(window, monkeypatch):
+    """Une tâche qui finit (rafraîchissement) ne met plus la vidéo en pause ; la barre des projets n'est pas
+    reconstruite si rien n'a changé ; un nom trop long finit par « … » sans élargir la ligne."""
+    from PySide6.QtWidgets import QApplication
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("smart_clipping")
+    ctx.db.connect().execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                             "audio_tracks, duration_s, width, height) VALUES (1,?,'video','l.mp4',?,'fl',1,9,640,"
+                             "360)", (st.project_id, "Un nom de fichier vraiment beaucoup trop long pour la barre.mp4"))
+    st.refresh()
+    paused = []
+    monkeypatch.setattr(st.mplayer, "pause", lambda: paused.append("montage"))
+    monkeypatch.setattr(st.clip_view.player, "pause", lambda: paused.append("clipping"))
+    monkeypatch.setattr(st.tr_view.player, "pause", lambda: paused.append("traduction"))
+    st.refresh()
+    st.refresh()                                                # tâche finie, import… : la lecture continue
+    assert paused == []
+    items = [st.sidebar.items.itemAt(i).widget() for i in range(st.sidebar.items.count())]
+    st.sidebar.refresh()
+    assert items == [st.sidebar.items.itemAt(i).widget() for i in range(st.sidebar.items.count())]
+    for _ in range(5):
+        QApplication.processEvents()
+    item = next(it for it in items if it.pid == st.project_id)
+    assert item.sub.text() == "Transcription à venir"           # puis les mots-clés de la transcription
+    assert QLabel.text(item.name).endswith("…") and item.name.text().endswith("pour la barre")   # nom du média
+    assert item.minimumSizeHint().width() < st.sidebar.width() - 20   # ne déborde pas : arrondie des deux côtés
+    w.start_parcours("translation")                             # autre écran : là, la lecture s'arrête
+    assert "clipping" in paused
+
+def test_robot_effects_export_sidebar_and_nested_projects(window, monkeypatch):
+    """Bouton robot sous chaque aperçu (effets de la vidéo du projet), barre des projets dans Export (on y reste),
+    extraits rangés sous leur projet, version supprimée pour de bon, heure en heures + minutes."""
+    from PySide6.QtCore import QDateTime, QTime, Qt
+    from PySide6.QtWidgets import QMessageBox
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("free_edit")
+    pid = st.project_id
+    ctx.db.connect().execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
+                             "audio_tracks, duration_s, width, height) VALUES (1,?,'video','r.mp4','r.mp4','fr',1,20,"
+                             "1920,1080)", (pid,))
+    st.refresh()
+    for pl in (st.mplayer, st.clip_view.player, st.tr_view.player, st.export_view.player):
+        lay = pl.ctr
+        assert lay.indexOf(pl.fx_btn) == lay.indexOf(pl.format_pick) - 1   # robot puis format
+        assert not hasattr(pl, "step_prev") and pl.play_btn.width() == 26   # sans image avant / arrière
+    fp = st.clip_view.player.format_pick                         # zones TikTok / Reels : dans le menu du format
+    fp.zone_act.trigger()
+    assert st.clip_view.player.zone.isChecked() and st.mplayer.format_pick is st.format_pick
+    fp.actions_["1:1"].trigger()                                 # format choisi sous un aperçu : partout
+    assert st.tl.format.aspect == "1:1" and st.mplayer.format_pick.value() == "1:1"
+    w.start_parcours("smart_clipping")
+    st.clip_view.player.fx_btn.click()                           # le rectangle des effets
+    pop = st.clip_view.player.fx_pop
+    assert pop.isVisible() and pop.windowFlags() & Qt.Popup
+    pop.mirror.setChecked(True)
+    pop.tilt.setValue(3.5)
+    pop.speed.setValue(1.5)
+    chips = pop.looks.buttons()                                  # filtres : un emoji, le nom au survol, même taille
+    assert {b.toolTip() for b in chips} >= {"Chaud", "Froid", "Noir et blanc"}
+    assert next(b for b in chips if b.toolTip() == "Chaud").text() == "🔥"
+    assert len({b.size().toTuple() for b in chips}) == 1
+    next(b for b in chips if b.property("look") == "nb").setChecked(True)
+    pop.amount.setValue(40)
+    v = st.tl.video                                              # la vidéo du projet, dans tous les onglets
+    assert v.mirror and v.tilt == 3.5 and v.speed == 1.5 and v.look == "nb" and v.look_amount == 0.4
+    st.flush()
+    saved = ctx.montage.load(pid).video
+    assert saved.mirror and saved.speed == 1.5
+    pop.hide()
+    st.tr_view.refresh()
+    assert st.tr_view.player.tl.video.mirror                     # Traduction : même image
+    assert not st.tr_view.video_lbl.isVisibleTo(st.tr_view)      # plus de nom de fichier sous l'aperçu
+    w.start_parcours("texts")
+    assert st.viewer_card.property("role") == "dim"              # pas de grand rectangle sous l'aperçu
+    # export : la barre des projets, et on y reste en changeant de projet
+    other = ctx.projects.quick_create(ctx.concepts, "translation", "Autre")
+    w.start_parcours("export")
+    assert st.sidebar.isVisibleTo(st) and st.sidebar.mode == "export" and not st.project_combo.isVisibleTo(st)
+    st.sidebar.refresh()
+    st.open_from_list(other, "export")
+    assert st.project_id == other and st.stack.currentWidget() is st.export_view
+    when = st.export_view.when
+    when.setDateTime(QDateTime(when.dateTime().date(), QTime(14, 2)))
+    assert (when.hour.currentText(), when.minute.currentText()) == ("14 h", "05")   # minutes par 5
+    # un extrait devenu un projet, et une version traduite : sous leur projet
+    clip = ctx.projects.quick_create(ctx.concepts, "smart_clipping", "Mon extrait")
+    data = ctx.projects.load_data(pid)
+    data["clip_projects"] = {"1": pid, "2": clip}
+    data["translations"] = {"ready": ["en"]}
+    ctx.projects.save_data(pid, data)
+    ver = ctx.projects.save_version(pid, "en", st.tl.to_dict())
+    ents = st.sidebar.entries()
+    ids = [e[0] for e in ents]
+    assert ids.index(pid) < ids.index(ver) < ids.index(clip) and ents[ids.index(clip)][3] == 1
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    assert st.delete_project(ver, "export")
+    assert "en" not in ctx.projects.load_data(pid)["translations"]["ready"]       # pas recréée ensuite
+
+
+def test_transcript_button_translate_and_voices(window, monkeypatch):
+    """Bouton « Transcription » (corriger : les sous-titres suivent), roue crantée de la transcription ;
+    Traduction : sous-titres puis voix, « Traduire » et « Corriger », doublage ElevenLabs, écoute des voix."""
+    from studiovideo.edit.model import Timeline
+    from studiovideo.services import secrets
+    from studiovideo.transcribe.model import TSegment, Transcript
+    from studiovideo.ui.engines import TranscriptionEnginesDialog
+    from studiovideo.ui.simple_views import VoiceDialog
+    from studiovideo.ui.transcript_dialog import TranscriptDialog
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("translation")
+    pid = st.project_id
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video',?,'t.mp4','ft',1,10,1080,1920)", (pid, __file__))
+    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 2, "Bonjour à tous", []),
+                                                    TSegment(2, 4, "On commence", [])], "fr", "faster-whisper:small"))
+    st.refresh()
+    assert st.transcript_btn.isVisibleTo(st) and not hasattr(st, "asr_btn")     # la roue : dans la fenêtre
+    assert st.media_btn.toolTip() == "Médias"
+    from studiovideo.edit.subtitles import generate
+    st.tl.subtitles.cues = generate(st.tl, {aid: ctx.transcripts.get(aid)})       # sous-titres déjà faits
+    dlg = TranscriptDialog(ctx, st.project_video(), "", st)
+    assert dlg.table.rowCount() == 2 and dlg.info.text() == "t.mp4 · Whisper small · sur ce PC"
+    assert not hasattr(dlg, "save_btn") and not hasattr(dlg, "revert_btn")
+    assert dlg.history_btn.toolTip() == "Historique des transcriptions"
+    dlg.saved.connect(st.transcript_saved)
+    dlg.table.item(0, 1).setText("Bonsoir à tous")              # enregistré de lui-même
+    dlg._save_timer.timeout.emit()
+    assert ctx.transcripts.get(aid).segments[0].text == "Bonsoir à tous"           # la version corrigée
+    assert ctx.transcripts.original(aid).segments[0].text == "Bonjour à tous"
+    assert "Bonsoir" in " ".join(c.text for c in st.tl.subtitles.cues)             # les sous-titres suivent
+    eng = TranscriptionEnginesDialog(ctx, st)                    # roue crantée : sur ce PC ou Scribe v2
+    assert set(eng.picks) == {"local", "elevenlabs"}
+    # une nouvelle transcription s'applique ; l'ancienne (corrigée) reste dans l'historique
+    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 2, "Salut tout le monde", [])], "fr",
+                                                   "elevenlabs:scribe_v2"))
+    dlg.load()
+    assert dlg.info.text() == "t.mp4 · ElevenLabs Scribe v2"
+    dlg._history()
+    titles = [(e.title.text(), e.sub.text()) for e in dlg.pop.entries]
+    assert titles[0] == ("✓ ElevenLabs Scribe v2", "Salut tout le monde")
+    assert titles[1] == ("Whisper small · sur ce PC", "Bonsoir à tous")
+    dlg.pop.entries[1].clicked.emit()                            # revenir à l'ancienne
+    assert ctx.transcripts.get(aid).segments[0].text == "Bonsoir à tous" and dlg.table.rowCount() == 2
+    assert "Bonsoir" in " ".join(c.text for c in st.tl.subtitles.cues)
+    tv = st.tr_view
+    lay = tv.subs_row.parentWidget().layout()
+    order = [lay.indexOf(r) for r in (tv.subs_row, tv.voice_row, tv.music_row, tv.erase_row)]
+    assert order == sorted(order)                                # sous-titres, voix, musique, effacer
+    assert tv.music_row.engine.isHidden() and tv.erase_row.engine.isHidden()
+    assert tv.erase_row.name.text() == "Effacer les textes d'origine"
+    assert all(b.toolTip().startswith("Sous-titres :") and not b.text() for b in tv.presets.buttons())   # « A »
+    assert tv.chips["de"].iconSize().width() == 20 and tv.subs_hist.toolTip() == "Historique des traductions"
+    assert tv.voice_hist.toolTip() == "Historique des voix générées"
+    sent = []
+    monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params))
+                        or 90 + len(sent))
+    for c, b in tv.chips.items():
+        b.setChecked(c in ("en", "de"))
+    tv._translate_now()                                          # « Traduire » : le texte seul, par langue
+    assert [(k, p["language"]) for k, p in sent] == [("translate", "en"), ("translate", "de")]
+    ctx.transcripts.store_translation(aid, Transcript([TSegment(0, 2, "Hello everyone", [])], "en", "t"))
+    tv.refresh()
+    fix = [tv.tr_edit.itemAt(i).widget() for i in range(tv.tr_edit.count())]
+    flags = [b for b in fix if b is not None and b.property("lang")]
+    assert [b.property("lang") for b in flags] == ["en"] and flags[0].text() == "" and flags[0].toolTip() == "Anglais"
+    tdlg = TranscriptDialog(ctx, st.project_video(), "en", st)   # « Corriger » : la traduction
+    tdlg.table.item(0, 1).setText("Hi everyone")
+    tdlg.accept()                                                # fermer enregistre
+    assert ctx.transcripts.translation(aid, "en").segments[0].text == "Hi everyone"
+    ctx.transcripts.store_translation(aid, Transcript([TSegment(0, 2, "Hey all", [])], "en", "traduction:deepl"),
+                                      label="DeepL")              # nouvelle traduction : appliquée
+    tv._history("translation")
+    ent = tv.hist_pop.entries
+    assert len(ent) == 2 and ent[0].title.text() == "✓ DeepL" and ent[1].sub.text() == "Hi everyone"
+    ent[1].clicked.emit()                                        # retour à la traduction corrigée
+    assert ctx.transcripts.translation(aid, "en").segments[0].text == "Hi everyone"
+    monkeypatch.setattr(secrets, "get_secret", lambda n: "sk_x" if n == "elevenlabs_api_key" else None)
+    vd = VoiceDialog(ctx, {"engine": "eleven_dub"}, st)          # doublage ElevenLabs : à partir du son
+    vd._load()
+    it = vd.list.currentItem()
+    assert it.data(0x0100)["engine"] == "eleven_dub" and "son de la vidéo" in vd.status.text()
+    tv.voice = it.data(0x0100)
+    assert tv._voice_ready()[0]
+    root_tl = st.tl                                              # projet d'origine : l'original à l'aperçu
+    tv._preview()
+    assert tv.player.tl is root_tl and isinstance(root_tl, Timeline)

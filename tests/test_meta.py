@@ -75,8 +75,9 @@ class M(BaseHTTPRequestHandler):
             if q["upload_phase"] == "start":
                 return self._json({"video_id": "V7", "upload_url":
                                    f"http://127.0.0.1:{self.server.server_port}/rupload/fb/V7"})
-            assert q["upload_phase"] == "finish" and q["video_state"] == "PUBLISHED"
+            assert q["upload_phase"] == "finish" and q["video_state"] in ("PUBLISHED", "DRAFT")
             M.st["description"] = q["description"]
+            M.st["state"] = q["video_state"]
             return self._json({"success": True})
         self._json({"error": {"code": 190, "message": "token"}}, 400)
 
@@ -121,6 +122,9 @@ def test_connect_pick_and_reels(server, tmp_path):
     assert r == {"id": "MEDIA9", "url": "https://www.instagram.com/reel/abc/"} and M.st["uploads"][0] == video.read_bytes()
     r = meta.facebook_reel(video, "Sketch", "P2", "PT2")
     assert r["url"] == "https://www.facebook.com/reel/V7" and M.st["description"] == "Sketch"
+    assert M.st["state"] == "PUBLISHED"
+    meta.facebook_reel(video, "Brouillon", "P2", "PT2", draft=True)       # brouillon de la Page
+    assert M.st["state"] == "DRAFT"
     assert meta.instagram_stats(["MEDIA9"], "PT2") == {"MEDIA9": {"likes": 12, "comments": 3, "views": 456}}
 
 
@@ -183,6 +187,14 @@ def test_jobs(server, tmp_path, monkeypatch):
         assert app.publications.get(p_ig)["public_url"] == "https://www.instagram.com/reel/abc/"
         assert app.publications.get(p_fb)["status"] == "published"
         assert M.st["caption"] == "Sketch\n\nTexte\n\n#humour"
+        m2 = app.publications.create_master(c.id, "Brouillon", "", "", variant_id=1)
+        d_ig, d_fb = app.publications.set_destinations(m2, [ig.id, fb.id])
+        j = wait(app.jobs.submit("publish_upload", "Meta", {"publication_id": d_fb, "now": True, "draft": True}))
+        assert j.status == "succeeded" and M.st["state"] == "DRAFT", j.error
+        assert app.publications.get(d_fb)["status"] == "manual_action"           # brouillon, pas « publiée »
+        j = wait(app.jobs.submit("publish_upload", "Meta", {"publication_id": d_ig, "now": True, "draft": True}))
+        assert j.status == "failed" and "brouillon" in j.error                    # Instagram : pas de brouillon
+        assert app.publications.get(d_ig)["status"] == "failed"
         j = wait(app.jobs.submit("refresh_stats", "Stats", {}))
         assert j.status == "succeeded" and j.result["updated"] == 1, (j.error, j.result)
     finally:

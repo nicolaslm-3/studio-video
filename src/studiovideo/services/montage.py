@@ -30,8 +30,11 @@ class MontageService:
         with self.db.transaction() as c:
             row = c.execute("SELECT data_json FROM project WHERE id = ?", (project_id,)).fetchone()
             data = json.loads(row["data_json"] or "{}")
-            data["timeline"] = tl.to_dict()
-            c.execute("UPDATE project SET data_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+            new = json.loads(json.dumps(tl.to_dict()))
+            touched = data.get("timeline") != new            # inchangé : le projet ne remonte pas dans les listes
+            data["timeline"] = new
+            c.execute("UPDATE project SET data_json = ?" +
+                      (", updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')" if touched else "") +
                       " WHERE id = ?", (json.dumps(data, ensure_ascii=False), project_id))
 
     # -- réglages du concept -------------------------------------------------------

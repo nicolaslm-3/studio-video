@@ -56,7 +56,7 @@ class ProjectMode(str, Enum):
     def label(self) -> str:
         return {
             "smart_clipping": "Clipping",
-            "translation": "Traduction et adaptation",
+            "translation": "Traduction",
             "original": "Création originale",
             "free_edit": "Montage libre",
             "texts": "Textes",

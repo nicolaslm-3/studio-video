@@ -25,8 +25,9 @@ def test_criteria_request_defaults_to_politics():
     req = hl.criteria_request({}, 3600)
     assert req.categories == ["politique"] and req.count == 8                   # rien de coché : politique
     assert (req.min_duration, req.max_duration) == (30.0, 60.0)
-    req = hl.criteria_request({"categories": ["humour", "emotion"], "duration": "court", "count": 12}, 3600)
-    assert req.categories == ["humour", "emotion"] and req.count == 12 and req.max_duration == 30.0
+    req = hl.criteria_request({"categories": ["rire", "emotion"], "duration": "court", "count": 12}, 3600)
+    assert req.categories == ["rire", "emotion"] and req.count == 12 and req.max_duration == 30.0
+    assert hl.criteria_request({"categories": ["humour", "debat"]}, 3600).categories == ["politique"]   # anciens
     short = hl.criteria_request({"count": 20}, 40)                              # vidéo courte : extraits courts
     assert short.max_duration < 20 and short.count <= 3
 
@@ -46,11 +47,11 @@ def test_auto_clips_uses_project_criteria(tmp_path, monkeypatch):
         aid = app.importer().import_file(vid, project_id=pid).asset_id
         app.transcripts.store_original(aid, Transcript([TSegment(0, 2, "Bonjour", [])], "fr", "t"))
         data = app.projects.load_data(pid)
-        data["clip_criteria"] = {"categories": ["debat"], "duration": "court", "count": 5}
+        data["clip_criteria"] = {"categories": ["polarisant"], "duration": "court", "count": 5}
         app.projects.save_data(pid, data)
         j = wait(app, app.jobs.submit("auto_clips", "Extraits", {"asset_id": aid, "project_id": pid}))
         assert j.status == "succeeded", j.error
-        assert seen and seen[-1].categories == ["debat"]                        # choisis pendant la transcription
+        assert seen and seen[-1].categories == ["polarisant"]                   # choisis pendant la transcription
         data["clip_criteria"] = {"categories": []}
         app.projects.save_data(pid, data)
         assert wait(app, app.jobs.submit("auto_clips", "Extraits", {"asset_id": aid, "project_id": pid})).status \
