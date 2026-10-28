@@ -1,18 +1,21 @@
-"""Ajouter, régler et connecter un compte d'un réseau (onglet Export, « Ajouter un compte » ; Concepts et projets,
-« Connecter »). Remplace l'ancien onglet Paramètres → Publication : chaque réseau demande votre propre application
-développeur (gratuite) ; ses identifiants et la visibilité par défaut se règlent ici, les codes secrets vont dans
-le coffre Windows, puis la connexion officielle (OAuth) s'ouvre dans le navigateur. Aucun mot de passe n'est demandé."""
+"""Ajouter, régler et connecter un compte d'un réseau (onglet Export, « Ajouter un compte » ; Concepts et projets).
+
+D'abord le navigateur dédié du compte (« Se connecter à ce compte », `browser_login.py`) : sans API ni application
+développeur, il sert à l'Atelier de publication. La connexion par API (application développeur du réseau, OAuth)
+reste possible, repliée dans « Avancé : connexion par API » ; les codes secrets vont dans le coffre Windows. Aucun mot
+de passe n'est demandé."""
 from __future__ import annotations
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QLineEdit,
-                               QMessageBox, QVBoxLayout)
+                               QMessageBox, QToolButton, QVBoxLayout, QWidget)
 
 from ..core import AppContext
 from ..domain.models import Platform
 from ..services import secrets
 from ..services.concepts import ConceptError
+from . import browser_login
 from .dialogs import language_combo
 from .widgets import button, label
 
@@ -53,6 +56,10 @@ APPS = {
                  "rappel http://127.0.0.1:8768/callback. L'écriture dépend de votre offre X.",
         "url": "https://developer.x.com/en/portal/dashboard"},
 }
+# adresse publique attendue (sert à retrouver tout seul le lien des vidéos publiées)
+URL_HINT = {"youtube": "https://www.youtube.com/@chaine", "tiktok": "https://www.tiktok.com/@nom",
+            "instagram": "https://www.instagram.com/nom", "facebook": "https://www.facebook.com/page",
+            "x": "https://x.com/nom"}
 REQUIRED = {"youtube": ("youtube_client_id", "youtube_client_secret"),
             "tiktok": ("tiktok_client_key", "tiktok_client_secret"),
             "meta": ("meta_app_id", "meta_app_secret"), "x": ("x_client_id",)}
@@ -74,10 +81,11 @@ def app_configured(app: AppContext, platform: str) -> bool:
 
 
 class AccountSetupDialog(QDialog):
-    """Nouveau compte (nom, adresse, langue) ou compte existant, réglages de l'application du réseau, puis
-    connexion. Après `exec()` : `account_id`, et `connect_job` si la connexion a été lancée."""
+    """Nouveau compte (nom, adresse, langue) ou compte existant : navigateur dédié, puis (avancé) application du
+    réseau et connexion par API. Après `exec()` : `account_id`, et `connect_job` si la connexion API a été lancée."""
 
-    def __init__(self, app: AppContext, platform: str, account_id: int | None = None, parent=None):
+    def __init__(self, app: AppContext, platform: str, account_id: int | None = None, parent=None,
+                 advanced: bool = False):
         super().__init__(parent)
         self.app, self.platform = app, platform
         self.account_id, self.connect_job = account_id, None
@@ -94,14 +102,49 @@ class AccountSetupDialog(QDialog):
         form.setVerticalSpacing(8)
         self.name = QLineEdit()
         self.name.setPlaceholderText("Nom affiché du compte")
-        self.url = QLineEdit()
-        self.url.setPlaceholderText("https://…  (facultatif)")
+        self.url = QLineEdit(acc.public_url if acc else "")
+        self.url.setPlaceholderText(URL_HINT.get(platform, "https://…"))
+        self.url.setToolTip("Adresse de la page publique du compte : le lien des vidéos publiées y est retrouvé tout "
+                            "seul")
         self.lang = language_combo()
         if acc is None:
             form.addRow("Nom", self.name)
-            form.addRow("Adresse publique", self.url)
+        form.addRow("Adresse publique", self.url)
+        if acc is None:
             form.addRow("Langue principale", self.lang)
         lay.addLayout(form)
+        # -- navigateur dédié (sans API)
+        self.login = None
+        nav = QFrame()
+        nav.setProperty("role", "card")
+        nl = QVBoxLayout(nav)
+        nl.setContentsMargins(16, 12, 16, 12)
+        nl.setSpacing(8)
+        from .simple_views import _row
+        self.nav_state = label("", "badge")
+        nl.addLayout(_row(label("Navigateur dédié", "h2"), "stretch", self.nav_state))
+        nl.addWidget(label("Le compte reste connecté dans son propre navigateur (Edge) : la page d'envoi de l'Atelier "
+                           "de publication s'y ouvre déjà connectée. Tu te connectes toi-même, puis tu fermes la "
+                           "fenêtre ; le logiciel ne voit jamais ton mot de passe.", "muted", wrap=True, hint=False))
+        self.login_btn = button("Se connecter à ce compte", "primary", icon="log-in", on_click=self._browser_login)
+        nl.addLayout(_row(self.login_btn, "stretch"))
+        self.login_note = label("", "muted", wrap=True, hint=False)
+        self.login_note.hide()
+        nl.addWidget(self.login_note)
+        lay.addWidget(nav)
+        self._show_nav()
+        # -- avancé : connexion par API (repliée)
+        self.adv_btn = QToolButton()
+        self.adv_btn.setText("Avancé : connexion par API")
+        self.adv_btn.setCheckable(True)
+        self.adv_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.adv_btn.setStyleSheet("QToolButton { border: none; font-weight: 600; }")
+        self.adv = QWidget()
+        adv_lay = QVBoxLayout(self.adv)
+        adv_lay.setContentsMargins(0, 0, 0, 0)
+        adv_lay.setSpacing(8)
+        lay.addWidget(self.adv_btn)
+        lay.addWidget(self.adv)
         # -- application développeur du réseau
         self.fields: dict[str, tuple[QLineEdit, bool]] = {}
         self.privacy: QComboBox | None = None
@@ -144,23 +187,76 @@ class AccountSetupDialog(QDialog):
             bl.addLayout(af)
             bl.addLayout(_row(button("Ouvrir la console du réseau", "ghost", icon="link", tooltip=spec["url"],
                                      on_click=lambda: QDesktopServices.openUrl(QUrl(spec["url"]))), "stretch"))
-            lay.addWidget(box)
-        self.connect = QCheckBox("Connecter le compte maintenant (page de connexion dans le navigateur)")
-        self.connect.setChecked(bool(spec))
+            adv_lay.addWidget(box)
+        self.connect = QCheckBox("Connecter le compte par API maintenant (page de connexion dans le navigateur)")
+        self.connect.setChecked(bool(spec) and app_configured(app, platform))
         self.connect.setVisible(bool(spec))
-        lay.addWidget(self.connect)
+        adv_lay.addWidget(self.connect)
         if not spec:
-            lay.addWidget(label(f"La connexion {name} n'est pas encore disponible : les vidéos y seront à publier à "
-                                "la main.", "muted", wrap=True, hint=False))
+            adv_lay.addWidget(label(f"Pas de connexion par API pour {name} : les vidéos y passent par l'Atelier de "
+                                    "publication.", "muted", wrap=True, hint=False))
+        open_adv = advanced or bool(acc and acc.connection_status == "connected")
+        self.adv_btn.toggled.connect(self._fold)
+        self.adv_btn.setChecked(open_adv)
+        self._fold(open_adv)
         self.note = label("", "error", wrap=True, hint=False)
         self.note.hide()
         lay.addWidget(self.note)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Connecter" if acc else "Ajouter")
+        bb.button(QDialogButtonBox.Ok).setText("Enregistrer" if acc else "Ajouter")
         bb.button(QDialogButtonBox.Cancel).setText("Annuler")
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+    def _fold(self, on: bool) -> None:
+        from . import theme
+        self.adv_btn.setIcon(theme.icon("chevron-down" if on else "chevron-right", theme.color("muted"), 16))
+        self.adv.setVisible(on)
+        self.adjustSize()
+
+    def _show_nav(self) -> None:
+        if self.account_id is None:
+            self.nav_state.setText("Non connecté")
+            return
+        st = browser_login.state_text(self.app, self.account_id)
+        self.nav_state.setText("Non connecté" if st == "Connecté (API)" else st)
+
+    def _create(self) -> bool:
+        """Compte enregistré (nouveau compte : avec son nom, son adresse et sa langue)."""
+        if self.account_id is not None:
+            return True
+        if not self.name.text().strip():
+            self._say("Donnez un nom au compte.")
+            return False
+        try:
+            acc = self.app.concepts.create_account(self.platform, self.name.text(), self.url.text().strip(),
+                                                   self.lang.currentData())
+        except ConceptError as exc:
+            QMessageBox.warning(self, "Compte", str(exc))
+            return False
+        self.account_id = acc.id
+        return True
+
+    def _browser_login(self) -> None:
+        if not self._create():
+            return
+        self.login = browser_login.BrowserLogin(self.app, self.account_id, self)
+        err = self.login.start()
+        self.login_note.show()
+        if err:
+            self.login_note.setText(err)
+            return
+        self.login_btn.setEnabled(False)
+        self.login_note.setText("Connecte-toi dans la fenêtre ouverte, puis ferme-la.")
+        self.login.finished.connect(self._logged)
+
+    def _logged(self, found) -> None:
+        self.login_btn.setEnabled(True)
+        self.login_note.setText("✓ Compte connecté dans son navigateur." if found else
+                                "Aucune session trouvée : la connexion n'a pas abouti." if found is False else
+                                "Impossible de vérifier la connexion (navigateur encore ouvert ?).")
+        self._show_nav()
 
     def _say(self, text: str) -> None:
         self.note.setText(text)
@@ -187,17 +283,10 @@ class AccountSetupDialog(QDialog):
         if self.account_id is None and not self.name.text().strip():
             self._say("Donnez un nom au compte.")
             return
-        if not self._save_app():
+        if not self._save_app() or not self._create():
             return
-        if self.account_id is None:
-            try:
-                acc = self.app.concepts.create_account(self.platform, self.name.text(), self.url.text().strip(),
-                                                       self.lang.currentData())
-            except ConceptError as exc:
-                QMessageBox.warning(self, "Compte", str(exc))
-                return
-            self.account_id = acc.id
-        if self.connect.isVisible() and self.connect.isChecked():
+        self.app.concepts.update_account(self.account_id, public_url=self.url.text().strip())
+        if self.adv_btn.isChecked() and self.connect.isVisibleTo(self) and self.connect.isChecked():
             if not app_configured(self.app, self.platform):
                 if QMessageBox.question(self, "Connexion", "L'application du réseau n'est pas encore réglée "
                                         "(identifiant et code secret) : le compte est enregistré, mais il ne "

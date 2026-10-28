@@ -144,6 +144,10 @@ class MainWindow(QMainWindow):
         self._reminders.timeout.connect(self.check_reminders)
         self._reminders.start(60_000)
         QTimer.singleShot(3000, self.check_reminders)
+        # Atelier de publication : lien des vidéos publiées à la main, cherché au démarrage puis toutes les heures
+        self._links = QTimer(self)
+        self._links.timeout.connect(self.check_links)
+        self._links.start(30_000)                          # premier passage 30 s après l'ouverture, puis toutes les heures
 
     # -- navigation ---------------------------------------------------------
     def go(self, index: int) -> None:
@@ -186,6 +190,16 @@ class MainWindow(QMainWindow):
                 self.calendar.refresh()
             QApplication.alert(self)
         return len(due)
+
+    def check_links(self) -> int | None:
+        """Lance la recherche des liens (tâche « match_published ») s'il y a des publications à confirmer."""
+        self._links.setInterval(3_600_000)
+        if not self.app.publications.awaiting_link():
+            return None
+        if self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'match_published' AND status IN "
+                                 "('pending','running')"):
+            return None
+        return self.app.jobs.submit("match_published", "Recherche des liens des vidéos publiées", {})
 
     def check_watch_folder(self) -> int:
         """Importe les médias nouvellement déposés dans le dossier surveillé (Paramètres → Stockage)."""
@@ -394,6 +408,17 @@ class MainWindow(QMainWindow):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
                 self._import_refresh.timeout.connect(self._refresh_after_import)
             self._import_refresh.start()
+        if j and j.kind == "match_published" and j.status == "succeeded":
+            r = j.result or {}
+            if r.get("confirmed"):
+                names = ", ".join(c["account"] for c in r["confirmed"][:3])
+                self.notify(f"Lien retrouvé et publication confirmée : {names}", 10000)
+            if r.get("proposed"):
+                self.notify(f"{r['proposed']} lien(s) retrouvé(s) à vérifier (Calendrier → À faire maintenant).",
+                            12000)
+            if self.pages.currentWidget() is self.calendar:
+                self.calendar.refresh()
+            return
         if j and j.kind == "auto_clips" and j.status in ("succeeded", "failed"):
             r = j.result or {}
             if j.status == "failed":
@@ -456,6 +481,8 @@ class MainWindow(QMainWindow):
                     return
         if hasattr(self, "_import_refresh"):
             self._import_refresh.stop()            # fermeture : plus de rafraîchissement différé
+        self._links.stop()
+        self._reminders.stop()
         self.studio.leave_project()
         s = QSettings(str(self.app.paths.root / "ui.ini"), QSettings.IniFormat)
         s.setValue("geometry", self.saveGeometry())

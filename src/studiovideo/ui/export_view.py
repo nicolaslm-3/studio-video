@@ -7,7 +7,9 @@ commun (titre + description) est repris sur chaque réseau ; un réseau peut avo
 Facebook et Instagram n'ont pas de champ titre : le titre ouvre la description.
 
 Publier, programmer et envoyer en brouillon passent par les publications du Calendrier (`PublicationService`) : la
-vidéo est d'abord exportée (tâche critique), puis les publications sont créées pour les comptes choisis. Brouillon :
+vidéo est d'abord exportée (tâche critique), puis les publications sont créées pour les comptes choisis. Un compte
+sans connexion par API passe par l'Atelier de publication (`publish_workshop.py`, ouvert d'office après « Publier
+maintenant ») : texte copié, page d'envoi dans le navigateur dédié du compte, clic final laissé à l'utilisateur. Brouillon :
 la vidéo est envoyée sans être publiée (YouTube en privé, boîte de réception TikTok, brouillon de la Page Facebook ;
 Instagram n'en propose pas). « Sur mon PC seulement » exporte la vidéo dans le dossier choisi, sans rien publier."""
 from __future__ import annotations
@@ -570,7 +572,7 @@ class NetworkCard(QFrame):
         self.account.blockSignals(True)
         self.account.clear()
         for a in accounts:
-            st = "" if a.connection_status == "connected" else "  · non connecté (publication manuelle)"
+            st = "" if a.connection_status == "connected" else "  · Atelier de publication"
             self.account.addItem(account_icon(a), a.name + st, a.id)
         if accounts:
             self.account.insertSeparator(self.account.count())
@@ -721,7 +723,12 @@ class ExportView(_View):
         self.open_dir = button("Ouvrir le dossier", "ghost", icon="folder-open",
                                on_click=lambda: _open_folder(Path(self._last_path()).parent))
         self.open_dir.hide()
-        al.addWidget(self.open_dir, 0, Qt.AlignLeft)
+        self.workshop_btn = button("Atelier de publication", "soft", icon="upload",
+                                   tooltip="Publier à la main les réseaux sans connexion par API : texte copié, page "
+                                   "d'envoi ouverte dans le navigateur du compte, vidéo à glisser",
+                                   on_click=self.open_workshop)
+        self.workshop_btn.hide()
+        al.addLayout(_row(self.open_dir, self.workshop_btn, "stretch", spacing=6))
         aw = QFrame()
         aw.setProperty("role", "dim")
         aw.setLayout(al)
@@ -937,6 +944,22 @@ class ExportView(_View):
             self.status.setText("")
         path = self._last_path()
         self.open_dir.setVisible(bool(path) and Path(path).exists())
+        self.workshop_btn.setVisible(bool(self._manual_pubs()))
+
+    def _manual_pubs(self) -> list[int]:
+        """Publications du dernier export encore à faire dans l'Atelier."""
+        if not self.pid:
+            return []
+        ids = (self.app.projects.load_data(self.pid).get("export_last") or {}).get("manual") or []
+        return [i for i in ids if (r := self.app.publications.get(i)) is not None
+                and r["status"] not in ("published", "cancelled")]
+
+    def open_workshop(self) -> None:
+        ids = self._manual_pubs()
+        if ids:
+            from .publish_workshop import PublishWorkshop
+            PublishWorkshop(self.app, ids, self).exec()
+            self._update_status()
 
     # -- action -------------------------------------------------------------------------
     def _destination(self, st: dict) -> Path | None:
@@ -1014,7 +1037,7 @@ class ExportView(_View):
         mid = ps.create_master(p["concept_id"], pend["title"], pend["description"], "",
                                language=pend.get("language") or "fr", variant_id=variant, planned_at=when)
         accounts = {v["account"]: k for k, v in pend["nets"].items()}
-        notes = []
+        notes, manual = [], []
         if accounts:
             ps.set_destinations(mid, list(accounts), confirmed_external=set(accounts))
             for pub in ps.list_for_master(mid):
@@ -1027,7 +1050,8 @@ class ExportView(_View):
                 elif action == "draft" and pub.account.platform.value == "instagram":
                     ps.mark_manual(pub.id, "Instagram ne permet pas d'envoyer un brouillon : publication à faire à "
                                            "la main.")
-                    notes.append(f"{label_} : pas de brouillon possible, à publier à la main depuis le Calendrier")
+                    notes.append(f"{label_} : pas de brouillon possible, à publier avec l'Atelier de publication")
+                    manual.append(pub.id)
                 elif pub.account.connection_status == "connected":
                     ps.set_status(pub.id, PublicationStatus.UPLOADING)
                     self.app.jobs.submit("publish_upload", f"{label_} · {pend['title'] or 'sans titre'}"
@@ -1035,9 +1059,12 @@ class ExportView(_View):
                                          {"publication_id": pub.id, "now": True, "draft": action == "draft"},
                                          critical=True)
                 else:
-                    ps.mark_manual(pub.id, "Compte non connecté : publication à faire à la main.")
-                    notes.append(f"{label_} : compte non connecté, à publier à la main depuis le Calendrier")
-        if action == "publish":
+                    ps.mark_manual(pub.id, "Sans connexion par API : à publier avec l'Atelier de publication.")
+                    notes.append(f"{label_} : à publier avec l'Atelier de publication")
+                    manual.append(pub.id)
+        if action == "publish" and manual and len(manual) == len(accounts):
+            summary = f"✓ « {name} » exportée."
+        elif action == "publish":
             summary = f"✓ « {name} » exportée, mise en ligne lancée (suivi dans les tâches)."
         elif action == "draft":
             summary = f"✓ « {name} » exportée, envoi en brouillon lancé (suivi dans les tâches)."
@@ -1046,8 +1073,11 @@ class ExportView(_View):
             summary = f"✓ « {name} » exportée et programmée le {d:%d/%m/%Y à %H:%M} (Calendrier)."
         if notes:
             summary += "\n" + "\n".join(notes)
-        data["export_last"] = {"summary": summary, "path": path, "master_id": mid}
+        data["export_last"] = {"summary": summary, "path": path, "master_id": mid, "manual": manual}
         self.app.projects.save_data(pid, data)
+        if manual and action == "publish" and pid == self.pid and self.isVisible():
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self.open_workshop)          # « Publier maintenant » : l'Atelier s'ouvre d'office
 
     def on_job(self, job) -> None:
         pid = job.params.get("project_id")

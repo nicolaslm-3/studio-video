@@ -207,7 +207,8 @@ def test_mask_controls(window):
     assert w.studio.tl.video.masks == []
 
 
-def test_calendar_publication_flow(window, monkeypatch):
+def test_calendar_publication_flow(window, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QApplication
     from studiovideo.domain.models import Platform
     from studiovideo.ui import publication_dialog as pd
     from studiovideo.ui.pages import calendar as calmod
@@ -246,11 +247,16 @@ def test_calendar_publication_flow(window, monkeypatch):
     assert "● 2" in w.nav_group.button(3).text()
     cal.refresh()
     assert cal.todo.count() == 2
-    # publication assistée puis confirmation par le lien public
+    # Atelier de publication puis confirmation par le lien public (sans Edge : navigateur par défaut, signalé)
+    from studiovideo.ui.publish_workshop import PublishWorkshop
+    monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(tmp_path / "absent.exe"))
     opened = []
-    a = pd.AssistedPublishDialog(ctx, pubs[yt.id].id, open_url=opened.append)
+    a = PublishWorkshop(ctx, pubs[yt.id].id, open_url=opened.append)
+    assert QApplication.clipboard().text() == "Mon sketch"            # titre copié d'office
     a._open()
     assert opened == ["https://www.youtube.com/upload"]
+    assert "introuvables" in a.msg.text()
+    assert ctx.publications.get(pubs[yt.id].id)["status"] == "manual_action"
     a.url.setText("https://www.tiktok.com/@x/video/1")
     a._confirm()
     assert "plateforme" in a.msg.text()

@@ -120,6 +120,31 @@ class ConceptService:
         return [_account(r) for r in self.db.query(
             "SELECT * FROM social_account ORDER BY platform, name COLLATE NOCASE")]
 
+    def account_settings(self, account_id: int) -> dict:
+        row = self.db.query_one("SELECT settings_json FROM social_account WHERE id = ?", (account_id,))
+        try:
+            return json.loads(row["settings_json"] or "{}") if row else {}
+        except ValueError:
+            return {}
+
+    def update_account_settings(self, account_id: int, **values) -> dict:
+        """Fusionne `values` dans les réglages du compte (navigateur dédié, dernier rapprochement…)."""
+        data = self.account_settings(account_id)
+        data.update(values)
+        with self.db.transaction() as c:
+            c.execute("UPDATE social_account SET settings_json = ? WHERE id = ?", (json.dumps(data), account_id))
+        return data
+
+    def update_account(self, account_id: int, **fields) -> SocialAccount:
+        allowed = {"name", "public_url", "language"}
+        if set(fields) - allowed:
+            raise ConceptError(f"Champs non modifiables : {set(fields) - allowed}")
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            with self.db.transaction() as c:
+                c.execute(f"UPDATE social_account SET {sets} WHERE id = ?", (*fields.values(), account_id))
+        return self.get_account(account_id)
+
     def delete_account(self, account_id: int) -> None:
         n = self.db.query_one("SELECT COUNT(*) n FROM publication WHERE social_account_id = ?",
                               (account_id,))["n"]

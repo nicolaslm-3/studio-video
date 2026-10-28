@@ -200,8 +200,50 @@ class PublicationService:
             raise PublicationError("Publication introuvable.")
         if not url_matches(row["platform"], public_url):
             raise PublicationError("Ce lien n'appartient pas à la plateforme de cette publication.")
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM publication_match WHERE publication_id = ?", (publication_id,))
         self.set_status(publication_id, PublicationStatus.PUBLISHED, remote_id=public_url.strip(),
                         public_url=public_url.strip())
+
+    # -- Atelier de publication : lien retrouvé sur la page publique du compte ---------------
+    def awaiting_link(self, account_id: int | None = None) -> list[sqlite3.Row]:
+        """Publications faites à la main dont le lien n'est pas encore connu, avec la date de la première
+        préparation (`since`, UTC) : la vidéo publiée ne peut pas être plus ancienne."""
+        sql = self._CAL.replace("SELECT ", "SELECT a.public_url account_url, (SELECT MIN(t.at) FROM "
+                                "publication_attempt t WHERE t.publication_id = p.id) since, ", 1)
+        sql += "WHERE p.status = 'manual_action' AND p.remote_id = ''"
+        params: tuple = ()
+        if account_id:
+            sql += " AND a.id = ?"
+            params = (account_id,)
+        return self.db.query(sql + " ORDER BY p.id", params)
+
+    def propose_match(self, publication_id: int, url: str, title: str, score: float) -> bool:
+        """Lien possible (« Est-ce cette vidéo ? »). Un lien déjà refusé n'est plus proposé."""
+        with self.db.transaction() as c:
+            return c.execute("INSERT OR IGNORE INTO publication_match(publication_id, url, title, score) "
+                             "VALUES (?,?,?,?)", (publication_id, url, title, score)).rowcount > 0
+
+    def matches(self, publication_id: int) -> list[sqlite3.Row]:
+        return self.db.query("SELECT * FROM publication_match WHERE publication_id = ? AND status = 'proposed' "
+                             "ORDER BY score DESC", (publication_id,))
+
+    def accept_match(self, match_id: int) -> None:
+        m = self.db.query_one("SELECT * FROM publication_match WHERE id = ?", (match_id,))
+        if m is None:
+            raise PublicationError("Proposition introuvable.")
+        self.confirm_published(m["publication_id"], m["url"])
+        with self.db.transaction() as c:
+            c.execute("DELETE FROM publication_match WHERE publication_id = ?", (m["publication_id"],))
+
+    def reject_match(self, match_id: int) -> None:
+        with self.db.transaction() as c:
+            c.execute("UPDATE publication_match SET status = 'rejected' WHERE id = ?", (match_id,))
+
+    def linked_urls(self, account_id: int) -> set[str]:
+        """Liens déjà reliés à une publication de ce compte (jamais attribués à une autre)."""
+        return {r["public_url"] for r in self.db.query(
+            "SELECT public_url FROM publication WHERE social_account_id = ? AND public_url != ''", (account_id,))}
 
     def cancel(self, publication_id: int) -> None:
         self.set_status(publication_id, PublicationStatus.CANCELLED)

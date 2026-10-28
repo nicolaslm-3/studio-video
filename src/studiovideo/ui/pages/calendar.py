@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLis
                                QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
 from ...core import AppContext
-from ..publication_dialog import PLATFORM_SHORT, STATUS, AssistedPublishDialog, PublicationDialog
+from ..publication_dialog import PLATFORM_SHORT, STATUS, PublicationDialog
+from ..publish_workshop import PublishWorkshop
 from ..widgets import PageHeader, button, label, tool
 
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
@@ -170,6 +171,8 @@ class CalendarPage(QWidget):
             it = QListWidgetItem(f"{STATUS_MARK.get(r['status'], '')}{PLATFORM_SHORT.get(r['platform'], '')} "
                                  f"{r['account']} · {r['title'] or 'Sans titre'}")
             it.setToolTip(r["last_error"] or STATUS.get(r["status"], ""))
+            if self.app.publications.matches(r["id"]):          # lien retrouvé, à vérifier dans l'Atelier
+                it.setText(it.text() + "  · lien à vérifier")
             it.setData(Qt.UserRole, r["id"])
             self.todo.addItem(it)
         has_todo = self.todo.count() > 0
@@ -207,7 +210,7 @@ class CalendarPage(QWidget):
     def _todo_open(self, it: QListWidgetItem) -> None:
         pid = it.data(Qt.UserRole)
         if pid:
-            AssistedPublishDialog(self.app, pid, self).exec()
+            PublishWorkshop(self.app, pid, self).exec()
             self.refresh()
 
 

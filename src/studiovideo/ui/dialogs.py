@@ -50,8 +50,8 @@ class AccountDialog(QDialog):
         form.addRow("URL publique", self.url)
         form.addRow("Langue principale", self.lang)
         lay.addLayout(form)
-        lay.addWidget(label("La connexion officielle (OAuth) au compte sera proposée avec le module de "
-                            "publication (V3). Aucun mot de passe n'est demandé ni enregistré.", "faint", wrap=True))
+        lay.addWidget(label("Ensuite, « Se connecter à ce compte » ouvre son navigateur dédié. Aucun mot de passe "
+                            "n'est demandé ni enregistré.", "faint", wrap=True))
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Créer")
         bb.button(QDialogButtonBox.Cancel).setText("Annuler")

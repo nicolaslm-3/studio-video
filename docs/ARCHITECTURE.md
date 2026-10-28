@@ -12,7 +12,7 @@ src/studiovideo/
 ├── domain/models.py    entités et énumérations métier (statuts, plateformes, parcours)
 ├── services/           logique métier sans interface
 │   ├── concepts.py     concepts, comptes, associations, destinations proposées
-│   ├── publications.py publication maître, destinations, héritage, statuts
+│   ├── publications.py publication maître, destinations, héritage, statuts, liens retrouvés à confirmer
 │   ├── projects.py     projets et sauvegarde automatique de leur état
 │   ├── library.py      recherche dans la bibliothèque
 │   ├── montage.py      timeline du projet, réglages par concept, historique des exports
@@ -61,7 +61,9 @@ src/studiovideo/
     ├── scrub.py        valeurs réglables à la souris (temps, nombres) : remplacent les champs numériques
     ├── effects.py      bouton robot : effets de l'image (miroir, zoom, mouvement, filtre, rotation, vitesse)
     ├── audio_out.py    le son suit la sortie audio de Windows (écouteurs Bluetooth)
-    ├── account_setup.py ajouter / connecter un compte et régler l'application du réseau
+    ├── account_setup.py ajouter / régler un compte : navigateur dédié, puis (avancé) connexion par API
+    ├── browser_login.py « Se connecter à ce compte » : navigateur dédié du compte, session vérifiée à la fermeture
+    ├── publish_workshop.py Atelier de publication (sans API) : texte copié, page d'envoi, vidéo à glisser, lien
     ├── engine_panels.py voix hors ligne (Piper) et modèle de langage, dans les roues crantées
     ├── flags/          drapeaux emoji en images (Noto 3D, Apache 2.0) : langues, emojis des textes
     ├── timeline_view.py  timeline (pistes vidéo, textes, musique, sous-titres, voix doublée)
@@ -131,13 +133,16 @@ src/studiovideo/
 | `services/archive.py` | Archive de projet `.studioproj` (export / import, renumérotation, médias reconnus par empreinte) |
 | `edit/original.py` | Création originale : script en scènes, voix off, fabrication de la vidéo |
 | `publish/rules.py` | Limites de texte par plateforme, composition des légendes, contrôle des liens |
+| `publish/browser.py` | Navigateur dédié à chaque compte (Edge de Windows, sinon Chrome ; rien n'est téléchargé) : profil `browser/<id du compte>`, lancement normal sans automatisation, session reconnue au nom et à l'expiration de son cookie (jamais sa valeur) une fois le navigateur fermé |
+| `publish/reconcile.py` | Rapprochement du lien d'une vidéo publiée à la main : dernières vidéos de la page publique du compte (yt-dlp, YouTube et TikTok), comparées par légende, durée et date ; sûr → confirmé (tâche `match_published`, au démarrage puis toutes les heures, pauses de 5 à 20 s), doute → proposé (table `publication_match`) |
 | `publish/youtube.py`, `tiktok.py`, `meta.py`, `xapi.py` | Connexions OAuth (redirection locale, PKCE), envois reprenables, statistiques ; brouillons : YouTube en privé, boîte de réception TikTok (`video.upload`), brouillon de Page Facebook (Instagram n'en propose pas) |
 | `services/analytics.py` | Relevés horodatés ; un indicateur absent n'est jamais remplacé par zéro |
 | `ui/guide.py` | Barre d'étapes des parcours guidés (Clipping, Traduction, Création originale) |
 | `ui/export_view.py` | Onglet Export : un cadre (aperçu compact — clic : lecture / pause avec icône 1,5 s —, nom du fichier daté « AAAA-MM-JJ Nom.mp4 », dossier, titre et description | que faire de la vidéo) ; une colonne par réseau (aperçu téléphone, compte avec sa photo, « Ajouter un compte » / « Connecter ce compte… », texte propre) ; publier / programmer (calendrier épuré, heure par 10 min) / brouillon sur les réseaux / sur le PC seulement ; emojis (icône grise dans chaque champ, recherche français-anglais, `ui/assets/emojis.json`) |
 | `ui/simple_views.py` | Écrans simplifiés Clipping (« Vidéo complète », extraits à hauteur fixe à cocher, « + » pour en ajouter un, critères dans une bulle, début et fin à la souris, suivi de la tête sur bouton-icône, un projet par extrait coché) et Traduction (drapeaux, un outil par ligne avec interrupteur, moteur, état et roue crantée ; tâche en cours et résultat outil par outil ; « Préparer » crée une version par langue sous le projet) |
 | `ui/engines.py` | Moteurs de traduction et de voix : alternatives (qualité et coût en une ligne), pastille du moteur utilisé, saisie et test des clés, voix hors ligne et modèle de langage intégrés (roues crantées de Traduction) |
-| `ui/account_setup.py` | Ajouter / connecter un compte : nom, application développeur du réseau (identifiants, code secret dans le coffre, visibilité), connexion OAuth (remplace l'ancien onglet Paramètres → Publication) |
+| `ui/account_setup.py` | Ajouter / régler un compte : nom, adresse publique, « Se connecter à ce compte » (navigateur dédié) ; repliée dans « Avancé : connexion par API » : application développeur du réseau (identifiants, code secret dans le coffre, visibilité) et connexion OAuth. Les modules API restent, masqués |
+| `ui/publish_workshop.py` | Atelier de publication (remplace la publication assistée) : un onglet par réseau, texte copié d'office (YouTube : le titre puis la description), vidéo glissable vers la page d'envoi, « Afficher dans l'Explorateur », page d'envoi dans le profil du compte, liens retrouvés à confirmer (« Est-ce cette vidéo ? »), lien collé en dernier recours. Le clic « Publier » reste à l'utilisateur |
 | `ui/shell.py` | Dock des onglets, bulles et infobulles aux couleurs du thème (`TipFilter`), bouton des tâches |
 | `edit/translation.py` | Vidéo traduite clé en main : styles de sous-titres, voix doublée, texte du haut ; utilisé par la tâche `translate_video` |
 | `ui/color_picker.py` | Choix de couleur intégré (panneau flottant aux couleurs du thème) |

@@ -1,16 +1,14 @@
 """Préparer une publication (§18) : une vidéo, un texte maître, des destinations précises, des horaires.
 
-La mise en ligne automatique demande que chaque compte soit connecté à la plateforme : tant que ce n'est
-pas le cas, la publication est « assistée » (texte copié, vidéo affichée, page d'envoi ouverte), puis
-confirmée par le lien public de la vidéo.
+Sans connexion par API, la publication se fait dans l'Atelier de publication (`publish_workshop.py`) : texte
+copié, page d'envoi ouverte dans le navigateur dédié du compte, vidéo à glisser, lien retrouvé tout seul.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, Qt, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDateTimeEdit, QDialog, QDialogButtonBox,
+from PySide6.QtCore import QDateTime, Qt
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDateTimeEdit, QDialog, QDialogButtonBox,
                                QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLineEdit, QMenu, QMessageBox,
                                QPlainTextEdit, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
@@ -74,87 +72,6 @@ def video_info(row) -> dict | None:
         except Exception:
             pass
     return info
-
-
-class AssistedPublishDialog(QDialog):
-    """Publication manuelle guidée, confirmée par le lien public."""
-
-    def __init__(self, app: AppContext, publication_id: int, parent=None, open_url=None):
-        super().__init__(parent)
-        self.app, self.pid = app, publication_id
-        self.open_url = open_url or (lambda u: QDesktopServices.openUrl(QUrl(u)))
-        r = app.publications.get(publication_id)
-        self.row = r
-        pl = rules.RULES[r["platform"]]
-        self.setWindowTitle(f"Publier sur {pl.label} — {r['account']}")
-        self.setMinimumWidth(620)
-        c = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
-        lay = QVBoxLayout(self)
-        lay.addWidget(label("Ce compte n'est pas connecté à la plateforme : la mise en ligne se fait à la main, "
-                            "en trois étapes guidées.", "muted", wrap=True))
-        for w in rules.check(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "",
-                             video_info(r)):
-            lay.addWidget(label("⚠ " + w, "muted", wrap=True))
-        lay.addWidget(label("1. Le texte", "h2"))
-        if c["title"]:
-            row = QHBoxLayout()
-            self.title = QLineEdit(c["title"])
-            self.title.setReadOnly(True)
-            row.addWidget(self.title, 1)
-            row.addWidget(button("Copier le titre", on_click=lambda: self._copy(c["title"])))
-            lay.addLayout(row)
-        self.text = QPlainTextEdit(c["text"])
-        self.text.setReadOnly(True)
-        self.text.setMaximumHeight(140)
-        lay.addWidget(self.text)
-        lay.addWidget(button("Copier le texte", on_click=lambda: self._copy(c["text"])))
-        lay.addWidget(label("2. La vidéo", "h2"))
-        vr = QHBoxLayout()
-        path = r["output_path"] or ""
-        vl = label(path or "Aucune vidéo associée.", "faint", wrap=True)
-        vr.addWidget(vl, 1)
-        show = button("Afficher le fichier", on_click=lambda: self._reveal(path))
-        show.setEnabled(bool(path) and Path(path).exists())
-        vr.addWidget(show)
-        lay.addLayout(vr)
-        lay.addWidget(button(f"Ouvrir la page d'envoi {pl.label}", "primary", on_click=self._open))
-        lay.addWidget(label("3. Une fois en ligne, collez le lien public de la vidéo", "h2"))
-        self.url = QLineEdit(r["public_url"] or "")
-        self.url.setPlaceholderText({"youtube": "https://youtu.be/…", "tiktok": "https://www.tiktok.com/@…/video/…"}
-                                    .get(r["platform"], "https://…"))
-        lay.addWidget(self.url)
-        self.msg = label("", "muted", wrap=True)
-        lay.addWidget(self.msg)
-        bb = QDialogButtonBox()
-        ok = bb.addButton("Confirmer la publication", QDialogButtonBox.AcceptRole)
-        ok.setProperty("kind", "primary")
-        bb.addButton("Plus tard", QDialogButtonBox.RejectRole)
-        ok.clicked.connect(self._confirm)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def _copy(self, text: str) -> None:
-        QApplication.clipboard().setText(text)
-        self.msg.setText("Copié dans le presse-papiers.")
-
-    def _reveal(self, path: str) -> None:
-        from .pages.library import reveal
-        reveal(path)
-
-    def _open(self) -> None:
-        r = self.row
-        if r["status"] not in ("published", "cancelled", "manual_action"):
-            self.app.publications.mark_manual(self.pid, "En attente du lien public après envoi manuel.")
-        self.open_url(rules.RULES[r["platform"]].upload_url)
-        self.msg.setText("Page d'envoi ouverte dans votre navigateur.")
-
-    def _confirm(self) -> None:
-        try:
-            self.app.publications.confirm_published(self.pid, self.url.text())
-        except PublicationError as exc:
-            self.msg.setText(f"⚠ {exc}")
-            return
-        self.accept()
 
 
 class PublicationDialog(QDialog):
@@ -297,8 +214,8 @@ class PublicationDialog(QDialog):
                     up.setEnabled(not done and acc.connection_status == "connected"
                                   and pub.status != PublicationStatus.SCHEDULED_PLATFORM)
                     if acc.connection_status != "connected":
-                        up.setText(up.text() + " — compte non connecté")
-                menu.addAction("Publier (assisté)…", lambda p=pub.id: self._assisted(p)).setEnabled(not done)
+                        up.setText(up.text() + " — sans API : Atelier de publication")
+                menu.addAction("Atelier de publication…", lambda p=pub.id: self._assisted(p)).setEnabled(not done)
                 menu.addAction("Personnaliser le texte…", lambda p=pub: self._customize(p)).setEnabled(not done)
                 menu.addAction("Annuler cette destination", lambda p=pub.id: self._cancel(p)).setEnabled(not done)
                 tb.setMenu(menu)
@@ -459,7 +376,8 @@ class PublicationDialog(QDialog):
         self.warn.setText("Mise en ligne lancée (suivi dans les tâches).")
 
     def _assisted(self, pid: int) -> None:
-        AssistedPublishDialog(self.app, pid, self).exec()
+        from .publish_workshop import PublishWorkshop
+        PublishWorkshop(self.app, pid, self).exec()
         self._fill()
 
     def _customize(self, pub) -> None:

@@ -86,6 +86,11 @@ def asr_params(app: AppContext) -> dict | str:
     return {"engine": "local", "model": model}
 
 
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _register_handlers(app: AppContext) -> None:
     def import_file(ctx: JobContext, params: dict) -> dict:
         res = app.importer().import_file(
@@ -1322,7 +1327,84 @@ def _register_handlers(app: AppContext) -> None:
 
     app.jobs.register("reframe", reframe_job)
     app.jobs.register("detect_text", detect_text)
+    def match_published(ctx: JobContext, params: dict) -> dict:
+        """Atelier de publication, niveau 3 : retrouve sur la page publique de chaque compte le lien des vidéos
+        publiées à la main. Pages lues avec yt-dlp, peu souvent, avec des pauses au hasard entre deux pages."""
+        import random
+        from datetime import datetime, timezone
+
+        from .media import ffmpeg
+        from .publish import reconcile, rules
+        delay = params.get("delay", (5.0, 20.0))
+
+        def pause() -> None:
+            if delay:
+                ctx.cancel_event.wait(random.uniform(*delay))
+                ctx.check()
+
+        by_account: dict[int, list] = {}
+        for r in app.publications.awaiting_link(params.get("account_id")):
+            by_account.setdefault(r["account_id"], []).append(r)
+        confirmed, proposed, errors, skipped = [], 0, [], []
+        first = True
+        for k, (aid, rows) in enumerate(by_account.items()):
+            acc = app.concepts.get_account(aid)
+            urls = reconcile.listing_urls(acc.platform.value, acc.public_url)
+            if not urls:
+                why = ("adresse publique du compte manquante" if acc.platform.value in reconcile.SUPPORTED
+                       else "liste publique non lisible sans session")
+                skipped.append(f"{acc.display} : {why}")
+                app.concepts.update_account_settings(aid, reconcile={"at": _utc_now(), "error": why})
+                continue
+            ctx.progress(k / max(1, len(by_account)), f"Recherche des liens · {acc.display}")
+            entries, error = [], ""
+            try:
+                for u in urls:
+                    if not first:
+                        pause()
+                    first = False
+                    entries += reconcile.list_recent(u)
+                # YouTube ne donne pas toujours la légende, la durée et la date dans la liste
+                for i, e in enumerate([e for e in entries if e["duration"] is None or not e["description"]][:5]):
+                    pause()
+                    try:
+                        e.update({k2: v for k2, v in reconcile.details(e["url"]).items()
+                                  if v and k2 not in ("url", "id")})
+                    except Exception as exc:          # une vidéo illisible n'arrête pas les autres
+                        log.info("Détails illisibles %s : %s", e["url"], exc)
+            except Exception as exc:
+                error = str(exc).strip().splitlines()[-1][:300] if str(exc).strip() else type(exc).__name__
+                errors.append(f"{acc.display} : {error}")
+            pubs = []
+            for r in rows:
+                dur = None
+                if r["output_path"] and Path(r["output_path"]).exists():
+                    try:
+                        dur = ffmpeg.probe(r["output_path"]).duration_s
+                    except Exception:
+                        dur = None
+                since = None
+                if r["since"]:
+                    since = datetime.strptime(r["since"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                        tzinfo=timezone.utc).timestamp()
+                c = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
+                pubs.append({"id": r["id"], "title": c["title"], "text": c["text"], "duration": dur, "since": since})
+            for m in reconcile.match(pubs, entries, app.publications.linked_urls(aid)) if entries else []:
+                if m["sure"]:
+                    try:
+                        app.publications.confirm_published(m["publication_id"], m["url"])
+                        confirmed.append({"publication_id": m["publication_id"], "url": m["url"],
+                                          "account": acc.display})
+                    except Exception as exc:
+                        errors.append(f"{acc.display} : {exc}")
+                elif app.publications.propose_match(m["publication_id"], m["url"], m["title"], m["score"]):
+                    proposed += 1
+            app.concepts.update_account_settings(aid, reconcile={"at": _utc_now(), "error": error,
+                                                                 "videos": len(entries)})
+        return {"confirmed": confirmed, "proposed": proposed, "errors": errors, "skipped": skipped}
+
     app.jobs.register("refresh_stats", refresh_stats)
+    app.jobs.register("match_published", match_published)
     app.jobs.register("connect_account", connect_account)
     app.jobs.register("publish_upload", publish_upload)
     app.jobs.register("diarize", diarize_job)

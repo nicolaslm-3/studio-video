@@ -113,9 +113,10 @@ class SettingsPage(QWidget):
 
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
-        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Connecter un compte permet la "
-                                  "mise en ligne automatique (YouTube, TikTok, Instagram, Facebook, X) ; sinon la publication est "
-                                  "assistée.", "muted", wrap=True))
+        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. « Se connecter à ce compte » ouvre "
+                                  "son navigateur dédié (Edge) : il y reste connecté, et l'Atelier de publication y "
+                                  "ouvre la page d'envoi. La connexion par API reste possible dans les réglages du "
+                                  "compte (Avancé).", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)
         self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
         self.acc_table.verticalHeader().hide()
@@ -123,13 +124,16 @@ class SettingsPage(QWidget):
         self.acc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.acc_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.acc_table.setShowGrid(False)
+        self.acc_table.itemDoubleClicked.connect(lambda _it: self._account_settings())
         right.lay.addWidget(self.acc_table, 1)
         rb = QHBoxLayout()
         rb.addWidget(button("Nouveau compte", "soft", on_click=self._new_account, icon="plus"))
         rb.addWidget(button("Supprimer", "ghost", on_click=self._delete_account))
         rb.addStretch(1)
-        rb.addWidget(button("Déconnecter", "ghost", on_click=self._disconnect_account, icon="unplug"))
-        self.connect_btn = button("Connecter", "primary", on_click=self._connect_account, icon="plug-zap")
+        rb.addWidget(button("Déconnecter l'API", "ghost", on_click=self._disconnect_account, icon="unplug"))
+        rb.addWidget(button("Réglages du compte…", "ghost", on_click=self._account_settings, icon="settings"))
+        self.connect_btn = button("Se connecter à ce compte", "primary", on_click=self._connect_account,
+                                  icon="log-in")
         rb.addWidget(self.connect_btn)
         right.lay.addLayout(rb)
         self.acc_status = label("", "muted", wrap=True)
@@ -152,15 +156,18 @@ class SettingsPage(QWidget):
         self.acc_table.setRowCount(len(accounts))
         for i, a in enumerate(accounts):
             concepts = ", ".join(c.name for c in self.app.concepts.concepts_of_account(a.id)) or "—"
-            for j, v in enumerate((a.platform.label, a.name, a.language.upper(),
-                                   CONNECTION_LABELS.get(a.connection_status, a.connection_status), concepts)):
+            from ..browser_login import state_text
+            conn = CONNECTION_LABELS.get(a.connection_status, a.connection_status)
+            if a.connection_status in ("disconnected", "connected"):
+                conn = state_text(self.app, a.id)                   # API, sinon navigateur dédié
+            for j, v in enumerate((a.platform.label, a.name, a.language.upper(), conn, concepts)):
                 item = QTableWidgetItem(v)
                 item.setData(Qt.UserRole, a.id)
                 if j == 0:
                     item.setIcon(theme.platform_icon(a.platform.value, 18))
                 if j == 3:
                     from PySide6.QtGui import QColor
-                    item.setForeground(QColor(theme.color("ok") if a.connection_status == "connected" else
+                    item.setForeground(QColor(theme.color("ok") if v.startswith("Connecté") else
                                               theme.color("danger") if a.connection_status in ("expired", "revoked",
                                                                                                 "error")
                                               else theme.color("muted")))
@@ -181,13 +188,31 @@ class SettingsPage(QWidget):
         return self.app.concepts.get_account(self.acc_table.item(row, 0).data(Qt.UserRole))
 
     def _connect_account(self) -> None:
-        """Connecter (ou reconnecter) le compte choisi : la boîte du compte demande au besoin les réglages de
-        l'application développeur de la plateforme, puis ouvre la page de connexion dans le navigateur."""
+        """« Se connecter à ce compte » : son navigateur dédié s'ouvre sur la page de connexion du réseau ; la
+        session est vérifiée une fois la fenêtre fermée."""
+        acc = self._selected_account()
+        if acc is None:
+            return
+        from ..browser_login import BrowserLogin
+        self._login = BrowserLogin(self.app, acc.id, self)
+        err = self._login.start()
+        if err:
+            self.acc_status.setText(err)
+            return
+        self.acc_status.setText(f"Connecte-toi à {acc.display} dans la fenêtre ouverte, puis ferme-la.")
+        self._login.finished.connect(lambda found, a=acc: (self.acc_status.setText(
+            f"✓ {a.display} connecté dans son navigateur." if found else
+            f"{a.display} : aucune session trouvée, la connexion n'a pas abouti." if found is False else
+            f"{a.display} : impossible de vérifier la connexion (navigateur encore ouvert ?)."), self.refresh()))
+
+    def _account_settings(self) -> None:
+        """Réglages du compte : adresse publique, navigateur dédié et (avancé) connexion par API."""
         acc = self._selected_account()
         if acc is None:
             return
         from ..account_setup import AccountSetupDialog
         dlg = AccountSetupDialog(self.app, acc.platform.value, acc.id, self)
+        dlg.finished.connect(lambda _r: self.refresh())
         if dlg.exec() and dlg.connect_job:
             self._connect_job = dlg.connect_job
             self.acc_status.setText(f"Autorisez l'accès dans la page {acc.platform.label} ouverte dans votre "
