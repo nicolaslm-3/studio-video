@@ -1223,18 +1223,15 @@ def _register_handlers(app: AppContext) -> None:
                 ctx.cancel_event.wait(random.uniform(*delay))      # espacé : jamais en rafale
                 ctx.check()
             ctx.progress(0.1 + 0.9 * k / len(todo), f"Page publique {k + 1}/{len(todo)}")
-            cookies = None
-            if t["platform"] in public_stats.NEEDS_SESSION:
-                prof = browser.profile_dir(app.paths.root, t["account_id"], exe)
-                if browser.is_open(prof):
-                    errors.append(f"{t['platform'].capitalize()} : ferme le navigateur du compte pour relever ses "
-                                  "chiffres")
-                    continue
-                cookies = public_stats.cookies_from(exe, prof)
+            cookies = public_stats.cookies_from(exe) if t["platform"] in public_stats.NEEDS_SESSION else None
             try:
                 m = public_stats.read(t["url"], cookies)
             except Exception as exc:
-                errors.append(f"{t['url']} : {(str(exc).splitlines() or ['illisible'])[0][:160]}")
+                why = (str(exc).splitlines() or ["illisible"])[0][:160]
+                if cookies and "cookie" in why.lower():
+                    why = (f"ferme {browser.browser_name(exe)} pour relever les chiffres {t['platform'].capitalize()} "
+                           "(ses cookies sont verrouillés tant qu'il est ouvert)")
+                errors.append(f"{t['url']} : {why}")
                 continue
             if m:
                 app.analytics.record(t["id"], m, "public")

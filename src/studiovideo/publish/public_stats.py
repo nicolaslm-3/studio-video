@@ -2,8 +2,9 @@
 (rien n'est téléchargé), comme un visiteur la verrait.
 
 - YouTube : vues, j'aime, commentaires ; TikTok : vues, j'aime, commentaires, partages — sans session.
-- Facebook et Instagram ne montrent leurs chiffres qu'à un visiteur connecté : les cookies du navigateur dédié du
-  compte sont prêtés à yt-dlp (lus par yt-dlp lui-même, jamais par le logiciel), navigateur fermé. Un chiffre que
+- Facebook et Instagram ne montrent leurs chiffres qu'à un visiteur connecté : les cookies du navigateur par défaut
+  (celui où l'utilisateur est connecté) sont prêtés à yt-dlp (lus par yt-dlp lui-même, jamais par le logiciel) ;
+  Windows les verrouille tant que le navigateur est ouvert. Un chiffre que
   la page ne montre pas reste « non fourni » (jamais 0).
 
 Relevés espacés pour respecter les plateformes : 6 h après la publication, puis J+1, J+3, J+7, J+14, J+30, puis une
@@ -52,13 +53,10 @@ def due(published_at: str | None, last_at: str | None, now: datetime) -> bool:
     return next_reading(pub, _dt(last_at)) <= now
 
 
-def cookies_from(exe: Path | None, profile: Path) -> tuple | None:
-    """Option « cookiesfrombrowser » de yt-dlp pour le profil dédié du compte (None : navigateur inconnu)."""
+def cookies_from(exe: Path | None) -> tuple | None:
+    """Option « cookiesfrombrowser » de yt-dlp : le profil habituel du navigateur (None : navigateur inconnu)."""
     name = YTDLP_BROWSER.get(exe.stem.lower()) if exe else None
-    if not name:
-        return None
-    path = Path(profile) if name == "firefox" else Path(profile) / "Default"
-    return (name, str(path), None, None)
+    return (name, None, None, None) if name else None
 
 
 def metrics(info: dict) -> dict:

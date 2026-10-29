@@ -1,7 +1,7 @@
 """Ajouter, régler et connecter un compte d'un réseau (onglet Export, « Ajouter un compte » ; Concepts et projets).
 
-D'abord le navigateur dédié du compte (« Se connecter à ce compte », `browser_login.py`) : sans API ni application
-développeur, il sert à l'Atelier de publication. La connexion par API (application développeur du réseau, OAuth)
+Sans API, le compte n'a besoin que de son adresse publique : les pages d'envoi s'ouvrent dans le navigateur de
+l'utilisateur, où il est connecté. La connexion par API (application développeur du réseau, OAuth)
 reste possible, repliée dans « Avancé : connexion par API » ; les codes secrets vont dans le coffre Windows. Aucun mot
 de passe n'est demandé."""
 from __future__ import annotations
@@ -15,7 +15,6 @@ from ..core import AppContext
 from ..domain.models import Platform
 from ..services import secrets
 from ..services.concepts import ConceptError
-from . import browser_login
 from .dialogs import language_combo
 from .widgets import button, label
 
@@ -113,26 +112,6 @@ class AccountSetupDialog(QDialog):
         if acc is None:
             form.addRow("Langue principale", self.lang)
         lay.addLayout(form)
-        # -- navigateur dédié (sans API)
-        self.login = None
-        nav = QFrame()
-        nav.setProperty("role", "card")
-        nl = QVBoxLayout(nav)
-        nl.setContentsMargins(16, 12, 16, 12)
-        nl.setSpacing(8)
-        from .simple_views import _row
-        self.nav_state = label("", "badge")
-        nl.addLayout(_row(label("Navigateur dédié", "h2"), "stretch", self.nav_state))
-        nl.addWidget(label("Le compte reste connecté dans son propre profil de ton navigateur : la page d'envoi de l'Atelier "
-                           "de publication s'y ouvre déjà connectée. Tu te connectes toi-même, puis tu fermes la "
-                           "fenêtre ; le logiciel ne voit jamais ton mot de passe.", "muted", wrap=True, hint=False))
-        self.login_btn = button("Se connecter à ce compte", "primary", icon="log-in", on_click=self._browser_login)
-        nl.addLayout(_row(self.login_btn, "stretch"))
-        self.login_note = label("", "muted", wrap=True, hint=False)
-        self.login_note.hide()
-        nl.addWidget(self.login_note)
-        lay.addWidget(nav)
-        self._show_nav()
         # -- avancé : connexion par API (repliée)
         self.adv_btn = QToolButton()
         self.adv_btn.setText("Avancé : connexion par API")
@@ -215,13 +194,6 @@ class AccountSetupDialog(QDialog):
         self.adv.setVisible(on)
         self.adjustSize()
 
-    def _show_nav(self) -> None:
-        if self.account_id is None:
-            self.nav_state.setText("Non connecté")
-            return
-        st = browser_login.state_text(self.app, self.account_id)
-        self.nav_state.setText("Non connecté" if st == "Connecté (API)" else st)
-
     def _create(self) -> bool:
         """Compte enregistré (nouveau compte : avec son nom, son adresse et sa langue)."""
         if self.account_id is not None:
@@ -237,26 +209,6 @@ class AccountSetupDialog(QDialog):
             return False
         self.account_id = acc.id
         return True
-
-    def _browser_login(self) -> None:
-        if not self._create():
-            return
-        self.login = browser_login.BrowserLogin(self.app, self.account_id, self)
-        err = self.login.start()
-        self.login_note.show()
-        if err:
-            self.login_note.setText(err)
-            return
-        self.login_btn.setEnabled(False)
-        self.login_note.setText("Connecte-toi dans la fenêtre ouverte, puis ferme-la.")
-        self.login.finished.connect(self._logged)
-
-    def _logged(self, found) -> None:
-        self.login_btn.setEnabled(True)
-        self.login_note.setText("✓ Compte connecté dans son navigateur." if found else
-                                "Aucune session trouvée : la connexion n'a pas abouti." if found is False else
-                                "Impossible de vérifier la connexion (navigateur encore ouvert ?).")
-        self._show_nav()
 
     def _say(self, text: str) -> None:
         self.note.setText(text)

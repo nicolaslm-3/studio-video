@@ -107,17 +107,17 @@ API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et
 vidéo exportée (rectangle étroit, à glisser, ou « Afficher dans l'Explorateur »), puis une carte par réseau (YouTube,
 TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite) : icône et nom, compte, « Ouvrir la page
 d'envoi » (texte copié), lien de la vidéo publiée (`publish_workshop.LinkBox`) ; pas de case à cocher.
-« Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte, adresse publique, **navigateur
-dédié** (« Se connecter à ce compte » : navigateur par défaut de Windows — sinon Edge — lancé normalement avec le profil
-`browser/<navigateur>/<id>`, l'utilisateur se connecte
-lui-même, la session est reconnue à la fermeture, `publish/browser.py`) ; la connexion par API (application développeur,
+« Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte et adresse publique ; les pages
+des réseaux s'ouvrent dans un **nouvel onglet du navigateur par défaut déjà ouvert**, avec les comptes où
+l'utilisateur est connecté (`browser_login.open_page`) — pas de profil séparé ni de « Se connecter à ce compte » (le
+profil par compte de `publish/browser.py` n'est plus proposé) ; la connexion par API (application développeur,
 OAuth) est repliée dans « Avancé : connexion par API », jamais supprimée ; il n'y a plus d'onglet Paramètres →
 Publication. **Sans API** : **Atelier de publication** (`ui/publish_workshop.py`, dans Export et depuis le
-Calendrier) : page d'envoi dans le profil du compte (texte copié en l'ouvrant), vidéo glissée depuis l'Atelier ; le clic
+Calendrier) : page d'envoi dans un nouvel onglet du navigateur (texte copié en l'ouvrant), vidéo glissée depuis l'Atelier ; le clic
 final « Publier » reste humain ; le lien est retrouvé tout seul sur la page publique du compte (`publish/reconcile.py`,
 yt-dlp, YouTube et TikTok, tâche `match_published` toutes les heures) : sûr → confirmé, doute → « Est-ce cette
 vidéo ? ». **Statistiques sans API** (`publish/public_stats.py`) : page publique de chaque vidéo publiée lue par
-yt-dlp (Facebook / Instagram avec les cookies du navigateur dédié, lus par yt-dlp, navigateur fermé), 6 h après puis
+yt-dlp (Facebook / Instagram avec les cookies du navigateur par défaut, lus par yt-dlp, navigateur fermé), 6 h après puis
 J+1, J+3, J+7, J+14, J+30, puis chaque mois, au plus 20 par heure, 5 à 20 s entre deux (`MainWindow.check_stats`) ;
 Analytiques → « Par vidéo » : une vidéo sur les quatre réseaux dans un tableau (`AnalyticsService.by_video`).
 Pas d'API de plateforme ni de service payant pour publier ou relever les statistiques.

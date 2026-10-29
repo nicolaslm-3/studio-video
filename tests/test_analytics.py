@@ -149,18 +149,16 @@ def test_public_stats_schedule_and_metrics(tmp_path):
     assert not ps.due("2026-10-01T12:00:00Z", "2026-10-01T18:30:00Z", pub + timedelta(hours=20))
     assert ps.metrics({"view_count": 10, "like_count": None, "comment_count": 3, "repost_count": 0}) == \
         {"views": 10, "comments": 3, "shares": 0}                                     # absent : jamais inventé
-    assert ps.cookies_from(tmp_path / "brave.exe", tmp_path / "p") == ("brave", str(tmp_path / "p" / "Default"),
-                                                                     None, None)
-    assert ps.cookies_from(tmp_path / "firefox.exe", tmp_path / "p")[1] == str(tmp_path / "p")
-    assert ps.cookies_from(tmp_path / "msedge.exe", tmp_path / "p")[0] == "edge"
-    assert ps.cookies_from(tmp_path / "safari.exe", tmp_path / "p") is None
+    assert ps.cookies_from(tmp_path / "brave.exe") == ("brave", None, None, None)      # le profil habituel
+    assert ps.cookies_from(tmp_path / "msedge.exe")[0] == "edge"
+    assert ps.cookies_from(tmp_path / "safari.exe") is None
 
 
 def test_public_stats_job(tmp_path, monkeypatch):
     """Sans API : la page publique de chaque vidéo publiée est lue ; Facebook / Instagram avec les cookies du
-    navigateur dédié du compte (navigateur fermé) ; une vidéo publiée sur plusieurs réseaux est regroupée."""
+    navigateur habituel ; une vidéo publiée sur plusieurs réseaux est regroupée."""
     from studiovideo.core import build_context
-    from studiovideo.publish import browser, public_stats
+    from studiovideo.publish import public_stats
     from studiovideo.services import secrets
     monkeypatch.setattr(secrets, "get_secret", lambda k: None)
     exe = tmp_path / "brave.exe"
@@ -191,23 +189,11 @@ def test_public_stats_job(tmp_path, monkeypatch):
             return app.jobs.get(jid)
         j = run({})                                                   # automatique : rien avant 6 h
         assert j.status == "succeeded" and j.result["public"] == 0 and not calls
-        prof = browser.profile_dir(app.paths.root, fb.id, exe)
-        prof.mkdir(parents=True)
-        lock = open(prof / "lockfile", "w")                           # navigateur du compte Facebook ouvert
-        try:
-            if browser.is_open(prof):                                 # (verrou effectif sous Windows seulement)
-                j = run({"all": True, "delay": None})
-                assert j.result["public"] == 1 and "ferme le navigateur" in j.result["errors"][0]
-                calls.clear()
-                app.db.connect().execute("DELETE FROM analytics_snapshot")
-        finally:
-            lock.close()
-            (prof / "lockfile").unlink()
         j = run({"all": True, "delay": None})                         # bouton « Relever » : tout, tout de suite
         assert j.status == "succeeded" and j.result["public"] == 2, j.result
         by_url = dict(calls)
         assert by_url["https://www.tiktok.com/@pp/video/1"] is None                     # TikTok : sans session
-        assert by_url["https://www.facebook.com/reel/2"] == ("brave", str(prof / "Default"), None, None)
+        assert by_url["https://www.facebook.com/reel/2"] == ("brave", None, None, None)   # cookies de ton Brave
         latest = {r["id"]: r["metrics"] for r in app.analytics.latest()}
         assert latest[p1] == {"views": 100, "likes": 3, "_source": "public"}
         (g,) = app.analytics.by_video(app.analytics.latest())        # une vidéo, deux réseaux

@@ -1,6 +1,8 @@
-"""« Se connecter à ce compte » : le navigateur dédié du compte (navigateur par défaut, sinon Edge) s'ouvre
-normalement sur la page de connexion du réseau ; l'utilisateur se connecte lui-même puis ferme la fenêtre. Le logiciel vérifie ensuite que
-le profil contient bien une session (`publish/browser.py`). Il ne voit jamais le mot de passe."""
+"""Pages des réseaux : elles s'ouvrent dans un nouvel onglet du navigateur par défaut, déjà ouvert, avec les
+comptes où l'utilisateur est connecté (`open_page`) — comme toute autre application.
+
+`BrowserLogin` (profil de navigateur séparé par compte, `publish/browser.py`) n'est plus proposé dans l'interface ;
+il reste pour un usage futur (lecture automatisée)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -39,22 +41,17 @@ def state_text(app: AppContext, account_id: int) -> str:
     acc = app.concepts.get_account(account_id)
     if acc.connection_status == "connected":
         return "Connecté (API)"
-    st = app.concepts.account_settings(account_id).get("browser") or {}
-    if st.get("session"):
-        return f"Connecté dans {browser.browser_name(browser.find_browser())}"
-    return "Session expirée" if st.get("was") else "Non connecté"
+    return "Sans API (ton navigateur)"
 
 
 def open_page(app: AppContext, account_id: int, url: str, fallback=None) -> str:
-    """Ouvre `url` dans le profil du compte. Sans navigateur capable d'un profil séparé : navigateur par défaut
-    (`fallback`), et le dit."""
-    exe = browser.find_browser()
-    if exe is None:
-        if fallback:
-            fallback(url)
-        return "Aucun navigateur ne peut ouvrir le profil du compte : page ouverte dans le navigateur par défaut, " \
-               "sans la session du compte."
-    browser.launch(exe, profile(app, account_id), url)
+    """Ouvre `url` comme le font les autres applications : un nouvel onglet du navigateur par défaut, déjà ouvert,
+    avec les comptes où l'utilisateur est connecté (`fallback` : ouverture par Windows)."""
+    if fallback is None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        fallback = lambda u: QDesktopServices.openUrl(QUrl(u))      # noqa: E731
+    fallback(url)
     return ""
 
 

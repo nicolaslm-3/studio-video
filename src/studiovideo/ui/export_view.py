@@ -302,7 +302,6 @@ class NetworkCard(QFrame):
         super().__init__()
         self.view, self.key, self.name = view, key, name
         self.setProperty("role", "card")
-        self.login = None
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 10, 14, 12)
         v.setSpacing(7)
@@ -332,12 +331,9 @@ class NetworkCard(QFrame):
         row = QHBoxLayout()
         row.setSpacing(6)
         self.open_btn = button(f"Ouvrir la page d'envoi {name}", "soft", icon="upload",
-                               tooltip="Ouvre la page d'envoi dans le navigateur dédié du compte (déjà connecté) et "
-                               "copie le texte du réseau : glisse la vidéo, colle le texte, clique toi-même sur "
-                               "« Publier »", on_click=lambda: self.view.open_upload(self.key))
+                               tooltip="Ouvre la page d'envoi dans un nouvel onglet de ton navigateur et copie le "
+                               "texte du réseau : glisse la vidéo, colle le texte, clique toi-même sur « Publier »", on_click=lambda: self.view.open_upload(self.key))
         row.addWidget(self.open_btn)
-        self.login_btn = button("Se connecter à ce compte", "ghost", icon="log-in", on_click=self._login)
-        row.addWidget(self.login_btn)
         row.addStretch(1)
         v.addLayout(row)
         self.note = label("", "faint", wrap=True, hint=False)
@@ -393,40 +389,12 @@ class NetworkCard(QFrame):
         done = bool(r and r["status"] == "published")
         self.state.setText("✓ Publiée" if done else "À publier" if r else "")
         self.open_btn.setEnabled(bool(acc) and exported and not done)
-        session = browser_login.session_state(self.view.app, acc) if acc else None
-        api = bool(acc) and self.view.app.concepts.get_account(acc).connection_status == "connected"
-        self.login_btn.setVisible(bool(acc) and not session and not api)
-        if not acc:
-            self.note.setText("")
-        elif not exported:
+        if acc and not exported:
             self.note.setText("Exporte d'abord la vidéo (à gauche), puis ouvre la page d'envoi.")
-        elif session:
-            self.note.setText(f"Navigateur dédié au compte ({browser_login.browser.browser_name(browser_login.browser.find_browser())}), "
-                              "déjà connecté. Le clic final « Publier » reste le tien.")
-        else:
-            self.note.setText("Connecte ce compte une fois dans son navigateur dédié : il y restera connecté.")
+        elif self.note.text().startswith("Exporte d'abord"):
+            self.note.setText("")
         self.note.setVisible(bool(self.note.text()))
         self.link.set_publication(pub_id)
-
-    def _login(self) -> None:
-        acc = self.account_id()
-        if not acc:
-            return
-        self.login = browser_login.BrowserLogin(self.view.app, acc, self)
-        err = self.login.start()
-        if err:
-            self.note.setText(err)
-            return
-        self.login_btn.setEnabled(False)
-        self.note.setText("Connecte-toi dans la fenêtre ouverte, puis ferme-la.")
-        self.login.finished.connect(self._logged)
-
-    def _logged(self, found) -> None:
-        self.login_btn.setEnabled(True)
-        self.view.refresh_cards()
-        if not found:
-            self.note.setText("Aucune session trouvée : la connexion n'a pas abouti." if found is False else
-                              "Impossible de vérifier la connexion (navigateur encore ouvert ?).")
 
 
 ACTIONS = ("draft", "local")

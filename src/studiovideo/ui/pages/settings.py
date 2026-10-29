@@ -113,10 +113,9 @@ class SettingsPage(QWidget):
 
         right = Card()
         right.lay.addWidget(label("Comptes sociaux", "h2"))
-        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. « Se connecter à ce compte » ouvre "
-                                  "son propre profil de ton navigateur : il y reste connecté, et l'Atelier de publication y "
-                                  "ouvre la page d'envoi. La connexion par API reste possible dans les réglages du "
-                                  "compte (Avancé).", "muted", wrap=True))
+        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Les pages d'envoi s'ouvrent dans ton "
+                                  "navigateur, où tu es connecté. La connexion par API reste possible dans les "
+                                  "réglages du compte (Avancé).", "muted", wrap=True))
         self.acc_table = QTableWidget(0, 5)
         self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
         self.acc_table.verticalHeader().hide()
@@ -132,9 +131,6 @@ class SettingsPage(QWidget):
         rb.addStretch(1)
         rb.addWidget(button("Déconnecter l'API", "ghost", on_click=self._disconnect_account, icon="unplug"))
         rb.addWidget(button("Réglages du compte…", "ghost", on_click=self._account_settings, icon="settings"))
-        self.connect_btn = button("Se connecter à ce compte", "primary", on_click=self._connect_account,
-                                  icon="log-in")
-        rb.addWidget(self.connect_btn)
         right.lay.addLayout(rb)
         self.acc_status = label("", "muted", wrap=True)
         right.lay.addWidget(self.acc_status)
@@ -186,24 +182,6 @@ class SettingsPage(QWidget):
             QMessageBox.information(self, "Comptes", "Sélectionnez un compte dans la liste.")
             return None
         return self.app.concepts.get_account(self.acc_table.item(row, 0).data(Qt.UserRole))
-
-    def _connect_account(self) -> None:
-        """« Se connecter à ce compte » : son navigateur dédié s'ouvre sur la page de connexion du réseau ; la
-        session est vérifiée une fois la fenêtre fermée."""
-        acc = self._selected_account()
-        if acc is None:
-            return
-        from ..browser_login import BrowserLogin
-        self._login = BrowserLogin(self.app, acc.id, self)
-        err = self._login.start()
-        if err:
-            self.acc_status.setText(err)
-            return
-        self.acc_status.setText(f"Connecte-toi à {acc.display} dans la fenêtre ouverte, puis ferme-la.")
-        self._login.finished.connect(lambda found, a=acc: (self.acc_status.setText(
-            f"✓ {a.display} connecté dans son navigateur." if found else
-            f"{a.display} : aucune session trouvée, la connexion n'a pas abouti." if found is False else
-            f"{a.display} : impossible de vérifier la connexion (navigateur encore ouvert ?)."), self.refresh()))
 
     def _account_settings(self) -> None:
         """Réglages du compte : adresse publique, navigateur dédié et (avancé) connexion par API."""

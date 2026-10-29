@@ -244,14 +244,14 @@ def test_workshop_ui(qtbot, app, monkeypatch, tmp_path):
     QApplication.clipboard().setText("")
     w._open()                                                                  # page d'envoi : texte copié
     assert QApplication.clipboard().text() == "Titre YouTube"                  # YouTube : le titre d'abord
-    assert opened == ["https://www.youtube.com/upload"] and "profil du compte" in w.msg.text()
+    assert opened == ["https://www.youtube.com/upload"] and "nouvel onglet" in w.msg.text()   # navigateur déjà ouvert
     w.group.button(1).click()
     assert w.link.props.count() == 1                                           # « Est-ce cette vidéo ? »
     (m,) = app.publications.matches(tk)
     w.link._accept(m["id"])
     assert app.publications.get(tk)["status"] == "published" and "✓ Publiée" in w.state.text()
     assert not w.open_btn.isEnabled()
-    assert w.login_btn.isVisible() or not w.isVisible()                        # pas encore connecté
+    assert not hasattr(w, "login_btn")                                         # tes comptes : ton navigateur
 
 
 def test_video_tile_drags_the_file(qtbot, tmp_path):
@@ -271,7 +271,7 @@ def test_account_dialog_browser_first(qtbot, app):
     d = AccountSetupDialog(app, "tiktok", acc.id)
     qtbot.addWidget(d)
     assert not d.adv_btn.isChecked() and d.adv.isHidden()                     # API repliée
-    assert d.login_btn.text() == "Se connecter à ce compte"
+    assert not hasattr(d, "login_btn")                                         # plus de profil séparé
     d.url.setText("https://www.tiktok.com/@pp")
     d._ok()
     assert app.concepts.get_account(acc.id).public_url == "https://www.tiktok.com/@pp"

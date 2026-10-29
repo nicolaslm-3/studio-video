@@ -206,7 +206,6 @@ class PublishWorkshop(QDialog):
         self.app = app
         self.ids = [publication_ids] if isinstance(publication_ids, int) else list(publication_ids)
         self.open_url = open_url or (lambda u: QDesktopServices.openUrl(QUrl(u)))
-        self.login = None
         self.setWindowTitle("Atelier de publication")
         self.setMinimumWidth(600)
         lay = QVBoxLayout(self)
@@ -289,8 +288,6 @@ class PublishWorkshop(QDialog):
         br = QHBoxLayout()
         self.open_btn = button(f"Ouvrir la page d'envoi {pl.label}", "primary", icon="upload", on_click=self._open)
         br.addWidget(self.open_btn)
-        self.login_btn = button("Se connecter à ce compte", "ghost", icon="log-in", on_click=self._login)
-        br.addWidget(self.login_btn)
         br.addStretch(1)
         self.body.addLayout(br)
         self.page_note = label("", "muted", wrap=True, hint=False)
@@ -301,7 +298,6 @@ class PublishWorkshop(QDialog):
         self.link.changed.connect(self.refresh)
         self.body.addWidget(self.link)
         self.msg = self.link.msg
-        browser_login.check_session(self.app, r["account_id"])
         self.link.set_publication(self.pid)
         self.refresh()
 
@@ -309,14 +305,9 @@ class PublishWorkshop(QDialog):
         r = self.row = self.app.publications.get(self.pid)
         done = r["status"] in ("published", "cancelled")
         self.state.setText({"published": "✓ Publiée", "cancelled": "Annulée"}.get(r["status"], "À publier"))
-        st = browser_login.session_state(self.app, r["account_id"])
-        self.login_btn.setVisible(not st)
-        name = browser_login.browser.browser_name(browser_login.browser.find_browser())
-        self.page_note.setText(
-            f"Navigateur dédié à ce compte ({name}), déjà connecté. Glisse la vidéo dans la page, colle le texte "
-            "(copié en ouvrant la page), vérifie, puis clique toi-même sur « Publier »." if st else
-            "Ce compte n'est pas encore connecté dans son navigateur dédié : « Se connecter à ce compte », puis "
-            "ferme la fenêtre une fois connecté.")
+        self.page_note.setText("La page s'ouvre dans un nouvel onglet de ton navigateur, avec tes comptes. Glisse "
+                               "la vidéo dans la page, colle le texte (copié en ouvrant la page), vérifie, puis "
+                               "clique toi-même sur « Publier ».")
         self.link.refresh()
         self.open_btn.setEnabled(not done)
 
@@ -328,23 +319,6 @@ class PublishWorkshop(QDialog):
         c = rules.compose(r["platform"], r["title"] or "", r["description"] or "", r["hashtags"] or "")
         QApplication.clipboard().setText(c["title"] or c["text"])      # le texte, prêt à coller dans la page
         note = browser_login.open_page(self.app, r["account_id"], upload_url(r["platform"]), self.open_url)
-        self.msg.setText(note or ("Page d'envoi ouverte dans le navigateur du compte ; "
+        self.msg.setText(note or ("Page d'envoi ouverte dans un nouvel onglet de ton navigateur ; "
                                   + ("titre copié." if c["title"] else "texte copié.")))
-        self.refresh()
-
-    def _login(self) -> None:
-        self.login = browser_login.BrowserLogin(self.app, self.row["account_id"], self)
-        err = self.login.start()
-        if err:
-            self.msg.setText(err)
-            return
-        self.login_btn.setEnabled(False)
-        self.msg.setText("Connecte-toi dans la fenêtre ouverte, puis ferme-la.")
-        self.login.finished.connect(self._logged)
-
-    def _logged(self, found) -> None:
-        self.login_btn.setEnabled(True)
-        self.msg.setText("✓ Compte connecté dans son navigateur." if found else
-                         "Aucune session trouvée : la connexion n'a pas abouti." if found is False else
-                         "Impossible de vérifier la connexion (navigateur encore ouvert ?).")
         self.refresh()
