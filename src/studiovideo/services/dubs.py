@@ -22,7 +22,12 @@ class DubService:
         par l'aperçu n'empêche jamais d'en générer une autre."""
         from datetime import datetime
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        return self.root / f"a{asset_id}_{language}_{stamp}"
+        d, k = self.root / f"a{asset_id}_{language}_{stamp}", 1
+        # l'horloge de Windows avance par paliers : deux voix d'affilée peuvent avoir la même heure
+        while d.exists() or d.with_name(d.name + ".partial").exists():
+            k += 1
+            d = self.root / f"a{asset_id}_{language}_{stamp}-{k}"
+        return d
 
     def languages(self, asset_id: int) -> list[str]:
         return [r["language"] for r in self.db.query(
