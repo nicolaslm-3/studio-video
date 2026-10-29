@@ -52,7 +52,7 @@ bouton Exporter ni de « Suivant » : on passe d'un onglet à l'autre par le doc
 colonnes — média, action en cours, outil / modèle (`jobs_panel.describe_parts`) —, son état en emoji (mot au survol),
 et un bouton carré l'**arrête à tout instant** (`JobManager.cancel` : arrêtée tout de suite, un travail qui ne
 s'interrompt pas finit en arrière-plan et son résultat est ignoré ; export ou publication : après confirmation).
-Changer d'extrait, de version ou de projet remet la lecture au début (`MontagePlayer.rewind`).
+Changer d'extrait, de version ou de projet remet la lecture au début (`MontagePlayer.rewind`). Une tâche en cours : l'icône des tâches tourne (`shell.JobsButton`) ; un lien collé en téléchargement : « Chargement en cours… » dans le champ du lien.
 **Historique** (migration 0008, `services/history.py`) : chaque transcription, traduction et voix générée est
 gardée et appliquée d'office ; on revient à une ancienne par l'horloge (`HistoryPopover` : moteur, puis en gris le
 début du texte) ; une voix a son propre dossier (`DubService.new_directory`). Les dates sont enregistrées en temps
@@ -103,7 +103,7 @@ sans emporter les sous-titres) ; l'aperçu d'une version fait entendre sa voix d
 Une version supprimée l'est pour de bon (sa langue quitte `translations.ready`). Moteur « Automatique » par défaut (`ai/translate.py` : le meilleur moteur prêt, puis le suivant en cas d'échec ;
 Google Traduction et MyMemory gratuits sans clé) ; roues crantées = alternatives, clés, voix hors ligne et modèle
 de langage (`ui/engines.py`, `ui/engine_panels.py`). Export, en deux colonnes : à gauche nom du fichier précédé
-de la date du jour (« 2026-04-02 Nom.mp4 », `export_view.file_name`) et dossier, titre et description communs (sans
+de la date et de l'heure (« 2026-10-28 10h32 Nom.mp4 », `export_view.file_name`) et dossier, titre et description communs (sans
 champ titre, le titre ouvre la description), petit aperçu, puis « Brouillon sur les réseaux » (comptes connectés par
 API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et Instagram par la page d'envoi) ou
 « Sur mon PC seulement » — ni publication immédiate ni programmation ; à droite l'**Atelier de publication** : la

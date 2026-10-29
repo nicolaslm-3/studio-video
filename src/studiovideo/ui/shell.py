@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QPainter, QPen
+from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
@@ -171,6 +171,32 @@ class JobsButton(DockButton):
 
     def __init__(self, parent=None):
         super().__init__("loader-circle", "Tâches", None, checkable=False, parent=parent, size=34)
+        self.running = 0
+        self.angle = 0.0
+        self.spin = QTimer(self, interval=40)            # une tâche en cours : l'icône tourne
+        self.spin.timeout.connect(self._turn)
+
+    def _turn(self) -> None:
+        self.angle = (self.angle + 12) % 360
+        self.update()
+
+    def restyle(self) -> None:
+        super().restyle()
+        self.spin_icon = self.icon()
+        if getattr(self, "running", 0):
+            self.setIcon(QIcon())                         # en cours : l'icône est dessinée tournée (paintEvent)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if not self.running:
+            return
+        s = self.iconSize()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.translate(self.width() / 2, self.height() / 2)
+        p.rotate(self.angle)
+        p.drawPixmap(-s.width() // 2, -s.height() // 2, self.spin_icon.pixmap(s))
+        p.end()
 
     def enterEvent(self, e):                     # nom affiché sous le bouton (il est en haut de la fenêtre)
         bubble().show_for(self, self.text_ + (f" · {self.badge.lstrip('!')}" if self.badge else ""), above=False)
@@ -179,6 +205,12 @@ class JobsButton(DockButton):
     def set_jobs(self, running: int, failed: int) -> None:
         self.badge = f"!{failed} échec" if failed else (f"{running} en cours" if running else "")
         self.color = theme.color("accent") if running else None
+        self.running = running
+        if running and not self.spin.isActive():
+            self.spin.start()
+        elif not running:
+            self.spin.stop()
+            self.angle = 0.0
         self.restyle()
         self.update()
 

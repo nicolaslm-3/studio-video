@@ -448,6 +448,17 @@ class StudioPage(QWidget):
         if u and self.project_id and import_url(self.app, self, self.project_id, url=u, extra=self._import_extra()):
             self.link_edit.clear()
             self.save_lbl.setText("Téléchargement de la vidéo en cours…")
+            self._show_link_busy()
+
+    def _show_link_busy(self) -> None:
+        """Lien collé en cours de téléchargement : écrit en gris dans le champ, avec la progression."""
+        r = self.app.db.query_one("SELECT progress FROM job WHERE kind = 'import_url' AND status IN "
+                                  "('pending','running') ORDER BY id DESC LIMIT 1")
+        busy = r is not None
+        pct = f" {int((r['progress'] or 0) * 100)} %" if busy and r["progress"] else ""
+        self.link_edit.setPlaceholderText(f"Chargement en cours…{pct}" if busy else "Coller un lien")
+        self.link_icon.setIcon(theme.icon("loader-circle" if busy else "link", theme.color("accent" if busy
+                                                                                         else "muted"), 16))
 
     # -- parcours guidés (§4) -------------------------------------------------------
     def _project_videos(self) -> list[dict]:
@@ -1620,6 +1631,8 @@ class StudioPage(QWidget):
 
     def on_job(self, job) -> None:
         """Appelé par la fenêtre principale à chaque changement d'état d'une tâche."""
+        if job.kind == "import_url":
+            self._show_link_busy()
         self.clip_view.on_job(job)
         self.tr_view.on_job(job)
         self.export_view.on_job(job)

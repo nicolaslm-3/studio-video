@@ -184,15 +184,17 @@ def test_masks_hide_burned_text(media, tmp_path):
 def test_detect_burned_text_and_logo(tmp_path):
     """Logo fixe en haut à droite + sous-titres intermittents en bas, sur un fond qui bouge."""
     from studiovideo.edit import textdetect
-    logo = ",".join(f"drawbox=x={540 + 6 * k}:y=20:w=2:h=24:color=white@1:t=fill" for k in range(12))
+    # logo à traits de 3 px (1 px après réduction à 320 px serait au seuil de détection) ; encodage sur un seul fil et
+    # de bonne qualité : la même vidéo quel que soit le nombre de cœurs de la machine (CI)
+    logo = ",".join(f"drawbox=x={540 + 6 * k}:y=20:w=3:h=24:color=white@1:t=fill" for k in range(12))
     s1 = ",".join(f"drawbox=x={120 + 14 * k}:y=300:w=4:h=26:color=white@1:t=fill:enable='between(t,1,3)'"
                   for k in range(28))
     s2 = ",".join(f"drawbox=x={150 + 11 * k}:y=302:w=3:h=24:color=yellow@1:t=fill:enable='between(t,5,7)'"
                   for k in range(30))
     src = "gradients=s=640x360:r=25:d=8:speed=0.25:n=4:seed=3"
-    burned = _make(tmp_path / "burn.mp4", ["-f", "lavfi", "-i", src, "-vf", ",".join([logo, s1, s2]),
-                                           "-c:v", "libx264", "-pix_fmt", "yuv420p"])
-    clean = _make(tmp_path / "clean.mp4", ["-f", "lavfi", "-i", src, "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+    enc = ["-c:v", "libx264", "-crf", "16", "-threads", "1", "-pix_fmt", "yuv420p"]
+    burned = _make(tmp_path / "burn.mp4", ["-f", "lavfi", "-i", src, "-vf", ",".join([logo, s1, s2]), *enc])
+    clean = _make(tmp_path / "clean.mp4", ["-f", "lavfi", "-i", src, *enc])
     zones = {z["kind"]: z for z in textdetect.detect_file(burned, 0, 8, 640, 360)}
     lg, st = zones["logo"], zones["subtitles"]
 

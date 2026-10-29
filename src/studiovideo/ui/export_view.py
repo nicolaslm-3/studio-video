@@ -55,16 +55,17 @@ def safe_name(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", name).strip(" .")[:120] or "video"
 
 
-def date_prefix(day=None) -> str:
-    """Début de chaque fichier exporté : la date du jour, année-mois-jour (« 2026-04-02 »)."""
-    from datetime import date
-    return (day or date.today()).isoformat()
+def date_prefix(when=None) -> str:
+    """Début de chaque fichier exporté : la date et l'heure de l'export (« 2026-10-28 10h32 »)."""
+    from datetime import datetime
+    return (when or datetime.now()).strftime("%Y-%m-%d %Hh%M")
 
 
-def file_name(name: str, day=None) -> str:
-    """Nom du fichier exporté : « 2026-04-02 Mon nom.mp4 » (une date déjà en tête n'est pas répétée)."""
-    base = re.sub(r"^\d{4}-\d{2}-\d{2}[ _-]*", "", safe_name(name)) or "video"
-    return f"{date_prefix(day)} {base}.mp4"
+def file_name(name: str, when=None) -> str:
+    """Nom du fichier exporté : « 2026-10-28 10h32 Mon nom.mp4 » (une date et une heure déjà en tête ne sont pas
+    répétées)."""
+    base = re.sub(r"^\d{4}-\d{2}-\d{2}(?:[ _-]+\d{1,2}h\d{2})?[ _-]*", "", safe_name(name)) or "video"
+    return f"{date_prefix(when)} {base}.mp4"
 
 
 # -- emojis ----------------------------------------------------------------------------------------------
@@ -357,7 +358,7 @@ class ExportView(_View):
         self.file_name.setToolTip("Nom du fichier exporté")
         self.file_name.textChanged.connect(self._changed)
         self.date_lbl = label(date_prefix(), "muted", hint=False)        # le fichier commence par la date du jour
-        self.date_lbl.setToolTip("Le nom du fichier commence par la date du jour (année-mois-jour)")
+        self.date_lbl.setToolTip("Le nom du fichier commence par la date et l'heure de l'export")
         fl.addLayout(_row(self.date_lbl, self.file_name, label(".mp4", "muted", hint=False), spacing=4))
         self.folder = str(export_dir)
         self.folder_lbl = label("", "faint", hint=False)

@@ -1412,9 +1412,13 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
     assert ctx.projects.get(pid)["name"] == "x"                 # le projet a pris le nom du média
     assert ev.file_name.text() == "x" and ev.act_local.isChecked()      # par défaut : sur le PC
-    from studiovideo.ui.export_view import date_prefix, file_name
-    assert ev.date_lbl.text() == date_prefix() and len(date_prefix()) == 10   # le fichier commence par la date
-    assert file_name("2020-01-01 Clip") == f"{date_prefix()} Clip.mp4"
+    from studiovideo.ui.export_view import file_name
+    from datetime import datetime
+    import re as _re
+    assert _re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}h\d{2}", ev.date_lbl.text())    # date et heure de l'export
+    assert file_name("Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
+    assert file_name("2020-01-01 09h05 Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
+    assert file_name("2020-01-01 Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
     assert "Instagram" in ev.act_draft.toolTip()
     assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
     assert not ev.tile.isEnabled() and not ev.reveal_btn.isEnabled()      # rien d'exporté encore
@@ -1466,8 +1470,10 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     ev._changed()
     ev._go()                                                    # sur le PC seulement : aucune publication
     kind, params, kw = sent[-1]
-    dest = tmp_path / f"{date_prefix()} Mon export   final.mp4"   # date du jour, puis le nom choisi
-    assert kind == "export_timeline" and params["dest"] == str(dest) and kw.get("critical")
+    dest = Path(params["dest"])                                 # date et heure, puis le nom choisi
+    assert dest.parent == tmp_path and _re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}h\d{2} Mon export   final\.mp4",
+                                                       dest.name)
+    assert kind == "export_timeline" and kw.get("critical")
     pend = ctx.projects.load_data(pid)["export_pending"]
     assert pend["action"] == "local" and pend["nets"] == {}
     dest.write_bytes(b"x")
@@ -1869,3 +1875,31 @@ def test_sidebar_hover_actions_and_archives(window, monkeypatch):
     ar.restore()
     assert ctx.projects.get(gone)["status"] == "active" and ar.list.count() == 0
     assert gone in [e[0] for e in st.sidebar.entries()]
+
+
+def test_activity_indicators(window):
+    """Une tâche en cours : l'icône des tâches tourne ; un lien collé en téléchargement : « Chargement en cours… »
+    écrit en gris dans le champ du lien."""
+    from studiovideo.jobs.manager import JobInfo
+    w, ctx = window
+    st = w.studio
+    jb = st.jobs_btn
+    jb.set_jobs(1, 0)
+    assert jb.running and jb.spin.isActive() and jb.icon().isNull()       # l'icône est dessinée en tournant
+    a0 = jb.angle
+    jb._turn()
+    assert jb.angle != a0
+    jb.set_jobs(0, 0)
+    assert not jb.spin.isActive() and not jb.icon().isNull()
+    con = ctx.db.connect()
+    con.execute("INSERT INTO job(kind, label, params_json, status, progress) VALUES ('import_url', 'x', '{}', "
+                "'running', 0.42)")
+    jid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.on_job(JobInfo(id=jid, kind="import_url", label="", status="running", progress=0.42, message="", error="",
+                      critical=False, created_at="", result={}, params={}))
+    assert st.link_edit.placeholderText() == "Chargement en cours… 42 %"
+    con.execute("UPDATE job SET status = 'succeeded' WHERE id = ?", (jid,))
+    st.on_job(JobInfo(id=jid, kind="import_url", label="", status="succeeded", progress=1, message="", error="",
+                      critical=False, created_at="", result={}, params={}))
+    assert "Chargement" not in st.link_edit.placeholderText()
+
