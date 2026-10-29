@@ -4,6 +4,56 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.32.0</title>
+      <pubDate>Thu, 29 Oct 2026 16:07:00 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.32.0 — Chaque vidéo a son concept, Export simplifié&lt;/h2&gt;
+&lt;h3&gt;Chaque vidéo a son concept&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Un menu **Concept** dans la barre du haut, dans tous les onglets, donne un concept à la vidéo ouverte.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Le même choix se fait dans l&amp;#x27;onglet Export.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Dans la barre de gauche, chaque vidéo affiche son concept (avec un point de sa couleur), puis son nom. Les&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;mots-clés tirés de la transcription ne s&amp;#x27;affichent plus.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Les versions traduites s&amp;#x27;appellent « VEN-Nom de la vidéo », « VDE-Nom de la vidéo »…&lt;/li&gt;
+&lt;li&gt;Le concept « Brouillons », celui des vidéos pas encore rangées, n&amp;#x27;apparaît plus dans les listes.&lt;/li&gt;
+&lt;li&gt;**Archives** : les vidéos sont rangées par concept, avec un menu pour n&amp;#x27;en voir qu&amp;#x27;un.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Export&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Le choix « Brouillon sur les réseaux » / « Sur mon PC seulement » disparaît.&lt;/li&gt;
+&lt;li&gt;Un bouton **Exporter** de taille normale, en bas du rectangle de la vidéo. À sa droite :&lt;/li&gt;
+&lt;li&gt;l&amp;#x27;icône du dossier, dont le chemin s&amp;#x27;affiche au survol ;&lt;/li&gt;
+&lt;li&gt;le message « enregistrée dans… ».&lt;/li&gt;
+&lt;li&gt;Le nom du fichier : **« date heure - concept - nom.mp4 »**, par exemple « 2026-10-20 18h32 - Mas.tair - Clip.mp4 ».&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Une fois exportée, la vidéo prend ce nom dans la barre de gauche (sans la date, l&amp;#x27;heure ni le concept).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Mettre dans le calendrier** : le rectangle de nouvelle publication s&amp;#x27;ouvre, avec la vidéo, son concept et son texte.&lt;/li&gt;
+&lt;li&gt;Le rectangle des réseaux ne garde que le menu des concepts, les trois logos et « Ouvrir les pages d&amp;#x27;envoi », en gris.&lt;/li&gt;
+&lt;li&gt;Liste des concepts : la langue s&amp;#x27;affiche en simple drapeau ; un clic pour la changer.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Calendrier&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Un bouton **Calendrier** dans la barre du bas, à côté du menu.&lt;/li&gt;
+&lt;li&gt;Les petits logos YouTube, TikTok et Meta d&amp;#x27;une vidéo sont les mêmes partout : la case du jour, « À venir » et le&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;rectangle de la publication changent ensemble.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Un menu **Vidéos pas encore au calendrier** permet d&amp;#x27;en programmer une en un clic.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Traduction&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Le français est en premier dans les drapeaux.&lt;/li&gt;
+&lt;li&gt;Les quatre styles de sous-titres sont retirés : le premier sert toujours (pour le modifier : l&amp;#x27;onglet Textes).&lt;/li&gt;
+&lt;li&gt;Quand les versions sont prêtes, la première s&amp;#x27;ouvre d&amp;#x27;elle-même dans la barre de gauche.&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.32.0/StudioVideo-0.32.0-Setup.exe" sparkle:version="0.32.0" sparkle:shortVersionString="0.32.0" sparkle:os="windows-x64" length="208119611" type="application/octet-stream" sparkle:edSignature="AQbWZlYiq4lOWdEGAmZ+/7mIEyUC9KvAOliYthZ5imPnSrmwy2xvkBbXUxNYr7VuqwcYXjfsG3HCQ6SggJduAA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.31.2</title>
       <pubDate>Thu, 29 Oct 2026 14:28:55 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.31.2 — Concepts et chaînes, nouveau calendrier, vidéos archivées&lt;/h2&gt;
@@ -434,31 +484,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.12.0/StudioVideo-0.12.0-Setup.exe" sparkle:version="0.12.0" sparkle:shortVersionString="0.12.0" sparkle:os="windows-x64" length="193612336" type="application/octet-stream" sparkle:edSignature="RPBgS/uCVatsoBrfgSzFZE1oL0JT4U30Zh8+lgvJVEPHcKs9/fiGO0Bf4Zky44TIEor9jDkMl06D4RKnVqg2Bw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.11.0</title>
-      <pubDate>Wed, 21 Oct 2026 22:49:11 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.11.0 — Mise en ligne automatique sur YouTube&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Paramètres → Concepts et comptes : renseignez l&amp;#x27;identifiant de votre projet Google (guide : docs/YOUTUBE.md),&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;sélectionnez le compte YouTube → **Connecter** (autorisation dans le navigateur). Le jeton est rangé dans le&lt;/p&gt;
-&lt;p&gt;coffre d&amp;#x27;identifiants Windows&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Publication → Actions ▾ → **Mettre en ligne sur YouTube** : immédiat, ou programmé chez YouTube à l&amp;#x27;heure prévue&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;(la vidéo part tout de suite, YouTube la publie seul : le PC peut être éteint)&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Option : à l&amp;#x27;heure prévue, les publications des comptes connectés sont envoyées automatiquement (logiciel ouvert)&lt;/li&gt;
-&lt;li&gt;Envoi par blocs, reprise automatique après coupure ; une vidéo déjà envoyée n&amp;#x27;est jamais renvoyée&lt;/li&gt;
-&lt;li&gt;Statut « Publiée » uniquement avec l&amp;#x27;identifiant renvoyé par YouTube ; si YouTube laisse la vidéo privée,&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;c&amp;#x27;est signalé&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Les autres plateformes restent en publication assistée&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.11.0/StudioVideo-0.11.0-Setup.exe" sparkle:version="0.11.0" sparkle:shortVersionString="0.11.0" sparkle:os="windows-x64" length="193663941" type="application/octet-stream" sparkle:edSignature="+ocAU1VVGxXGnTFyRHh0y8NzwoADYL16B2Zrxjh2NnaPzK+USnp1UnG+nZh+Z35gQkz+E6ef9nuEibKgJLmzBw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
