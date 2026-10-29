@@ -76,7 +76,9 @@ class VideoTile(QFrame):
         lay.addLayout(col, 1)
         self.set_video(path, thumb)
 
-    def set_video(self, path: str, thumb: str = "") -> None:
+    def set_video(self, path: str, thumb: str = "", missing: str = "Exporte-la d'abord (à gauche)") -> None:
+        """La vidéo à glisser ; absente (pas exportée, ou fichier déplacé) : grisée, avec `missing` pour dire
+        pourquoi."""
         self.path = path or ""
         pix = QPixmap(thumb) if thumb and Path(thumb).exists() else QPixmap()
         if pix.isNull():
@@ -85,8 +87,10 @@ class VideoTile(QFrame):
             pix = pix.scaled(40, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.pic.setPixmap(pix)
         ok = bool(path) and Path(path).exists()
-        self.name.setText(Path(path).name if ok else "Aucune vidéo exportée")
-        self.hint.setText("À glisser dans la page d'envoi" if ok else "Exporte-la d'abord (à gauche)")
+        self.name.setText(Path(path).name if ok else
+                          f"Non disponible : {Path(path).name}" if path else "Aucune vidéo exportée")
+        self.hint.setText("À glisser dans la page d'envoi" if ok else
+                          "Fichier introuvable à son emplacement" if path else missing)
         self.setEnabled(ok)
 
     def mime(self) -> QMimeData:
@@ -158,8 +162,7 @@ class LinkBox(QWidget):
                 from .widgets import local_time
                 when = f" Dernière recherche : {local_time(last['at'])}" + (
                     f" ({last['error']})" if last.get("error") else ".")
-            self.auto_note.setText("Une fois la vidéo publiée, son lien est retrouvé tout seul sur la page publique "
-                                   "du compte (vérifié toutes les heures)." + when)
+            self.auto_note.setText(when.strip())             # le lien est cherché tout seul : rien à dire
         elif r["platform"] in reconcile.SUPPORTED:
             self.auto_note.setText("Renseigne l'adresse publique du compte (Réglages du compte) pour que le lien "
                                    "soit retrouvé tout seul. En attendant, colle-le ici.")

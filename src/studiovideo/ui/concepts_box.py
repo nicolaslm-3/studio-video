@@ -22,7 +22,7 @@ from .widgets import Popover, button, label, tool
 
 NETS = (("youtube", "YouTube", ("youtube",)), ("tiktok", "TikTok", ("tiktok",)),
         ("meta", "Meta", ("facebook", "instagram")))
-COLS = (("Nom", 200), ("Thématique", 0), ("Couleur", 60), ("Langue", 130))
+COLS = (("Nom", 160), ("Thématique", 0), ("Couleur", 54), ("Langue", 110))
 
 
 def concept_account(app: AppContext, concept_id: int, key: str):
@@ -150,9 +150,10 @@ class ConceptRow(QFrame):
     def __init__(self, app: AppContext, concept=None, parent=None):
         super().__init__(parent)
         self.app, self.concept = app, concept
-        self.setProperty("role", "projitem")
+        self.setObjectName("conceptRow")
+        self.setStyleSheet("QFrame#conceptRow { background: transparent; border: none; }")    # la couleur du fond
         v = QVBoxLayout(self)
-        v.setContentsMargins(8, 6, 8, 6)
+        v.setContentsMargins(0, 4, 0, 6)
         v.setSpacing(4)
         h = QHBoxLayout()
         h.setSpacing(8)
@@ -169,6 +170,8 @@ class ConceptRow(QFrame):
         self.color = ColorButton(concept.color if concept else CONCEPT_COLORS[n % len(CONCEPT_COLORS)], (24, 24))
         self.color.picked.connect(lambda c: self._update(color=c))
         cw = QWidget()
+        cw.setAttribute(Qt.WA_TranslucentBackground)
+        cw.setStyleSheet("background: transparent;")
         cl = QHBoxLayout(cw)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self.color, 0, Qt.AlignCenter)
@@ -271,7 +274,7 @@ class ConceptsBox(QFrame):
         head.addWidget(self.new_btn)
         v.addLayout(head)
         cols = QHBoxLayout()
-        cols.setContentsMargins(9, 0, 45, 0)
+        cols.setContentsMargins(1, 0, 40, 0)
         cols.setSpacing(8)
         for name, w in COLS:
             lb = label(name, "faint", hint=False)

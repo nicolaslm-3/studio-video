@@ -240,7 +240,7 @@ def test_workshop_ui(qtbot, app, monkeypatch, tmp_path):
     opened = []
     w = PublishWorkshop(app, [yt, tk], open_url=opened.append)
     qtbot.addWidget(w)
-    assert not hasattr(w, "text") and "toutes les heures" in w.link.auto_note.text()   # plus de partie « texte »
+    assert not hasattr(w, "text") and "toutes les heures" not in w.link.auto_note.text()   # phrase retirée
     QApplication.clipboard().setText("")
     w._open()                                                                  # page d'envoi : texte copié
     assert QApplication.clipboard().text() == "Titre YouTube"                  # YouTube : le titre d'abord

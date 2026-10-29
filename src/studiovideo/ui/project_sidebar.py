@@ -36,6 +36,10 @@ class ProjectItem(QFrame):
         v.setSpacing(1)
         row.addLayout(v, 1)
         self.actions = QWidget()
+        self.actions.setAttribute(Qt.WA_TranslucentBackground)
+        self.actions.setStyleSheet("QWidget { background: transparent; } QToolButton { background: transparent; "
+                                   "border: none; border-radius: 6px; } QToolButton:hover { "
+                                   "background: rgba(128, 128, 128, 0.22); }")
         al = QHBoxLayout(self.actions)
         al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(0)

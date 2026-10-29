@@ -211,7 +211,7 @@ def test_calendar_publication_flow(window, monkeypatch, tmp_path):
     """Calendrier : menu des concepts (ou tous), « Nouvelle publication » en rectangle volant (concept, vidéo, un
     seul texte, date et heure, logos), vidéos en petits rectangles à leur date avec trois logos à cocher."""
     from PySide6.QtCore import QDate, QDateTime, QTime
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
     from studiovideo.domain.models import Platform
     from studiovideo.ui.pages import calendar as calmod
     from studiovideo.ui.widgets import Popover
@@ -251,6 +251,26 @@ def test_calendar_publication_flow(window, monkeypatch, tmp_path):
     cal.concept.setCurrentIndex(0)
     edit = cal.open_master(row["id"])                                      # clic : modifier
     assert edit.text.toPlainText().startswith("Mon sketch") and edit.video.currentData() == pid
+    assert not [lb for lb in edit.findChildren(QLabel) if lb.text() in ("Concept", "Vidéo", "Texte")]
+    assert edit.video.placeholderText() == "Vidéo" and edit.text.placeholderText().startswith("Texte")
+    assert not edit.tile.isEnabled() and not edit.reveal_btn.isEnabled()   # pas encore exportée : non disponible
+    assert "Pas encore exportée" in edit.tile.hint.text()
+    edit.nets["meta"].click()                                              # logo du rectangle = logo du calendrier
+    assert ctx.publications.plan_of(row["id"])["networks"]["meta"] is False
+    chip = next(ch for cell in cal.cells for ch in cell.findChildren(calmod.PlanChip))
+    assert not chip.toggles["meta"].isChecked()
+    out = tmp_path / "Mon sketch.mp4"
+    out.write_bytes(b"x")
+    data = ctx.projects.load_data(pid)
+    data["export_last"] = {"path": str(out)}
+    ctx.projects.save_data(pid, data)
+    edit._show_video()
+    assert edit.tile.isEnabled() and edit.tile.path == str(out) and edit.reveal_btn.isEnabled()   # à glisser
+    out.unlink()
+    edit._show_video()
+    assert not edit.tile.isEnabled() and "Non disponible" in edit.tile.name.text()     # déplacé : signalé
+    assert not cal.cells[0].graphicsEffect() is None or cal.cells[0].day[5:7] == "11"  # hors du mois : pâle
+    assert cal.upcoming.count() >= 1                                       # liste « À venir »
     # Atelier de publication (Calendrier) : page d'envoi dans un nouvel onglet, lien confirmé
     yt = ctx.concepts.create_account(Platform.YOUTUBE, "Chaîne")
     ctx.concepts.link(c.id, yt.id)

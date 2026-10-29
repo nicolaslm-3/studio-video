@@ -11,12 +11,14 @@ from __future__ import annotations
 import calendar as _cal
 from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import QDate, QDateTime, QSize, Qt, QTime, Signal
-from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QDate, QDateTime, QLocale, QSize, Qt, QTime, Signal
+from PySide6.QtWidgets import (QComboBox, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
+                               QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from ...core import AppContext
 from .. import theme
+from ..publish_workshop import VideoTile, reveal
 from ..when_picker import WhenPicker
 from ..widgets import PageHeader, Popover, button, label, tool
 
@@ -51,7 +53,7 @@ class PlanChip(QFrame):
     """Une vidéo programmée : concept, nom de la vidéo, trois petits logos."""
     open = Signal(int)
 
-    def __init__(self, app: AppContext, row: dict, parent=None):
+    def __init__(self, app: AppContext, row: dict, with_date: bool = False, parent=None):
         super().__init__(parent)
         self.app, self.mid = app, row["id"]
         self.setProperty("role", "projitem")
@@ -62,6 +64,9 @@ class PlanChip(QFrame):
         v.setContentsMargins(6, 2, 4, 2)
         v.setSpacing(0)
         when = (row["planned_at"] or "")[11:16]
+        if with_date and row["planned_at"]:
+            d = QDate.fromString(row["planned_at"][:10], "yyyy-MM-dd")
+            when = QLocale(QLocale.French).toString(d, "ddd d MMM") + " · " + when
         top = label(f"{when}  {row['concept']}" if when else row["concept"], "faint", hint=False)
         top.setStyleSheet("font-size: 10px; border: none;")
         v.addWidget(top)
@@ -115,6 +120,12 @@ class DayCell(QFrame):
                 w.setParent(None)
                 w.deleteLater()
         self.day = d.isoformat()
+        if in_month:
+            self.setGraphicsEffect(None)
+        else:
+            fade = QGraphicsOpacityEffect(self)
+            fade.setOpacity(0.3)
+            self.setGraphicsEffect(fade)
         head = label(("● " if today else "") + str(d.day), "h2" if today else ("muted" if in_month else "faint"))
         self.lay.addWidget(head)
         for r in items[:self.MAX]:
@@ -148,21 +159,30 @@ class PlanPopover(Popover):
         for c in app.concepts.list_concepts():
             self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
         want = row["concept_id"] if row else concept_id
-        self.concept.setCurrentIndex(max(0, self.concept.findData(want)))
-        self.body.addWidget(label("Concept", "muted", hint=False))
+        self.concept.setCurrentIndex(max(0, self.concept.findData(want)))     # par défaut : le premier
+        self.concept.setToolTip("Concept")
         self.body.addWidget(self.concept)
         self.video = QComboBox()
-        self.video.addItem("— Aucune vidéo —", None)
+        self.video.setPlaceholderText("Vidéo")
+        self.video.setToolTip("Vidéo")
         for p in app.projects.all(include_archived=False):
             self.video.addItem(p["name"], p["id"])
         want = row["project_id"] if row else project_id
-        self.video.setCurrentIndex(max(0, self.video.findData(want)))
-        self.body.addWidget(label("Vidéo", "muted", hint=False))
+        self.video.setCurrentIndex(self.video.findData(want) if want else -1)
         self.body.addWidget(self.video)
+        # la vidéo exportée : à glisser dans la page d'envoi, ou à montrer dans l'Explorateur
+        vr = QHBoxLayout()
+        vr.setSpacing(6)
+        self.tile = VideoTile("")
+        vr.addWidget(self.tile, 1)
+        self.reveal_btn = tool("folder-open", "Afficher dans l'Explorateur", lambda: reveal(self.tile.path))
+        vr.addWidget(self.reveal_btn)
+        self.body.addLayout(vr)
+        self.video.currentIndexChanged.connect(self._show_video)
+        self._show_video()
         self.text = QPlainTextEdit(row["text"] if row else "")
-        self.text.setPlaceholderText("Titre, description, hashtags…")
+        self.text.setPlaceholderText("Texte : titre, description, hashtags…")
         self.text.setFixedHeight(110)
-        self.body.addWidget(label("Texte", "muted", hint=False))
         self.body.addWidget(self.text)
         self.when = WhenPicker()
         if row and row["planned_at"]:
@@ -172,7 +192,7 @@ class PlanPopover(Popover):
             d = QDate.fromString(day, "yyyy-MM-dd")
             self.when.cal.setMinimumDate(min(d, QDate.currentDate()))
             self.when.setDateTime(QDateTime(d, QTime(18, 0)))
-        self.body.addWidget(label("Date et heure", "muted", hint=False))
+        self.when.setToolTip("Date et heure")
         self.body.addWidget(self.when)
         nets = QHBoxLayout()
         nets.setSpacing(4)
@@ -180,6 +200,9 @@ class PlanPopover(Popover):
         for key, nm in NETS:
             t = NetToggle(key, nm, 20)
             t.setChecked(row["networks"].get(key, False) if row else True)
+            if row:                                       # le même logo que dans le calendrier : changé aussitôt
+                t.clicked.connect(lambda _=False, k=key: (self.app.publications.toggle_network(self.mid, k),
+                                                          self.saved.emit()))
             nets.addWidget(t)
             self.nets[key] = t
         nets.addStretch(1)
@@ -194,6 +217,14 @@ class PlanPopover(Popover):
         self.msg = label("", "muted", wrap=True, hint=False)
         self.msg.hide()
         self.body.addWidget(self.msg)
+
+    def _show_video(self) -> None:
+        """Le dernier export de la vidéo choisie ; pas exporté ou fichier déplacé : grisé, « non disponible »."""
+        pid = self.video.currentData()
+        path = (self.app.projects.load_data(pid).get("export_last") or {}).get("path", "") if pid else ""
+        self.tile.set_video(path, missing="Pas encore exportée (onglet Export)" if pid else "Choisis une vidéo")
+        self.reveal_btn.setEnabled(self.tile.isEnabled())
+        self.reveal_btn.setToolTip("Afficher dans l'Explorateur" if self.tile.isEnabled() else "Non disponible")
 
     def _save(self) -> None:
         cid = self.concept.currentData()
@@ -246,6 +277,8 @@ class CalendarPage(QWidget):
         nav.addWidget(button("Aujourd'hui", "ghost", on_click=self._today))
         nav.addStretch(1)
         lay.addLayout(nav)
+        body = QHBoxLayout()
+        body.setSpacing(24)
         gridw = QWidget()
         self.grid = QGridLayout(gridw)
         self.grid.setSpacing(4)
@@ -265,7 +298,25 @@ class CalendarPage(QWidget):
             self.grid.setColumnStretch(i, 1)
         for r in range(1, 7):
             self.grid.setRowStretch(r, 1)
-        lay.addWidget(gridw, 1)
+        body.addWidget(gridw, 1)
+        side = QVBoxLayout()
+        side.setSpacing(8)
+        side.addWidget(label("À venir", "h2"))
+        self.up_host = QWidget()
+        self.upcoming = QVBoxLayout(self.up_host)
+        self.upcoming.setContentsMargins(0, 0, 6, 0)
+        self.upcoming.setSpacing(6)
+        up = QScrollArea()
+        up.setWidgetResizable(True)
+        up.setFrameShape(QFrame.NoFrame)
+        up.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        up.setWidget(self.up_host)
+        side.addWidget(up, 1)
+        sw = QWidget()
+        sw.setLayout(side)
+        sw.setFixedWidth(270)
+        body.addWidget(sw)
+        lay.addLayout(body, 1)
 
     # -- navigation ----------------------------------------------------------------------------
     def _shift(self, n: int) -> None:
@@ -302,6 +353,24 @@ class CalendarPage(QWidget):
         for k, cell in enumerate(self.cells):
             d = start + timedelta(days=k)
             cell.set_day(d, d.month == self.month, d == today, by_day.get(d.isoformat(), []))
+        self._fill_upcoming(cid)
+
+    def _fill_upcoming(self, cid: int | None) -> None:
+        """Toutes les vidéos à venir (du concept choisi, ou de tous), de la plus proche à la plus lointaine."""
+        while self.upcoming.count():
+            w = self.upcoming.takeAt(0).widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        rows = self.app.publications.planned(now_local(), "9999-12-31T23:59", cid)
+        for r in rows:
+            c = PlanChip(self.app, r, with_date=True)
+            c.open.connect(lambda m, c=c: self.open_master(m, c))
+            self.upcoming.addWidget(c)
+        if not rows:
+            self.upcoming.addWidget(label("Aucune vidéo programmée.", "faint", hint=False))
+        self.upcoming.addStretch(1)
 
     def pending_count(self) -> int:
         """Plus de liste « à faire » : rien à signaler à côté du nom de la page."""

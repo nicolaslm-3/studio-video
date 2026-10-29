@@ -349,7 +349,7 @@ class ExportView(_View):
         page.setContentsMargins(26, 12, 26, 10)
         page.setSpacing(18)
         root = QHBoxLayout()
-        root.setSpacing(18)
+        root.setSpacing(34)                               # de l'air entre les deux colonnes
         page.addLayout(root)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
@@ -459,14 +459,16 @@ class ExportView(_View):
             c = NetworkCard(self, key, name)
             self.nets[key] = c
             right.addWidget(c)
+        # -- sous les réseaux : les concepts et leurs chaînes
+        right.addSpacing(10)
+        self.concepts = ConceptsBox(app)
+        self.concepts.changed.connect(self._concepts_edited)
+        right.addWidget(self.concepts)
+        right.addSpacing(10)
         right.addStretch(1)
         rw = QWidget()
         rw.setLayout(right)
         root.addWidget(rw, 4)
-        # -- en dessous : les concepts et leurs chaînes
-        self.concepts = ConceptsBox(app)
-        self.concepts.changed.connect(self._concepts_edited)
-        page.addWidget(self.concepts)
         page.addStretch(1)
 
     # -- état enregistré dans le projet ---------------------------------------------------
@@ -694,7 +696,7 @@ class ExportView(_View):
         note = browser_login.open_page(self.app, r["account_id"], url, self.open_url)
         self.refresh_cards()
         c.note.setText(note or f"Page d'envoi ouverte dans un nouvel onglet{where} ; "
-                       f"{'titre' if t['title'] else 'texte'} copié. Glisse la vidéo (en haut) dans la page.")
+                       f"{'titre' if t['title'] else 'texte'} copié.")
         c.note.show()
 
     def youtube_channel(self, account_id: int) -> str:
