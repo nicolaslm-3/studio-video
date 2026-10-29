@@ -37,7 +37,10 @@ montage (`Timeline`), même format ; la vidéo importée est placée d'office da
 _sync_project_video`, `project_video`). Un clic sur un parcours affiche le projet ouvert dans cette interface
 (`project.mode` = dernière interface, `ProjectService.set_mode`) ; sans projet ouvert, le dernier, sinon un projet
 vierge conservé seulement à la première modification (`ProjectService.is_untouched`). **Dans l'interface, un projet
-s'appelle une « vidéo »** (le code garde `project`). Au survol d'une vidéo de la barre (et au clic droit) : renommer,
+s'appelle une « vidéo »** (le code garde `project`). **Chaque vidéo a un concept** : menu « Concept » de la barre du
+haut (`StudioPage.concept_combo`, aussi dans Export) ; le concept « Brouillons » (vidéos pas rangées) est caché
+(`ConceptService.user_concepts`). Barre de gauche : le concept (point de sa couleur) puis le nom ; versions
+« VEN-Nom de la vidéo ». Au survol d'une vidéo de la barre (et au clic droit) : renommer,
 archiver, supprimer (`StudioPage.project_action` ; une vidéo supprimée ou archivée emporte ses versions) ; les vidéos
 archivées sont dans **Archives** (menu des trois barres, `ui/pages/archives.py`, restaurer ou supprimer). Il n'y a
 plus de page « Concepts et projets ». L'en-tête du Studio est commun à tous les onglets :
@@ -103,10 +106,10 @@ sans emporter les sous-titres) ; l'aperçu d'une version fait entendre sa voix d
 Une version supprimée l'est pour de bon (sa langue quitte `translations.ready`). Moteur « Automatique » par défaut (`ai/translate.py` : le meilleur moteur prêt, puis le suivant en cas d'échec ;
 Google Traduction et MyMemory gratuits sans clé) ; roues crantées = alternatives, clés, voix hors ligne et modèle
 de langage (`ui/engines.py`, `ui/engine_panels.py`). Export, en deux colonnes : à gauche nom du fichier précédé
-de la date et de l'heure (« 2026-10-28 10h32 Nom.mp4 », `export_view.file_name`) et dossier, titre et description communs (sans
-champ titre, le titre ouvre la description), petit aperçu, puis « Brouillon sur les réseaux » (comptes connectés par
-API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et Instagram par la page d'envoi) ou
-« Sur mon PC seulement » — ni publication immédiate ni programmation ; à droite l'**Atelier de publication** : la
+de la date, de l'heure et du concept (« 2026-10-20 18h32 - Mas.tair - Nom.mp4 », `export_view.file_name` ; exportée, la
+vidéo prend le nom seul) et dossier (chemin au survol), titre et description communs (sans
+champ titre, le titre ouvre la description), petit aperçu, puis en bas « Exporter » (sur le PC seulement : ni
+brouillon, ni publication, ni programmation), le dossier et le message, « Mettre dans le calendrier » ; à droite l'**Atelier de publication** : la
 vidéo exportée (rectangle étroit, à glisser, ou « Afficher dans l'Explorateur »), puis une carte par réseau (YouTube,
 TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite) — vidéo à glisser et icône dossier seule,
 puis un seul rectangle : menu des concepts (point de couleur) et à droite les trois logos (en couleur si le concept a

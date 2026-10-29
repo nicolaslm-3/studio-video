@@ -3,10 +3,10 @@ supprime pour de bon."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
 from ...core import AppContext
-from ..widgets import PageHeader, button, label, local_time
+from ..widgets import PageHeader, button, dot_icon, label, local_time
 from ..widgets import ask
 
 
@@ -19,7 +19,12 @@ class ArchivesPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(36, 30, 36, 20)
         lay.setSpacing(12)
-        lay.addWidget(PageHeader("Archives", "Les vidéos archivées : elles ne sont plus dans la barre de gauche"))
+        hdr = PageHeader("Archives", "Les vidéos archivées : elles ne sont plus dans la barre de gauche")
+        self.concept = QComboBox()
+        self.concept.setToolTip("Concept")
+        self.concept.currentIndexChanged.connect(self.refresh)
+        hdr.add_action(self.concept)
+        lay.addWidget(hdr)
         self.list = QListWidget()
         self.list.itemSelectionChanged.connect(self._buttons)
         self.list.itemDoubleClicked.connect(lambda _it: self.restore())
@@ -35,13 +40,31 @@ class ArchivesPage(QWidget):
         lay.addLayout(row)
         self.refresh()
 
+    def _fill_concepts(self) -> None:
+        cur = self.concept.currentData()
+        self.concept.blockSignals(True)
+        self.concept.clear()
+        self.concept.addItem("Tous les concepts", None)
+        for c in self.app.concepts.user_concepts():
+            self.concept.addItem(dot_icon(c.color), c.name, c.id)
+        self.concept.setCurrentIndex(max(0, self.concept.findData(cur)))
+        self.concept.blockSignals(False)
+
     def refresh(self) -> None:
+        """Les vidéos archivées, rangées par concept (celles sans concept à la fin), d'un concept ou de tous."""
+        self._fill_concepts()
+        cid = self.concept.currentData()
+        drafts = self.app.concepts.DRAFTS
+        rows = [p for p in self.app.projects.all() if p["status"] == "archived"
+                and '"parent"' not in (p["data_json"] or "")                    # versions : avec leur vidéo
+                and (cid is None or p["concept_id"] == cid)]
+        rows.sort(key=lambda p: (p["concept_name"] == drafts, (p["concept_name"] or "").lower(), p["name"].lower()))
         self.list.clear()
-        for p in self.app.projects.all():
-            if p["status"] != "archived" or '"parent"' in (p["data_json"] or ""):    # versions : avec leur vidéo
-                continue
-            it = QListWidgetItem(f"{p['name']}   ·   {p['concept_name'] or ''}   ·   modifiée le "
-                                 f"{local_time(p['updated_at'])}")
+        for p in rows:
+            concept = "Sans concept" if p["concept_name"] == drafts else p["concept_name"]
+            it = QListWidgetItem(f"{concept}   ·   {p['name']}   ·   modifiée le {local_time(p['updated_at'])}")
+            if p["concept_name"] != drafts:
+                it.setIcon(dot_icon(p["concept_color"]))
             it.setData(Qt.UserRole, p["id"])
             self.list.addItem(it)
         self.empty.setVisible(self.list.count() == 0)

@@ -8,7 +8,7 @@ ajoute une ligne dont le nom s'écrit tout de suite.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLineEdit, QMessageBox, QScrollArea, QToolButton,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLineEdit, QMessageBox, QScrollArea, QToolButton,
                                QVBoxLayout, QWidget)
 
 from ..core import AppContext
@@ -25,18 +25,37 @@ NETS = (("youtube", "YouTube", ("youtube",)), ("tiktok", "TikTok", ("tiktok",)),
 COLS = (("Nom", 130), ("Thématique", 0), ("Couleur", 44), ("Langue", 56))
 
 
-def flag_combo(selected: str = "fr") -> QComboBox:
-    """Langue en drapeau seulement (le nom au survol)."""
-    from .simple_views import flag_icon
-    cb = QComboBox()
-    cb.setIconSize(QSize(18, 18))
-    for code, name in LANGUAGES:
-        cb.addItem(flag_icon(code), "", code)
-        cb.setItemData(cb.count() - 1, name, Qt.ToolTipRole)
-    cb.setCurrentIndex(max(0, cb.findData(selected)))
-    cb.setToolTip(dict(LANGUAGES).get(selected, ""))
-    cb.currentIndexChanged.connect(lambda _i: cb.setToolTip(dict(LANGUAGES).get(cb.currentData(), "")))
-    return cb
+class FlagButton(QToolButton):
+    """La langue en drapeau seul, sans cadre ; un clic ouvre la liste des langues (drapeau et nom)."""
+    changed = Signal(str)
+
+    def __init__(self, selected: str = "fr", parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QMenu
+        from .simple_views import flag_icon
+        self.setIconSize(QSize(20, 20))
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("QToolButton { border: none; background: transparent; border-radius: 6px; }"
+                           "QToolButton:hover { background: rgba(128,128,128,.18); }"
+                           "QToolButton::menu-indicator { image: none; }")
+        self.setPopupMode(QToolButton.InstantPopup)
+        m = QMenu(self)
+        for code, name in LANGUAGES:
+            m.addAction(flag_icon(code), name).triggered.connect(lambda _=False, c=code: self.set_value(c, True))
+        self.setMenu(m)
+        self.set_value(selected)
+
+    def currentData(self) -> str:                         # noqa: N802 — comme QComboBox
+        return self.value
+
+    def set_value(self, code: str, emit: bool = False) -> None:
+        from .simple_views import flag_icon
+        self.value = code
+        self.setIcon(flag_icon(code))
+        self.setToolTip(dict(LANGUAGES).get(code, code))
+        if emit:
+            self.changed.emit(code)
 
 
 def concept_account(app: AppContext, concept_id: int, key: str):
@@ -196,10 +215,15 @@ class ConceptRow(QFrame):
         cl.addWidget(self.color, 0, Qt.AlignCenter)
         cw.setFixedWidth(COLS[2][1])
         h.addWidget(cw)
-        self.lang = flag_combo(concept.language if concept else "fr")
-        self.lang.setFixedWidth(COLS[3][1])
-        self.lang.currentIndexChanged.connect(lambda _i: self._update(language=self.lang.currentData()))
-        h.addWidget(self.lang)
+        self.lang = FlagButton(concept.language if concept else "fr")
+        self.lang.changed.connect(lambda code: self._update(language=code))
+        lw = QWidget()
+        lw.setStyleSheet("background: transparent;")
+        ll = QHBoxLayout(lw)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(self.lang, 0, Qt.AlignCenter)
+        lw.setFixedWidth(COLS[3][1])
+        h.addWidget(lw)
         self.del_btn = tool("trash-2", "Supprimer ce concept", self._delete, size=28, icon_px=15,
                             color=theme.color("faint"))
         h.addWidget(self.del_btn)
@@ -334,7 +358,7 @@ class ConceptsBox(QFrame):
     def refresh(self) -> None:
         """Liste reconstruite seulement si les concepts ont changé (une ligne en cours d'écriture reste) ; logos des
         chaînes toujours relus."""
-        concepts = self.app.concepts.list_concepts()
+        concepts = self.app.concepts.user_concepts()         # « Brouillons » caché
         have = [r.concept.id for r in self.items() if r.concept]
         if have == [c.id for c in concepts]:
             for r in self.items():

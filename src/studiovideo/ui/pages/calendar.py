@@ -54,6 +54,7 @@ class NetToggle(QToolButton):
 class PlanChip(QFrame):
     """Une vidéo programmée : concept, nom de la vidéo, trois petits logos."""
     open = Signal(int)
+    toggled = Signal(int)                                # un logo changé : partout ailleurs aussi
 
     def __init__(self, app: AppContext, row: dict, with_date: bool = False, parent=None):
         super().__init__(parent)
@@ -85,7 +86,8 @@ class PlanChip(QFrame):
         for key, nm_ in NETS:
             t = NetToggle(key, nm_, 13)
             t.setChecked(row["networks"].get(key, False))
-            t.clicked.connect(lambda _=False, k=key: self.app.publications.toggle_network(self.mid, k))
+            t.clicked.connect(lambda _=False, k=key: (self.app.publications.toggle_network(self.mid, k),
+                                                      self.toggled.emit(self.mid)))
             h.addWidget(t)
             self.toggles[key] = t
         h.addStretch(1)
@@ -100,6 +102,7 @@ class PlanChip(QFrame):
 
 class DayCell(QFrame):
     open_master = Signal(int)
+    toggled = Signal(int)
     new_on_day = Signal(str)
     MAX = 3
 
@@ -133,6 +136,7 @@ class DayCell(QFrame):
         for r in items[:self.MAX]:
             c = PlanChip(self.app, r)
             c.open.connect(self.open_master.emit)
+            c.toggled.connect(self.toggled.emit)
             self.lay.addWidget(c)
         if len(items) > self.MAX:
             more = label(f"+ {len(items) - self.MAX} autre(s)", "faint", hint=False)
@@ -151,17 +155,21 @@ class PlanPopover(Popover):
     saved = Signal()
 
     def __init__(self, app: AppContext, master_id: int | None = None, day: str | None = None,
-                 concept_id: int | None = None, project_id: int | None = None, parent=None):
+                 concept_id: int | None = None, project_id: int | None = None, parent=None, text: str = ""):
         super().__init__(parent)
         self.app, self.mid = app, master_id
         row = app.publications.plan_of(master_id) if master_id else None
         self.setFixedWidth(420)
         self.body.addWidget(label("Modifier la publication" if row else "Nouvelle publication", "h2"))
         self.concept = QComboBox()
-        for c in app.concepts.list_concepts():
+        self.concept.setPlaceholderText("Concept")
+        for c in app.concepts.user_concepts():                       # « Brouillons » caché
             self.concept.addItem(dot_icon(c.color), c.name, c.id)
         want = row["concept_id"] if row else concept_id
-        self.concept.setCurrentIndex(max(0, self.concept.findData(want)))     # par défaut : le premier
+        if want is None and project_id:                               # le concept de la vidéo
+            p = app.projects.get(project_id)
+            want = p["concept_id"] if p else None
+        self.concept.setCurrentIndex(max(0, self.concept.findData(want)) if self.concept.count() else -1)
         self.concept.setToolTip("Concept")
         self.body.addWidget(self.concept)
         self.video = QComboBox()
@@ -182,7 +190,7 @@ class PlanPopover(Popover):
         self.body.addLayout(vr)
         self.video.currentIndexChanged.connect(self._show_video)
         self._show_video()
-        self.text = QPlainTextEdit(row["text"] if row else "")
+        self.text = QPlainTextEdit(row["text"] if row else text)
         self.text.setPlaceholderText("Texte : titre, description, hashtags…")
         self.text.setFixedHeight(110)
         self.body.addWidget(self.text)
@@ -231,7 +239,7 @@ class PlanPopover(Popover):
     def _save(self) -> None:
         cid = self.concept.currentData()
         if cid is None:
-            self.msg.setText("Crée d'abord un concept (onglet Export, en bas).")
+            self.msg.setText("Crée d'abord un concept (onglet Export, en bas à droite).")
             self.msg.show()
             return
         when = self.when.dateTime().toString("yyyy-MM-ddTHH:mm")
@@ -295,6 +303,7 @@ class CalendarPage(QWidget):
         for k in range(42):
             c = DayCell(app)
             c.open_master.connect(lambda m, c=c: self.open_master(m, c))
+            c.toggled.connect(self.net_toggled)
             c.new_on_day.connect(lambda d, c=c: self.new_publication(day=d, anchor=c))
             self.grid.addWidget(c, 1 + k // 7, k % 7)
             self.cells.append(c)
@@ -317,6 +326,11 @@ class CalendarPage(QWidget):
         up.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         up.setWidget(self.up_host)
         side.addWidget(up, 1)
+        self.unplanned = QComboBox()                              # vidéos jamais mises dans le calendrier
+        self.unplanned.setPlaceholderText("Vidéos pas encore au calendrier")
+        self.unplanned.setToolTip("Vidéos pas encore au calendrier : en choisir une pour la programmer")
+        self.unplanned.activated.connect(self._plan_unplanned)
+        side.addWidget(self.unplanned)
         side.addWidget(self.new_btn, 0, Qt.AlignLeft)           # en bas, discret
         sw = QWidget()
         sw.setLayout(side)
@@ -340,7 +354,7 @@ class CalendarPage(QWidget):
         self.concept.blockSignals(True)
         self.concept.clear()
         self.concept.addItem("Tous les concepts", None)
-        for c in self.app.concepts.list_concepts():
+        for c in self.app.concepts.user_concepts():
             self.concept.addItem(dot_icon(c.color), c.name, c.id)
         self.concept.setCurrentIndex(max(0, self.concept.findData(cur)))
         self.concept.blockSignals(False)
@@ -360,6 +374,41 @@ class CalendarPage(QWidget):
             d = start + timedelta(days=k)
             cell.set_day(d, d.month == self.month, d == today, by_day.get(d.isoformat(), []))
         self._fill_upcoming(cid)
+        self._fill_unplanned()
+
+    def _fill_unplanned(self) -> None:
+        planned = {r["project_id"] for r in self.app.db.query(
+            "SELECT DISTINCT project_id FROM master_publication WHERE project_id IS NOT NULL")}
+        self.unplanned.blockSignals(True)
+        self.unplanned.clear()
+        for p in self.app.projects.all(include_archived=False):
+            if p["id"] not in planned and '"parent"' not in (p["data_json"] or ""):
+                self.unplanned.addItem(p["name"], p["id"])
+        self.unplanned.setCurrentIndex(-1)
+        self.unplanned.setVisible(self.unplanned.count() > 0)
+        self.unplanned.blockSignals(False)
+
+    def _plan_unplanned(self, index: int) -> None:
+        pid = self.unplanned.itemData(index)
+        self.unplanned.setCurrentIndex(-1)
+        if pid:
+            self._popover(PlanPopover(self.app, project_id=pid, parent=self), self.unplanned)
+
+    def net_toggled(self, mid: int) -> None:
+        """Un petit logo changé (calendrier, « À venir » ou rectangle) : tous les autres suivent."""
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._sync_nets(mid))   # après le clic : le petit bouton peut être recréé
+
+    def _sync_nets(self, mid: int) -> None:
+        self.refresh()
+        pop = self.pop
+        if pop is not None and pop.isVisible() and pop.mid == mid:
+            nets = self.app.publications.plan_of(mid)["networks"]
+            for k, t in pop.nets.items():
+                t.blockSignals(True)
+                t.setChecked(nets.get(k, False))
+                t.blockSignals(False)
+                t._paint()
 
     def _fill_upcoming(self, cid: int | None) -> None:
         """Toutes les vidéos à venir (du concept choisi, ou de tous), de la plus proche à la plus lointaine."""
@@ -373,6 +422,7 @@ class CalendarPage(QWidget):
         for r in rows:
             c = PlanChip(self.app, r, with_date=True)
             c.open.connect(lambda m, c=c: self.open_master(m, c))
+            c.toggled.connect(self.net_toggled)
             self.upcoming.addWidget(c)
         if not rows:
             self.upcoming.addWidget(label("Aucune vidéo programmée.", "faint", hint=False))

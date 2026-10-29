@@ -913,9 +913,9 @@ class ClippingView(_View):
 
 
 # -- Traduction -------------------------------------------------------------------------------------------
-LANGS = [("en", "Anglais"), ("de", "Allemand"), ("es", "Espagnol"), ("pt", "Portugais (BR)"), ("it", "Italien"),
-         ("ja", "Japonais"), ("ru", "Russe"), ("ko", "Coréen"), ("ar", "Arabe"), ("tr", "Turc"), ("pl", "Polonais"),
-         ("nl", "Néerlandais"), ("id", "Indonésien"), ("hi", "Hindi"), ("fr", "Français"), ("zh", "Chinois")]
+LANGS = [("fr", "Français"), ("en", "Anglais"), ("de", "Allemand"), ("es", "Espagnol"), ("pt", "Portugais (BR)"),
+         ("it", "Italien"), ("ja", "Japonais"), ("ru", "Russe"), ("ko", "Coréen"), ("ar", "Arabe"), ("tr", "Turc"),
+         ("pl", "Polonais"), ("nl", "Néerlandais"), ("id", "Indonésien"), ("hi", "Hindi"), ("zh", "Chinois")]
 
 
 class VoicePreview(QWidget):
@@ -1236,8 +1236,11 @@ class TranslationView(_View):
             prow.append(b)
         self.presets.buttonToggled.connect(lambda _b, on: on and self._changed())
         pr = _row(*prow, "stretch", spacing=5)
-        pr.setContentsMargins(146, 0, 0, 0)                 # sous l'interrupteur des sous-titres
-        cl.addLayout(pr)
+        pr.setContentsMargins(146, 0, 0, 0)
+        prw = QWidget()                                   # styles de sous-titres : le premier, toujours
+        prw.setLayout(pr)                                 # (pour le changer : l'onglet Textes)
+        prw.hide()
+        cl.addWidget(prw)
         # textes traduits : un bouton par langue, pour relire et corriger la traduction
         self.tr_edit = QHBoxLayout()
         self.tr_edit.setContentsMargins(146, 0, 0, 0)
@@ -1303,8 +1306,7 @@ class TranslationView(_View):
             return
         st = {"langs": [c for c, b in self.chips.items() if b.isChecked()], "voice": self.voice,
               "do_voice": self.do_voice.isChecked(), "do_subs": self.do_subs.isChecked(),
-              "preset": (self.presets.checkedButton().property("preset") if self.presets.checkedButton()
-                         else "white"),
+              "preset": next(iter(trn.SUB_PRESETS)),     # le style par défaut ; il se règle dans Textes
               "keep_music": self.keep_music.isChecked(), "erase": self.erase.isChecked()}
         data = self.app.projects.load_data(self.pid)
         data["translate_ui"] = st
@@ -1411,7 +1413,7 @@ class TranslationView(_View):
             self.do_voice.setChecked(bool(self.voice) if st["do_voice"] is None else bool(st["do_voice"]))
             self.do_subs.setChecked(bool(st["do_subs"]))
             for b in self.presets.buttons():
-                b.setChecked(b.property("preset") == st["preset"])
+                b.setChecked(b.property("preset") == next(iter(trn.SUB_PRESETS)))
             self.keep_music.setChecked(bool(st["keep_music"]))
             self.erase.setChecked(bool(st["erase"]))
             v = self.video()
@@ -1686,7 +1688,7 @@ class TranslationView(_View):
         self.job_id = self.app.jobs.submit(
             "translate_video", f"Traduction · {v['file_name']} · {', '.join(c.upper() for c in langs)}",
             {"asset_id": v["id"], "project_id": self.pid, "root_id": root, "languages": langs,
-             "engine": self._engine(), "voice": voice, "top_text": "", "preset": st["preset"],
+             "engine": self._engine(), "voice": voice, "top_text": "", "preset": next(iter(trn.SUB_PRESETS)),
              "keep_music": st["keep_music"], "erase_texts": st["erase"], "subtitles": self.do_subs.isChecked(),
              "timeline": template.to_dict(), "folder": str(self.export_dir),
              "export": False, "glossary": [p["concept_name"]] if p["concept_name"] else []})
@@ -1713,6 +1715,11 @@ class TranslationView(_View):
                 "masks": r.get("masks") or [], "dubbed": bool(r.get("dubbed")),
                 "keep_music": bool(r.get("keep_music", True)), "preset": job.params.get("preset") or "white"}
             self.app.projects.save_data(pid, data)
+            versions = r.get("versions") or {}
+            first = next((versions[lg] for lg in (r.get("languages") or []) if lg in versions), None)
+            if first and pid == self.pid and self.host.stack.currentWidget() is self:   # la première version s'ouvre d'elle-même
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self.host.open_from_list(first, "translation"))
         if not self.pid:
             return
         if job.kind == "translate_video" and job.status in ("pending", "running") and job.id == self.job_id:

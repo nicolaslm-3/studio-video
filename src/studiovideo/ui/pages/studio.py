@@ -130,6 +130,15 @@ class StudioPage(QWidget):
         self.transcript_btn.setFixedHeight(34)
         top.addWidget(self.transcript_btn)                # (son moteur : roue crantée dans la fenêtre)
         top.addSpacing(8)
+        # concept de la vidéo ouverte, dans tous les onglets
+        self.concept_combo = QComboBox()
+        self.concept_combo.setPlaceholderText("Concept")
+        self.concept_combo.setToolTip("Concept de la vidéo")
+        self.concept_combo.setFixedHeight(34)
+        self.concept_combo.setMinimumWidth(150)
+        self.concept_combo.currentIndexChanged.connect(self._on_concept_combo)
+        top.addWidget(self.concept_combo)
+        top.addSpacing(8)
         # projet ouvert (Montage libre, Création originale, Export ; ailleurs, la barre des projets à gauche)
         self.mode_icon = QLabel()
         self.mode_icon.setFixedSize(28, 28)
@@ -165,7 +174,7 @@ class StudioPage(QWidget):
         root.addWidget(self.stack, 1)
         self.stack.addWidget(EmptyState("Choisissez un parcours en bas",
                                         "Ou glissez une vidéo n'importe où dans la fenêtre  : une nouvelle vidéo "
-                                        "est créé et ses extraits sont recherchés automatiquement."))
+                                        "est créée et ses extraits sont recherchés automatiquement."))
 
         vsplit = QSplitter(Qt.Vertical)
         vsplit.setHandleWidth(8)
@@ -367,6 +376,7 @@ class StudioPage(QWidget):
             self.project_combo.setCurrentIndex(max(0, self.project_combo.findData(self.project_id)))
         self.project_combo.setVisible(self.project_combo.count() > 0)
         self.project_combo.blockSignals(False)
+        self._fill_concept_combo()
         self.stack.setCurrentIndex(1 if self.project_id else 0)
         if self.project_id:
             self._load_media()
@@ -647,7 +657,6 @@ class StudioPage(QWidget):
                 self._changed()
             else:
                 self.app.montage.save(pid, tl)
-        self.sidebar._kw.pop(aid, None)                  # mots-clés de la barre des projets
         self.sidebar._sig = None
         self.sidebar.refresh()
         sv = self._simple_view()
@@ -855,6 +864,35 @@ class StudioPage(QWidget):
             name, ic, col, _d = theme.PARCOURS[mode]
             self.mode_icon.setPixmap(theme.icon(ic, col, 24).pixmap(24, 24))
             self.mode_icon.setToolTip(name)
+
+    def _fill_concept_combo(self) -> None:
+        """Menu des concepts (sans « Brouillons ») : celui de la vidéo ouverte, vide si elle n'en a pas encore."""
+        from ..widgets import dot_icon
+        p = self.app.projects.get(self.project_id) if self.project_id else None
+        self.concept_combo.blockSignals(True)
+        self.concept_combo.clear()
+        for c in self.app.concepts.user_concepts():
+            self.concept_combo.addItem(dot_icon(c.color), c.name, c.id)
+        self.concept_combo.setCurrentIndex(self.concept_combo.findData(p["concept_id"]) if p else -1)
+        self.concept_combo.setEnabled(p is not None)
+        self.concept_combo.blockSignals(False)
+
+    def _on_concept_combo(self) -> None:
+        cid = self.concept_combo.currentData()
+        if cid and self.project_id:
+            self.app.projects.set_concept(self.project_id, cid)
+            self.concept_id = cid
+            self.concept_changed()
+
+    def concept_changed(self) -> None:
+        """Le concept de la vidéo a changé (barre du haut ou Export) : partout à jour."""
+        p = self.app.projects.get(self.project_id) if self.project_id else None
+        self.concept_id = p["concept_id"] if p else None
+        self._fill_concept_combo()
+        if self.export_view.isVisible() and self.export_view.concept.currentData() != self.concept_id:
+            self.export_view._fill_concepts(self.concept_id)
+            self.export_view.refresh_cards()
+        self.sidebar.refresh()
 
     def open_project(self, project_id: int, mode: str | None = None) -> None:
         """Ouvre le projet ; `mode` : dans cette interface (sinon celle où il a été ouvert en dernier)."""

@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
             QShortcut(QKeySequence(key), self, activated=lambda i=i: self.go(i))
         self.drawer.navigate.connect(self.go)
         self.dock.menu_clicked.connect(lambda: self.drawer.show_above(self.dock.menu_btn, "left"))
+        self.dock.calendar_clicked.connect(lambda: self.go(3))      # le calendrier, à côté du menu
         self.dock.parcours_clicked.connect(self.start_parcours)
         self.jobs_pop = Popover(self)
         self.jobs_pop.frame.setFixedSize(720, 380)

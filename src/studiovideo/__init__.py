@@ -5,5 +5,5 @@ Modifier __version__ sur la branche main déclenche la compilation et la publica
 
 __app_name__ = "StudioVideo"
 __display_name__ = "Studio Vidéo"
-__version__ = "0.31.2"
+__version__ = "0.32.0"
 __publisher__ = "StudioVideo"

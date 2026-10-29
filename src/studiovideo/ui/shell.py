@@ -216,9 +216,10 @@ class JobsButton(DockButton):
 
 
 class Dock(QFrame):
-    """Barre centrée en bas : menu · parcours · Export."""
+    """Barre centrée en bas : menu · calendrier · parcours · Export."""
     parcours_clicked = Signal(str)
     menu_clicked = Signal()
+    calendar_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -229,6 +230,9 @@ class Dock(QFrame):
         self.menu_btn = DockButton("menu", "Menu", None, checkable=False)
         self.menu_btn.clicked.connect(self.menu_clicked.emit)
         lay.addWidget(self.menu_btn)
+        self.calendar_btn = DockButton("calendar-days", "Calendrier", None, checkable=False)
+        self.calendar_btn.clicked.connect(self.calendar_clicked.emit)
+        lay.addWidget(self.calendar_btn)
         lay.addWidget(self._divider())
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
@@ -261,7 +265,7 @@ class Dock(QFrame):
         self.group.setExclusive(True)
 
     def restyle(self) -> None:
-        for b in [self.menu_btn, *self.buttons.values()]:
+        for b in [self.menu_btn, self.calendar_btn, *self.buttons.values()]:
             b.restyle()
         shadow(self, 30, 8, 45)
 

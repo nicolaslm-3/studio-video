@@ -10,20 +10,18 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QToolButton, QVBoxLayout, QWidget
 
-from ..ai.translate import LANG_NAMES
-from ..media.ffmpeg import fmt_timecode
 from . import theme
-from .widgets import ElidedLabel, tool
+from .widgets import ElidedLabel, color_dot, tool
 
 
 class ProjectItem(QFrame):
-    """Une vidéo de la liste : nom, et en gris des mots-clés (ou la langue d'une version traduite) ; au survol,
-    renommer, archiver, supprimer."""
+    """Une vidéo de la liste : en haut son concept (point de sa couleur), dessous son nom ; au survol, renommer,
+    archiver, supprimer."""
     clicked = Signal(int)
     menu = Signal(int, object)
     action = Signal(int, str)                           # « rename », « archive » ou « delete »
 
-    def __init__(self, pid: int, name: str, sub: str, current: bool, indent: int = 0):
+    def __init__(self, pid: int, name: str, sub: str, current: bool, indent: int = 0, color: str = ""):
         super().__init__()
         self.pid = pid
         self.setProperty("role", "projitem")
@@ -49,11 +47,16 @@ class ProjectItem(QFrame):
             al.addWidget(b)
         self.actions.hide()
         row.addWidget(self.actions)
+        top = QHBoxLayout()
+        top.setSpacing(5)
+        self.dot = color_dot(color or theme.color("faint"), 7)
+        top.addWidget(self.dot)
+        self.sub = ElidedLabel(sub, "faint")             # le concept
+        top.addWidget(self.sub, 1)
+        v.addLayout(top)
         self.name = ElidedLabel(name)                    # une ligne chacun, « … » si la place manque
         self.name.setStyleSheet("font-weight: 700;" + (" font-size: 12px;" if indent else ""))
         v.addWidget(self.name)
-        self.sub = ElidedLabel(sub, "faint")
-        v.addWidget(self.sub)
         self.setToolTip(f"{name}\n{sub}")
         self.name.setToolTip(self.toolTip())
         self.sub.setToolTip(self.toolTip())
@@ -117,7 +120,6 @@ class ProjectSidebar(QFrame):
         sc.setWidget(pw)
         sl.addWidget(sc, 1)
         self._sig = None
-        self._kw: dict[int, str] = {}                    # mots-clés par média transcrit
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -129,22 +131,10 @@ class ProjectSidebar(QFrame):
         self.new_btn.setIcon(theme.icon("plus", theme.color("muted"), 18))
         self.refresh()
 
-    def _keywords(self, aid: int | None) -> str:
-        """3 ou 4 mots-clés qui résument la vidéo, tirés de sa transcription (calculés une fois)."""
-        if aid is None:
-            return ""
-        if aid not in self._kw:
-            if not self.app.transcripts.has(aid):
-                return ""
-            from ..ai.highlights import _keywords
-            tr = self.app.transcripts.get(aid)
-            self._kw[aid] = " · ".join(_keywords([s.text for s in tr.segments], 4)) if tr else ""
-        return self._kw[aid]
-
     def entries(self) -> list[tuple[int, str, str, int]]:
-        """(projet, nom affiché, ligne grise, retrait) dans l'ordre d'affichage : chaque projet, puis en retrait ses
-        versions traduites et ses extraits devenus des vidéos (et leurs versions). Nom : celui du projet (le nom du média s'il n'en a pas reçu d'autre) ; en gris,
-        des mots-clés de la transcription."""
+        """(vidéo, nom affiché, concept, retrait) dans l'ordre d'affichage : chaque vidéo, puis en retrait ses
+        versions traduites (« VEN-Nom de la vidéo ») et ses extraits devenus des vidéos. Le nom : celui de la vidéo
+        (le nom du média tant qu'elle n'en a pas reçu d'autre)."""
         rows = list(self.app.projects.recent(200))
         data = {r["id"]: json.loads(r["data_json"] or "{}") for r in rows}
         files = {r["id"]: r["file_name"] for r in self.app.db.query(
@@ -154,59 +144,46 @@ class ProjectSidebar(QFrame):
             "ORDER BY id")}
         names = {r["id"]: r["name"] for r in rows}
         by_id = {r["id"]: r for r in rows}
-        children: dict[int, list] = {}                   # versions traduites, puis extraits devenus projets
+        drafts = self.app.concepts.DRAFTS
+        self.colors = {r["id"]: ("" if r["concept_name"] == drafts else r["concept_color"]) for r in rows}
+        children: dict[int, list] = {}                   # versions traduites, puis extraits devenus vidéos
         for r in rows:
             par = data[r["id"]].get("parent")
             if par in names:
                 children.setdefault(par, []).append(r)
         for r in sorted(rows, key=lambda r: r["id"]):
             for c in (data[r["id"]].get("clip_projects") or {}).values():
-                if c in by_id and c != r["id"] and data[c].get("parent") not in names                         and by_id[c] not in children.get(r["id"], []):
+                if c in by_id and c != r["id"] and data[c].get("parent") not in names \
+                        and by_id[c] not in children.get(r["id"], []):
                     children.setdefault(r["id"], []).append(by_id[c])
         placed = {c["id"] for cs in children.values() for c in cs}
 
-        def video(pid: int) -> int | None:
-            v = data[pid].get("project_video")
-            return v if v in files else latest.get(pid)
-
-        def summary(pid: int) -> str:
-            aid = video(pid)
-            if aid is None:
-                return "Pas encore de vidéo"
-            return self._keywords(aid) or "Transcription à venir"
+        def concept(r) -> str:
+            return "Sans concept" if r["concept_name"] == drafts else r["concept_name"]
 
         def shown_name(r) -> str:
-            aid = video(r["id"])
+            v = data[r["id"]].get("project_video")
+            aid = v if v in files else latest.get(r["id"])
             if aid is not None and self.app.projects.is_auto_name(r["name"]):
                 return Path(files[aid]).stem or r["name"]
             return r["name"]
-
-        def clip_range(pid: int) -> str:
-            cid = data[pid].get("clip_of")
-            r = self.app.candidates.get(cid) if cid else None
-            return f"Extrait · {fmt_timecode(r['start_s'])} – {fmt_timecode(r['end_s'])}" if r else summary(pid)
 
         out = []
 
         def add(r, depth: int, parent_name: str) -> None:
             pid = r["id"]
             d = data[pid]
-            if depth == 0:
-                out.append((pid, shown_name(r), summary(pid), 0))
-            elif d.get("version_lang"):
-                lang = d["version_lang"]
-                prefix = parent_name + " · "
-                shown = r["name"][len(prefix):] if r["name"].startswith(prefix) else r["name"]
-                out.append((pid, shown, LANG_NAMES.get(lang, lang.upper()).capitalize() + " · " + summary(pid),
-                            depth))
-            else:                                       # un extrait du projet au-dessus, devenu une vidéo
-                out.append((pid, r["name"], clip_range(pid), depth))
+            if depth and d.get("version_lang"):            # version traduite : « VEN-Nom de la vidéo »
+                out.append((pid, f"V{d['version_lang'].upper()}-{parent_name}", concept(r), depth))
+            else:
+                out.append((pid, shown_name(r) if depth == 0 else r["name"], concept(r), depth))
             if depth < 2:
                 kids = children.get(pid, [])
                 kids = sorted([k for k in kids if data[k["id"]].get("version_lang")],
-                              key=lambda k: data[k["id"]]["version_lang"]) +                     [k for k in kids if not data[k["id"]].get("version_lang")]
+                              key=lambda k: data[k["id"]]["version_lang"]) + \
+                    [k for k in kids if not data[k["id"]].get("version_lang")]
                 for k in kids:
-                    add(k, depth + 1, r["name"])
+                    add(k, depth + 1, out[-1][1] if not d.get("version_lang") else parent_name)
 
         for r in rows:
             if r["id"] not in placed:
@@ -216,7 +193,7 @@ class ProjectSidebar(QFrame):
     def refresh(self) -> None:
         """Liste à jour ; identique (rien de modifié), elle n'est pas reconstruite."""
         entries = self.entries()
-        sig = (tuple(entries), self.host.project_id, self.mode)
+        sig = (tuple(entries), tuple(sorted(self.colors.items())), self.host.project_id, self.mode)
         if sig == self._sig:
             return
         self._sig = sig
@@ -227,7 +204,8 @@ class ProjectSidebar(QFrame):
                 w.setParent(None)                  # sinon son affichage différé en fait une fenêtre
                 w.deleteLater()
         for pid, name, sub, child in entries:
-            it = ProjectItem(pid, name, sub, pid == self.host.project_id, indent=child)
+            it = ProjectItem(pid, name, sub, pid == self.host.project_id, indent=child,
+                             color=self.colors.get(pid, ""))
             it.clicked.connect(lambda p: self.host.open_from_list(p, self.mode))
             it.menu.connect(lambda p, pos: self.host.project_menu(p, self.mode, self, pos))
             it.action.connect(lambda p, k: self.host.project_action(p, k, self.mode, self))

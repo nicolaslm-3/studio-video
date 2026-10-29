@@ -22,13 +22,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QRadioButton, QScrollArea, QStyle, QStyledItemDelegate, QToolButton,
+                               QProgressBar, QScrollArea, QStyle, QStyledItemDelegate, QToolButton,
                                QVBoxLayout, QWidget, QWidgetAction)
 
 from ..core import AppContext
-from ..domain.models import PublicationStatus
 from ..edit.model import Timeline
 from ..publish import reconcile, rules
 from . import browser_login, theme
@@ -61,11 +60,20 @@ def date_prefix(when=None) -> str:
     return (when or datetime.now()).strftime("%Y-%m-%d %Hh%M")
 
 
-def file_name(name: str, when=None) -> str:
-    """Nom du fichier exporté : « 2026-10-28 10h32 Mon nom.mp4 » (une date et une heure déjà en tête ne sont pas
-    répétées)."""
-    base = re.sub(r"^\d{4}-\d{2}-\d{2}(?:[ _-]+\d{1,2}h\d{2})?[ _-]*", "", safe_name(name)) or "video"
-    return f"{date_prefix(when)} {base}.mp4"
+def base_name(name: str) -> str:
+    """Le nom seul : sans date, heure ni concept en tête (« 2026-10-28 10h32 - Concept - Nom » → « Nom »)."""
+    base = re.sub(r"^\d{4}-\d{2}-\d{2}(?:[ _-]+\d{1,2}h\d{2})?(?:\s*-\s*)?", "", safe_name(name))
+    return base.strip() or "video"
+
+
+def file_name(name: str, when=None, concept: str = "") -> str:
+    """Nom du fichier exporté : « 2026-10-28 10h32 - Concept - Nom.mp4 » (sans concept : « … 10h32 - Nom.mp4 »).
+    Une date, une heure ou un concept déjà en tête ne sont pas répétés."""
+    base = base_name(name)
+    concept = safe_name(concept) if concept else ""
+    if concept and base.startswith(concept + " - "):
+        base = base[len(concept) + 3:].strip() or "video"
+    return " - ".join(x for x in (date_prefix(when), concept, base) if x) + ".mp4"
 
 
 # -- emojis ----------------------------------------------------------------------------------------------
@@ -267,7 +275,7 @@ class EmojiButton(QToolButton):
 
 class NetworkCard(QFrame):
     """Un réseau dans le rectangle de publication : logo et chaîne du concept, état ; dessous, le lien de la vidéo
-    une fois publiée. Masqué si le concept n'a pas de chaîne sur ce réseau."""
+    une fois publiée. Visible seulement une fois la page d'envoi ouverte (les logos du menu suffisent sinon)."""
 
     def __init__(self, view: "ExportView", key: str, name: str):
         super().__init__()
@@ -304,7 +312,7 @@ class NetworkCard(QFrame):
             net = f"  ·  {rules.RULES[acc.platform.value].label}" if self.key == "meta" else ""
             self.channel.setText(acc.name + net)
             self.channel.setToolTip(acc.public_url or acc.name)
-        self.setVisible(acc is not None)
+        self.setVisible(False)                            # les logos, à droite du menu, suffisent
 
     def show_state(self, exported: bool, pub_id: int | None) -> None:
         """État de la publication (à publier, publiée) et son lien."""
@@ -312,12 +320,7 @@ class NetworkCard(QFrame):
         done = bool(r and r["status"] == "published")
         self.state.setText("✓ Publiée" if done else "À publier" if r else "")
         self.link.set_publication(pub_id)
-
-
-ACTIONS = ("draft", "local")
-DRAFT_HELP = ("La vidéo est exportée puis envoyée sans être publiée sur chaque réseau qui a un compte : en privé sur "
-              "YouTube, dans la boîte de réception TikTok, en brouillon sur la Page Facebook (comptes connectés par "
-              "API). Les autres comptes, et Instagram, qui n'a pas de brouillon : avec la page d'envoi, à droite.")
+        self.setVisible(bool(self.acc_id) and r is not None)      # seulement une fois la page d'envoi ouverte
 
 
 class ExportView(_View):
@@ -348,8 +351,8 @@ class ExportView(_View):
         left.setSpacing(14)
         top = QFrame()
         top.setProperty("role", "card")
-        tl_ = QHBoxLayout(top)
-        tl_.setContentsMargins(14, 14, 16, 14)
+        tl_ = QHBoxLayout()
+        tl_.setContentsMargins(0, 0, 0, 0)
         tl_.setSpacing(16)
         fl = QVBoxLayout()
         fl.setSpacing(6)
@@ -361,10 +364,8 @@ class ExportView(_View):
         self.date_lbl.setToolTip("Le nom du fichier commence par la date et l'heure de l'export")
         fl.addLayout(_row(self.date_lbl, self.file_name, label(".mp4", "muted", hint=False), spacing=4))
         self.folder = str(export_dir)
-        self.folder_lbl = label("", "faint", hint=False)
-        self.folder_lbl.setMinimumWidth(80)
-        self.folder_btn = tool("folder", "Choisir le dossier où enregistrer la vidéo", self._pick_folder)
-        fl.addLayout(_row(self.folder_btn, self.folder_lbl, "stretch", spacing=4))
+        self.folder_btn = tool("folder", "Dossier où enregistrer la vidéo", self._pick_folder)    # chemin au survol
+        fl.itemAt(fl.count() - 1).layout().insertWidget(0, self.folder_btn)
         self.text = QPlainTextEdit()                      # titre (1re ligne), description, hashtags
         self.text.setPlaceholderText("Texte")
         self.text.setToolTip("Texte : la première ligne sert de titre (YouTube), le reste de description")
@@ -384,37 +385,25 @@ class ExportView(_View):
         self.player.track_resolver = lambda aid: self.host._tracks_for(aid, self.player.tl)   # voix doublée
         self.player.setFixedSize(180, 300)
         tl_.addWidget(self.player, 0, Qt.AlignTop)
-        left.addWidget(top)
-        # que faire de la vidéo : brouillon sur les réseaux, ou seulement sur le PC
-        act = QFrame()
-        act.setProperty("role", "card")
-        al = QVBoxLayout(act)
-        al.setContentsMargins(16, 12, 16, 14)
-        al.setSpacing(8)
-        al.addWidget(label("Que faire de la vidéo ?", "h2"))
-        self.actions = QButtonGroup(self)
-        self.act_draft = QRadioButton("Brouillon sur les réseaux")
-        self.act_draft.setToolTip(DRAFT_HELP)
-        self.act_local = QRadioButton("Sur mon PC seulement")
-        self.act_local.setToolTip("Enregistre la vidéo dans le dossier choisi, sans rien publier ; la publier ensuite "
-                                  "avec la page d'envoi de chaque réseau, à droite")
-        for i, b in enumerate((self.act_draft, self.act_local)):
-            self.actions.addButton(b, i)
-            al.addWidget(b)
-        self.actions.idToggled.connect(lambda _i, on: on and self._changed())
+        box = QVBoxLayout(top)
+        box.setContentsMargins(14, 14, 16, 12)
+        box.setSpacing(8)
+        box.addLayout(tl_)
+        # en bas du rectangle : Exporter, le dossier (chemin au survol), ce qui s'est passé, le calendrier
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
+        self.progress.setFixedHeight(6)
         self.progress.hide()
-        al.addWidget(self.progress)
-        self.go = button("Exporter", "big", on_click=self._go)
-        al.addWidget(self.go)
-        self.status = label("", "muted", wrap=True, hint=False)
-        al.addWidget(self.status)
-        self.open_dir = button("Ouvrir le dossier", "ghost", icon="folder-open",
-                               on_click=lambda: _open_folder(Path(self._last_path()).parent))
-        self.open_dir.hide()
-        al.addLayout(_row(self.open_dir, "stretch"))
-        left.addWidget(act)
+        box.addWidget(self.progress)
+        self.go = button("Exporter", "soft", icon="download", on_click=self._go)
+        self.open_dir = tool("folder-open", "Ouvrir le dossier",
+                             lambda: _open_folder(Path(self._last_path()).parent))
+        self.status = label("", "muted", hint=False)
+        self.status.setWordWrap(True)
+        self.plan_btn = button("Mettre dans le calendrier", "ghost", icon="calendar-days", on_click=self.plan,
+                               tooltip="Programmer cette vidéo dans le calendrier")
+        box.addLayout(_row(self.go, self.open_dir, self.status, "stretch", self.plan_btn, spacing=8))
+        left.addWidget(top)
         left.addStretch(1)
         lw = QWidget()
         lw.setLayout(left)
@@ -438,7 +427,8 @@ class ExportView(_View):
         head = QHBoxLayout()
         head.setSpacing(4)
         self.concept = QComboBox()
-        self.concept.setToolTip("Concept : ses chaînes YouTube, TikTok et Meta reçoivent les pages d'envoi")
+        self.concept.setToolTip("Concept")
+        self.concept.setPlaceholderText("Concept")
         self.concept.currentIndexChanged.connect(self._concept_changed)
         head.addWidget(self.concept)
         head.addStretch(1)
@@ -455,7 +445,7 @@ class ExportView(_View):
             c = NetworkCard(self, key, name)
             self.nets[key] = c
             pl.addWidget(c)
-        self.open_all = button("Ouvrir les pages d'envoi", "soft", icon="upload", on_click=self.open_pages,
+        self.open_all = button("Ouvrir les pages d'envoi", None, icon="upload", on_click=self.open_pages,
                                tooltip="Ouvre la page d'envoi de chaque chaîne du concept, chacune dans un nouvel "
                                "onglet de ton navigateur, et copie le texte : glisse la vidéo, colle le texte, "
                                "clique toi-même sur « Publier »")
@@ -478,11 +468,9 @@ class ExportView(_View):
 
     # -- état enregistré dans le projet ---------------------------------------------------
     def _state(self) -> dict:
-        st = {"title": "", "description": "", "action": "local", "concept": None, "file_name": "", "folder": ""}
+        st = {"title": "", "description": "", "file_name": "", "folder": ""}
         if self.pid:
             st.update(self.app.projects.load_data(self.pid).get("export_ui") or {})
-        if st["action"] not in ACTIONS:                   # anciens choix (publier, programmer) : sur le PC
-            st["action"] = "local"
         return st
 
     def _default_title(self) -> str:
@@ -502,11 +490,8 @@ class ExportView(_View):
     def _changed(self, *_a) -> None:
         if self._loading or not self.pid:
             return
-        a = self.actions.checkedId()
         st = {"title": self._title(), "description": self._desc(),
-              "action": ACTIONS[a] if 0 <= a < len(ACTIONS) else "local",
-              "file_name": self.file_name.text().strip(), "folder": self.folder,
-              "concept": self.concept.currentData()}
+              "file_name": self.file_name.text().strip(), "folder": self.folder}
         data = self.app.projects.load_data(self.pid)
         data["export_ui"] = st
         self.app.projects.save_data(self.pid, data)
@@ -552,18 +537,26 @@ class ExportView(_View):
             self._changed()
 
     def _show_folder(self) -> None:
-        self.folder_lbl.setToolTip(self.folder)
-        fm = self.folder_lbl.fontMetrics()
-        self.folder_lbl.setText(fm.elidedText(self.folder, Qt.ElideMiddle, 320))
+        self.folder_btn.setToolTip(f"Dossier où enregistrer la vidéo :\n{self.folder}")
 
     def _fill_concepts(self, chosen: int | None) -> None:
+        """Les concepts (« Brouillons », celui des vidéos pas encore rangées, est caché) ; celui de la vidéo choisi."""
         self.concept.blockSignals(True)
         self.concept.clear()
-        for c in self.app.concepts.list_concepts():
+        for c in self.app.concepts.user_concepts():
             self.concept.addItem(dot_icon(c.color), c.name, c.id)
-        self.concept.setCurrentIndex(max(0, self.concept.findData(chosen)))
+        self.concept.setCurrentIndex(self.concept.findData(chosen))
         self.concept.blockSignals(False)
         self._show_channels()
+        self._show_prefix()
+
+    def _concept_name(self) -> str:
+        return self.concept.currentText() if self.concept.currentData() else ""
+
+    def _show_prefix(self) -> None:
+        """Devant le nom du fichier : la date, l'heure et le concept de la vidéo."""
+        c = self._concept_name()
+        self.date_lbl.setText(f"{date_prefix()} - {c} -" if c else f"{date_prefix()} -")
 
     def _show_channels(self) -> None:
         """Chaque réseau reçoit la chaîne du concept choisi."""
@@ -572,7 +565,13 @@ class ExportView(_View):
             c.set_account(concept_account(self.app, cid, k) if cid else None)
 
     def _concept_changed(self) -> None:
+        """Le concept choisi ici est celui de la vidéo (le même que dans la barre du haut)."""
+        cid = self.concept.currentData()
+        if cid and self.pid:
+            self.app.projects.set_concept(self.pid, cid)
+            self.host.concept_changed()
         self._show_channels()
+        self._show_prefix()
         self._changed()
         self.refresh_cards()
 
@@ -599,9 +598,8 @@ class ExportView(_View):
             if self.text.toPlainText().strip() != text.strip():
                 self.text.setPlainText(text)
             p = self.app.projects.get(self.pid)
-            self._fill_concepts(st["concept"] or (p["concept_id"] if p else None))
+            self._fill_concepts(p["concept_id"] if p else None)
             self.concepts.refresh()
-            (self.act_draft if st["action"] == "draft" else self.act_local).setChecked(True)
         finally:
             self._loading = False
         self.player.set_timeline(self.version_timeline(), self.host.assets)
@@ -623,15 +621,9 @@ class ExportView(_View):
         running = _active_job(self.app, "export_timeline", "project_id", self.pid)
         pending = self.app.projects.load_data(self.pid).get("export_pending")
         busy = bool(running and pending)
-        nets = [c.name for c in self.nets.values() if c.account_id()]
-        local = self.actions.checkedId() == ACTIONS.index("local")
-        if local:
-            self.go.setText("Exporter sur mon PC")
-        else:
-            self.go.setText("Exporter en brouillon" + (f"  ·  {', '.join(nets)}" if nets else ""))
         tl = self.version_timeline()
-        self.go.setEnabled(not busy and bool(tl.segments) and (local or bool(nets)))
-        self.go.setToolTip("" if local or nets else "Choisis au moins un compte, à droite")
+        self.go.setEnabled(not busy and bool(tl.segments))
+        self.go.setToolTip("Enregistre la vidéo dans le dossier choisi" if tl.segments else "Rien à exporter")
         self.progress.setVisible(busy)
         if busy:
             self.progress.setValue(int((running["progress"] or 0) * 100))
@@ -646,14 +638,14 @@ class ExportView(_View):
         data = self.app.projects.load_data(self.pid)
         last = data.get("export_last")
         if data.get("export_pending") and _active_job(self.app, "export_timeline", "project_id", self.pid):
-            self.status.setText("Export de la vidéo en cours… La suite (brouillons sur les réseaux) se fera ensuite "
-                                "d'elle-même.")
+            self.status.setText("Export de la vidéo en cours…")
         elif last:
             self.status.setText(last.get("summary", ""))
         else:
             self.status.setText("")
         path = self._last_path()
         self.open_dir.setVisible(bool(path) and Path(path).exists())
+        self.open_dir.setToolTip(f"Ouvrir le dossier :\n{Path(path).parent}" if path else "")
         self.refresh_cards()
 
     def refresh_cards(self) -> None:
@@ -757,7 +749,7 @@ class ExportView(_View):
     def _destination(self, st: dict) -> Path | None:
         """Fichier de sortie : nom et dossier choisis ; un fichier du même nom n'est remplacé qu'avec accord."""
         folder = Path(st["folder"] or self.export_dir)
-        dest = folder / file_name(st['file_name'] or self._default_name())
+        dest = folder / file_name(st['file_name'] or self._default_name(), concept=self._concept_name())
         if dest.exists() and not ask(
                 self, "Exporter", f"« {dest.name} » existe déjà dans ce dossier.\n\nLe remplacer ?"):
             return None
@@ -769,19 +761,6 @@ class ExportView(_View):
             return
         self.host.flush()
         st = self._state()
-        a = st["action"]
-        nets = {}
-        if a == "draft":
-            for k, c in self.nets.items():
-                acc = c.account_id()
-                if acc:
-                    pf = self.app.concepts.get_account(acc).platform.value
-                    t = compose_for(pf, st["title"], st["description"])
-                    problems = rules.check(pf, t["title"], t["text"], "")
-                    if problems:
-                        QMessageBox.warning(self, "Export", f"{c.name} : " + "\n".join(problems))
-                        return
-                    nets[k] = {"account": acc, "title": t["title"], "text": t["text"]}
         problems = tl.problems(self.app.montage.asset_row)
         if problems:
             QMessageBox.warning(self, "Export impossible", "\n".join(f"• {p}" for p in problems))
@@ -795,16 +774,15 @@ class ExportView(_View):
                                    {"timeline": tl.to_dict(), "dest": str(dest), "project_id": self.pid},
                                    critical=True)
         data = self.app.projects.load_data(self.pid)
-        data["export_pending"] = {"job": jid, "action": a, "title": st["title"], "description": st["description"],
-                                  "language": lang, "nets": nets}
+        data["export_pending"] = {"job": jid, "title": st["title"], "description": st["description"],
+                                  "language": lang, "name": base_name(st["file_name"] or self._default_name())}
         self.app.projects.save_data(self.pid, data)
         self.status.setText("Export de la vidéo en cours…")
         self.open_dir.hide()
         self._update_go()
 
     def finish(self, pid: int, job) -> None:
-        """Export terminé : sur le PC seulement, rien d'autre ; brouillon : envoi sans publier aux comptes
-        connectés par API, les autres avec la page d'envoi (à droite)."""
+        """Export terminé : la vidéo prend le nom du fichier (sans date, heure ni concept)."""
         data = self.app.projects.load_data(pid)
         pend = data.get("export_pending")
         if not pend or pend.get("job") != job.id:
@@ -817,42 +795,26 @@ class ExportView(_View):
             return
         path = (job.result or {}).get("path", "")
         variant = (job.result or {}).get("variant_id")
-        name = Path(path).name
-        if pend["action"] != "draft" or not pend["nets"]:
-            data["export_last"] = {"summary": f"✓ « {name} » enregistrée dans « {Path(path).parent} ».",
-                                   "path": path, "variant_id": variant}
-            self.app.projects.save_data(pid, data)
-            return
-        p = self.app.projects.get(pid)
-        ps = self.app.publications
-        mid = ps.create_master(p["concept_id"], pend["title"], pend["description"], "",
-                               language=pend.get("language") or "fr", variant_id=variant)
-        accounts = {v["account"]: k for k, v in pend["nets"].items()}
-        notes, pubs = [], {}
-        ps.set_destinations(mid, list(accounts), confirmed_external=set(accounts))
-        for pub in ps.list_for_master(mid):
-            k = accounts.get(pub.account.id)
-            v = pend["nets"].get(k) or {}
-            pubs[k] = pub.id
-            ps.override(pub.id, title=v.get("title", ""), description=v.get("text", ""))
-            label_ = rules.RULES[pub.account.platform.value].label
-            if pub.account.platform.value == "instagram":
-                ps.mark_manual(pub.id, "Instagram ne permet pas d'envoyer un brouillon : publication à faire à la main.")
-                notes.append(f"{label_} : pas de brouillon possible, à publier avec la page d'envoi")
-            elif pub.account.connection_status == "connected":
-                ps.set_status(pub.id, PublicationStatus.UPLOADING)
-                self.app.jobs.submit("publish_upload", f"{label_} · {pend['title'] or 'sans titre'} · brouillon",
-                                     {"publication_id": pub.id, "now": True, "draft": True}, critical=True)
-            else:
-                ps.mark_manual(pub.id, "Sans connexion par API : à publier avec la page d'envoi.")
-                notes.append(f"{label_} : sans connexion par API, à envoyer avec la page d'envoi")
-        summary = f"✓ « {name} » exportée, envoi en brouillon lancé (suivi dans les tâches)." \
-            if len(notes) < len(accounts) else f"✓ « {name} » exportée."
-        if notes:
-            summary += "\n" + "\n".join(notes)
-        data["export_last"] = {"summary": summary, "path": path, "variant_id": variant, "master_id": mid,
-                               "pubs": pubs}
+        data["export_last"] = {"summary": f"✓ « {Path(path).name} » enregistrée dans « {Path(path).parent} ».",
+                               "path": path, "variant_id": variant}
         self.app.projects.save_data(pid, data)
+        name = pend.get("name") or base_name(Path(path).stem)
+        p = self.app.projects.get(pid)
+        if p and name and p["name"] != name:
+            try:
+                self.app.projects.rename(pid, name)
+                self.host.refresh()
+            except ValueError:
+                pass
+
+    def plan(self):
+        """« Mettre dans le calendrier » : le rectangle de nouvelle publication, avec cette vidéo, son concept et
+        son texte."""
+        from .pages.calendar import PlanPopover
+        self.pop = PlanPopover(self.app, concept_id=self.concept.currentData(), project_id=self.pid,
+                               text=self.text.toPlainText().strip(), parent=self)
+        self.pop.show_at(self.plan_btn)
+        return self.pop
 
     def on_job(self, job) -> None:
         pid = job.params.get("project_id")

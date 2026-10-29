@@ -86,6 +86,18 @@ class ConceptService:
         sql = "SELECT * FROM concept" + ("" if include_archived else " WHERE archived = 0") + " ORDER BY name COLLATE NOCASE"
         return [_concept(r) for r in self.db.query(sql)]
 
+    def user_concepts(self) -> list[Concept]:
+        """Les concepts de l'utilisateur : sans « Brouillons », celui des vidéos pas encore rangées (caché)."""
+        return [c for c in self.list_concepts() if c.name != self.DRAFTS]
+
+    def is_drafts(self, concept_id: int | None) -> bool:
+        if not concept_id:
+            return True
+        try:
+            return self.get_concept(concept_id).name == self.DRAFTS
+        except ConceptError:
+            return True
+
     def delete_concept(self, concept_id: int) -> None:
         n = self.db.query_one("SELECT COUNT(*) n FROM project WHERE concept_id = ?", (concept_id,))["n"]
         if n:

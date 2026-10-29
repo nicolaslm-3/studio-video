@@ -1255,7 +1255,7 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert {it.pid for it in items} >= {pid, other}             # barre de gauche : les nouveaux projets aussi
     item = next(it for it in items if it.pid == pid)
     assert item.name.text() == "debat"                          # le nom du média source
-    assert item.sub.text() == "publique · explose · dette"       # en gris : les mots-clés de la transcription
+    assert item.sub.text() == "Sans concept"                    # en haut : le concept (pas encore choisi)
     QApplication.sendEvent(item, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(3, 3), QPoint(30, 30)))
     assert calls and calls[0][0] == item.pid and calls[0][1] == "smart_clipping"
     w.start_parcours("translation")                             # le dock en bas : la même vidéo, dans Traduction
@@ -1329,17 +1329,18 @@ def test_translation_screen_generate(window, monkeypatch):
     assert tv.chips["de"].text() == "" and tv.chips["de"].toolTip().startswith("Allemagne")   # drapeau
     tv.chips["de"].setChecked(True)
     assert tv.go.isEnabled() and tv.go.text() == "Préparer  ·  2 langues"      # anglais coché par défaut
-    next(b for b in tv.presets.buttons() if b.property("preset") == "yellow").setChecked(True)
+    assert list(tv.chips)[0] == "fr"                            # le français en premier
+    assert not any(b.isVisibleTo(tv) for b in tv.presets.buttons())   # styles de sous-titres : dans Textes
     tv._preview()                                               # projet d'origine : la vidéo originale
     assert tv.player.tl is st.tl and tv.player.tl.format.aspect == "9:16"
-    assert ctx.projects.load_data(pid)["translate_ui"]["preset"] == "yellow"   # choix gardés dans le projet
+    assert ctx.projects.load_data(pid)["translate_ui"]["preset"] == "white"    # le premier style, toujours
     sent = []
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
                         or 77)
     tv._go()
     kind, params, kw = sent[0]
     assert kind == "translate_video" and params["languages"] == ["en", "de"] and params["export"] is False
-    assert params["preset"] == "yellow" and params["top_text"] == "" and params["voice"] is None
+    assert params["preset"] == "white" and params["top_text"] == "" and params["voice"] is None
     assert params["subtitles"] is True and params["root_id"] == pid
     assert params["timeline"]["segments"][0]["asset_id"] == aid                # le montage du projet
     assert tv.go.text() == "Annuler"
@@ -1350,7 +1351,7 @@ def test_translation_screen_generate(window, monkeypatch):
                       result={"ready": ["en", "de"], "top_texts": {"en": "Easy recipe", "de": "Einfaches Rezept"},
                               "masks": [], "dubbed": False, "keep_music": True}))
     tr = ctx.projects.load_data(pid)["translations"]
-    assert tr["ready"] == ["de", "en"] and tr["top_texts"]["en"] == "Easy recipe" and tr["preset"] == "yellow"
+    assert tr["ready"] == ["de", "en"] and tr["top_texts"]["en"] == "Easy recipe" and tr["preset"] == "white"
     ctx.transcripts.store_translation(aid, Transcript([TSegment(0, 4, "Hello everyone", [])], "en", "t"))
     tv.refresh()
     assert not hasattr(tv, "next")                              # plus de « Suivant » : le dock en bas
@@ -1366,7 +1367,7 @@ def test_translation_screen_generate(window, monkeypatch):
     assert vtl.subtitles.language == "en" and vtl.subtitles.cues[0].text == "Hello everyone"
     entries = st.sidebar.entries()
     assert [(e[0], e[3]) for e in entries if e[0] in (pid, vers[0]["id"])] == [(pid, False), (vers[0]["id"], True)]
-    assert entries[[e[0] for e in entries].index(vers[0]["id"])][1] == "V-EN"
+    assert entries[[e[0] for e in entries].index(vers[0]["id"])][1] == "VEN-court"   # la langue, puis la vidéo
     tv.refresh()
     assert len(ctx.projects.versions(pid)) == 1                 # pas de doublon
 
@@ -1411,27 +1412,33 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet, petit aperçu
     assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
     assert ctx.projects.get(pid)["name"] == "x"                 # le projet a pris le nom du média
-    assert ev.file_name.text() == "x" and ev.act_local.isChecked()      # par défaut : sur le PC
+    assert ev.file_name.text() == "x" and not hasattr(ev, "act_local") and not hasattr(ev, "act_draft")
     from studiovideo.ui.export_view import file_name
     from datetime import datetime
     import re as _re
-    assert _re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}h\d{2}", ev.date_lbl.text())    # date et heure de l'export
-    assert file_name("Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
-    assert file_name("2020-01-01 09h05 Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
-    assert file_name("2020-01-01 Clip", datetime(2026, 10, 28, 10, 32)) == "2026-10-28 10h32 Clip.mp4"
-    assert "Instagram" in ev.act_draft.toolTip()
-    assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
+    assert _re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}h\d{2} -", ev.date_lbl.text())  # date et heure (pas de concept)
+    when = datetime(2026, 10, 20, 18, 32)
+    assert file_name("Clip", when, "Mas.tair") == "2026-10-20 18h32 - Mas.tair - Clip.mp4"
+    assert file_name("Clip", when) == "2026-10-20 18h32 - Clip.mp4"
+    assert file_name("2020-01-01 09h05 - Mas.tair - Clip", when, "Mas.tair") == "2026-10-20 18h32 - Mas.tair - Clip.mp4"
+    assert file_name("2020-01-01 Clip", when) == "2026-10-20 18h32 - Clip.mp4"
+    assert ev.go.text() == "Exporter" and ev.go.property("kind") == "soft" and ev.go.isEnabled()   # bouton normal
+    assert ev.plan_btn.text() == "Mettre dans le calendrier"
+    assert not [lb for lb in ev.findChildren(QLabel) if lb.text() == "Que faire de la vidéo ?"]
     assert not ev.tile.isEnabled() and not ev.reveal_btn.isEnabled()      # rien d'exporté encore
     assert ev.tile.maximumWidth() <= 300                        # vidéo à glisser : rectangle étroit
     # un rectangle : menu des concepts, logos (en couleur si une chaîne est liée), « Ouvrir les pages d'envoi »
-    assert ev.concept.currentData() == p["concept_id"] and ev.nets["youtube"].account_id() is None
-    ev.concept.setCurrentIndex(ev.concept.findData(concept.id))
+    assert ev.concept.currentIndex() == -1 and ev.concept.findText("Brouillons") < 0   # « Brouillons » caché
+    assert ev.concept.toolTip() == "Concept" and ev.nets["youtube"].account_id() is None
+    ev.concept.setCurrentIndex(ev.concept.findData(concept.id))         # le concept de la vidéo
+    assert ctx.projects.get(pid)["concept_id"] == concept.id and st.concept_combo.currentData() == concept.id
+    assert ev.date_lbl.text().endswith(" - Tous y passent -")
     ytc, meta = ev.nets["youtube"], ev.nets["meta"]
     assert ytc.account_id() == yt.id and ytc.channel.text() == "machaine" and ev.nets["tiktok"].account_id() == tk.id
-    assert meta.account_id() is None and not meta.isVisibleTo(ev)          # pas de chaîne Meta : ligne masquée
+    assert meta.account_id() is None and not ytc.isVisibleTo(ev)          # les logos du menu suffisent
     assert "pas de chaîne" in ev.net_icons["meta"].toolTip() and "machaine" in ev.net_icons["youtube"].toolTip()
     assert ev.open_all.text() == "Ouvrir les pages d'envoi" and not ev.open_all.isEnabled()   # rien d'exporté
-    assert ctx.projects.load_data(pid)["export_ui"]["concept"] == concept.id
+    assert ev.open_all.property("kind") in (None, "")                    # bouton gris normal
     # en dessous : les concepts et leurs chaînes (YouTube, TikTok, Meta)
     box = ev.concepts
     row = next(r for r in box.items() if r.concept and r.concept.id == concept.id)
@@ -1445,6 +1452,10 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert cp.platform() == "instagram" and cp.open_btn.isEnabled()   # lien à ouvrir dans le navigateur
     cp._save()
     assert row.nets["meta"].linked and meta.account_id() is not None and "Tous y passent" in meta.channel.text()
+    assert row.lang.text() == "" and row.lang.toolTip() == "Français"       # langue : le drapeau seul
+    row.lang.set_value("en", True)
+    assert ctx.concepts.get_concept(concept.id).language == "en"
+    assert not [r for r in box.items() if r.concept and r.concept.name == "Brouillons"]
     assert ctx.concepts.get_account(meta.account_id()).platform.value == "instagram"
     ig_id = meta.account_id()
     new = box.new_concept()                                     # « Nouveau concept » : une ligne, sans fenêtre
@@ -1459,7 +1470,7 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert eb.parent() is ev.text and eb.text() == ""           # icône grise, dans le champ, en haut à droite
     assert ev.count.text().startswith("51 caract")
     ui = ctx.projects.load_data(pid)["export_ui"]
-    assert ui["concept"] == concept.id and ui["title"] == "Le vrai chiffre"
+    assert ui["title"] == "Le vrai chiffre"
     assert ui["description"] == "Ce qu'on ne vous dit pas #politique"
     sent = []
     real_submit = ctx.jobs.submit
@@ -1470,12 +1481,11 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     ev._changed()
     ev._go()                                                    # sur le PC seulement : aucune publication
     kind, params, kw = sent[-1]
-    dest = Path(params["dest"])                                 # date et heure, puis le nom choisi
-    assert dest.parent == tmp_path and _re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}h\d{2} Mon export   final\.mp4",
-                                                       dest.name)
+    dest = Path(params["dest"])                                 # date et heure, concept, puis le nom choisi
+    assert dest.parent == tmp_path and _re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}h\d{2} - Tous y passent - Mon export   final\.mp4", dest.name)
     assert kind == "export_timeline" and kw.get("critical")
     pend = ctx.projects.load_data(pid)["export_pending"]
-    assert pend["action"] == "local" and pend["nets"] == {}
     dest.write_bytes(b"x")
     vid = ctx.montage.record_export(pid, st.tl, {"path": str(dest)}, None)
     ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
@@ -1483,7 +1493,10 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
                       result={"path": str(dest), "variant_id": vid}))
     data = ctx.projects.load_data(pid)
     assert "enregistrée" in data["export_last"]["summary"] and "master_id" not in data["export_last"]
+    assert "enregistrée" in ev.status.text()                    # à côté du bouton Exporter
     assert ev.open_dir.isVisibleTo(ev) and ev.tile.isEnabled() and ev.reveal_btn.isEnabled()
+    assert str(tmp_path) in ev.open_dir.toolTip() and ev.open_dir.text() == ""    # chemin au survol
+    assert ctx.projects.get(pid)["name"] == "Mon export   final"   # la vidéo prend le nom du fichier
     assert ev.tile.path == str(dest)                            # la vidéo exportée, à glisser
     # « Ouvrir les pages d'envoi » : un onglet par chaîne du concept, en un clic ; texte copié
     from studiovideo.publish import reconcile
@@ -1506,34 +1519,12 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     opened.clear()
     ev.open_pages()                                             # TikTok déjà publiée : plus rouverte
     assert len(opened) == 2 and "https://www.tiktok.com/upload" not in opened
-    # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram (Meta) n'en propose pas
-    con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
-    ev.refresh()
     assert ev.nets["meta"].account_id() == ig_id
-    ev.act_draft.setChecked(True)
-    assert ev.go.text().startswith("Exporter en brouillon") and "Meta" in ev.go.text()
-    ev.file_name.setText("brouillon")
-    ev._go()
-    kind, params, kw = sent[-1]
-    pend = ctx.projects.load_data(pid)["export_pending"]
-    assert pend["action"] == "draft" and set(pend["nets"]) == {"youtube", "tiktok", "meta"}
-    assert pend["nets"]["tiktok"]["text"].startswith("Le vrai chiffre\n\n")    # TikTok : titre puis description
-    out2 = tmp_path / "b.mp4"
-    out2.write_bytes(b"x")
-    vid2 = ctx.montage.record_export(pid, st.tl, {"path": str(out2)}, None)
-    n = len(sent)
-    ev.on_job(JobInfo(id=pend["job"], kind="export_timeline", label="", status="succeeded", progress=1, message="",
-                      error="", critical=True, created_at="", params=params,
-                      result={"path": str(out2), "variant_id": vid2}))
-    ups = [pr for k, pr, _ in sent[n:] if k == "publish_upload"]
-    assert len(ups) == 1 and ups[0]["draft"] is True and ups[0]["now"] is True
-    data = ctx.projects.load_data(pid)
-    assert "brouillon" in data["export_last"]["summary"] and "Instagram" in data["export_last"]["summary"]
-    pubs = {pb.account.platform.value: pb for pb in ctx.publications.list_for_master(data["export_last"]["master_id"])}
-    assert pubs["instagram"].status.value == "manual_action" and pubs["tiktok"].status.value == "manual_action"
-    assert pubs["youtube"].status.value == "uploading"
-    assert set(data["export_last"]["pubs"]) == {"youtube", "tiktok", "meta"}
-    assert p["concept_id"]
+    # « Mettre dans le calendrier » : le rectangle de nouvelle publication, avec cette vidéo, son concept, son texte
+    pop = ev.plan()
+    assert pop.video.currentData() == pid and pop.concept.currentData() == concept.id
+    assert pop.text.toPlainText().startswith("Le vrai chiffre")
+    pop.close()
     monkeypatch.setattr(ctx.jobs, "submit", real_submit)
 
 
@@ -1668,7 +1659,7 @@ def test_refresh_keeps_playing_and_sidebar_stable(window, monkeypatch):
     for _ in range(5):
         QApplication.processEvents()
     item = next(it for it in items if it.pid == st.project_id)
-    assert item.sub.text() == "Transcription à venir"           # puis les mots-clés de la transcription
+    assert item.sub.text() == "Sans concept"                    # le concept, au-dessus du nom
     assert item.name.text().endswith("pour la barre")                     # nom du média
     if item.name.fontMetrics().horizontalAdvance(item.name.text()) > item.name.width():
         assert QLabel.text(item.name).endswith("…")                     # trop long : « … » (selon la police)
@@ -1798,7 +1789,7 @@ def test_transcript_button_translate_and_voices(window, monkeypatch):
     assert order == sorted(order)                                # sous-titres, voix, musique, effacer
     assert tv.music_row.engine.isHidden() and tv.erase_row.engine.isHidden()
     assert tv.erase_row.name.text() == "Effacer les textes d'origine"
-    assert all(b.toolTip().startswith("Sous-titres :") and not b.text() for b in tv.presets.buttons())   # « A »
+    assert not any(b.isVisibleTo(tv) for b in tv.presets.buttons())   # un seul style ; le changer : Textes
     assert tv.chips["de"].iconSize().width() == 20 and tv.subs_hist.toolTip() == "Historique des traductions"
     assert tv.voice_hist.toolTip() == "Historique des voix générées"
     sent = []
@@ -1903,3 +1894,68 @@ def test_activity_indicators(window):
                       critical=False, created_at="", result={}, params={}))
     assert "Chargement" not in st.link_edit.placeholderText()
 
+
+
+def test_concept_of_video_calendar_sync_and_archives(window, monkeypatch):
+    """Concept de la vidéo (barre du haut) affiché dans la barre de gauche ; logos synchronisés entre le
+    calendrier, « À venir » et le rectangle ; vidéos pas encore au calendrier ; bouton Calendrier du dock ;
+    Archives par concept ; première version traduite ouverte d'elle-même."""
+    from PySide6.QtWidgets import QApplication
+    from studiovideo.jobs.manager import JobInfo
+    from studiovideo.ui.pages import calendar as calmod
+    from studiovideo.ui.project_sidebar import ProjectItem
+    w, ctx = window
+    st = w.studio
+    c = ctx.concepts.create_concept("Mas.tair", color="#C47C7C")
+    w.start_parcours("translation")
+    pid = st.project_id
+    ctx.projects.rename(pid, "nomdelavidéo")
+    st.refresh()
+    assert st.concept_combo.findText("Brouillons") < 0 and st.concept_combo.currentIndex() == -1
+    st.concept_combo.setCurrentIndex(st.concept_combo.findData(c.id))     # le concept de la vidéo, partout
+    assert ctx.projects.get(pid)["concept_id"] == c.id
+    item = next(it for it in st.sidebar.findChildren(ProjectItem) if it.pid == pid)
+    assert item.sub.text() == "Mas.tair" and item.name.text() == "nomdelavidéo"   # concept, puis le nom
+    # traduction : la première version préparée s'ouvre d'elle-même
+    ver = ctx.projects.save_version(pid, "en", st.tl.to_dict())
+    tv = st.tr_view
+    tv.on_job(JobInfo(id=9, kind="translate_video", label="", status="succeeded", progress=1, message="", error="",
+                      critical=False, created_at="", params={"project_id": pid, "export": False},
+                      result={"ready": ["en"], "languages": ["en"], "versions": {"en": ver}}))
+    for _ in range(3):
+        QApplication.processEvents()
+    assert st.project_id == ver
+    # calendrier : bouton du dock, vidéos pas encore programmées, logos liés partout
+    w.dock.calendar_btn.click()
+    cal = w.calendar
+    assert w.pages.currentWidget() is cal
+    assert cal.unplanned.findData(pid) >= 0 and cal.unplanned.findData(ver) < 0      # les versions : avec leur vidéo
+    from datetime import datetime, timedelta
+    when = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT18:00")
+    mid = ctx.publications.plan(c.id, pid, "Texte", when, {"youtube": False, "tiktok": False, "meta": False})
+    cal.year, cal.month = int(when[:4]), int(when[5:7])
+    cal.refresh()
+    assert cal.unplanned.findData(pid) < 0
+    pop = cal.open_master(mid)
+    chip = next(ch for ch in cal.up_host.findChildren(calmod.PlanChip) if ch.mid == mid)   # « À venir »
+    chip.toggles["youtube"].click()
+    for _ in range(3):
+        QApplication.processEvents()
+    assert ctx.publications.plan_of(mid)["networks"]["youtube"] is True
+    assert pop.nets["youtube"].isChecked()                                   # le rectangle suit
+    day = next(ch for cell in cal.cells for ch in cell.findChildren(calmod.PlanChip) if ch.mid == mid)
+    assert day.toggles["youtube"].isChecked()                                # la case du jour aussi
+    pop.nets["tiktok"].click()                                               # et dans l'autre sens
+    up = next(ch for ch in cal.up_host.findChildren(calmod.PlanChip) if ch.mid == mid)
+    assert up.toggles["tiktok"].isChecked()
+    # archives : par concept
+    monkeypatch.setattr(st, "open_from_list", lambda *a: None)
+    st.project_action(pid, "archive", "translation")
+    w.drawer.navigate.emit(6)
+    ar = w.archives
+    ar.concept.setCurrentIndex(ar.concept.findData(c.id))
+    assert ar.list.count() == 1 and ar.list.item(0).text().startswith("Mas.tair")
+    other = ctx.concepts.create_concept("Autre")
+    ar.refresh()
+    ar.concept.setCurrentIndex(ar.concept.findData(other.id))
+    assert ar.list.count() == 0
