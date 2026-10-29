@@ -4,6 +4,89 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.31.2</title>
+      <pubDate>Thu, 29 Oct 2026 14:28:55 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.31.2 — Concepts et chaînes, nouveau calendrier, vidéos archivées&lt;/h2&gt;
+&lt;h3&gt;Nouveau dans cette version&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Les fichiers exportés portent la date **et l&amp;#x27;heure** de l&amp;#x27;export : « 2026-10-28 10h32 Nom.mp4 ».&lt;/li&gt;
+&lt;li&gt;Pendant le téléchargement d&amp;#x27;un lien collé en haut, le champ affiche « Chargement en cours… » et la progression.&lt;/li&gt;
+&lt;li&gt;Quand une tâche est en cours, l&amp;#x27;icône des tâches, en haut à droite, tourne.&lt;/li&gt;
+&lt;li&gt;Correction : deux voix générées coup sur coup ne partagent plus jamais le même dossier.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Les demandes de confirmation (« Supprimer… ? ») s&amp;#x27;affichent maintenant dans un petit rectangle, plus dans une fenêtre.&lt;/p&gt;
+&lt;h3&gt;Les « projets » s&amp;#x27;appellent maintenant des « vidéos »&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Partout dans le logiciel : la barre de gauche liste vos vidéos, « + » crée une nouvelle vidéo.&lt;/li&gt;
+&lt;li&gt;Au survol d&amp;#x27;une vidéo, trois petits boutons : **renommer**, **archiver**, **supprimer**.&lt;/li&gt;
+&lt;li&gt;Les vidéos archivées sont rangées dans **Archives**, dans le menu des trois barres. Vous pouvez les y restaurer ou&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;les supprimer.&lt;/p&gt;
+&lt;h3&gt;Concepts et chaînes, dans l&amp;#x27;onglet Export&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Un concept regroupe une chaîne par réseau : YouTube, TikTok et Meta (Facebook ou Instagram).&lt;/li&gt;
+&lt;li&gt;En bas de l&amp;#x27;onglet Export, la liste des concepts : nom, thématique, couleur, langue, puis les trois logos.&lt;/li&gt;
+&lt;li&gt;Un logo en couleur : la chaîne est enregistrée.&lt;/li&gt;
+&lt;li&gt;Un logo grisé : un clic ouvre un petit rectangle pour ajouter la chaîne (nom et adresse publique).&lt;/li&gt;
+&lt;li&gt;« + », en bas, ajoute un concept : vous écrivez directement son nom. La langue s&amp;#x27;affiche en drapeau.&lt;/li&gt;
+&lt;li&gt;Une chaîne porte le nom de son concept ; il suffit de donner son adresse, qu&amp;#x27;un bouton ouvre dans le navigateur.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Pour Meta, l&amp;#x27;adresse indique s&amp;#x27;il s&amp;#x27;agit de Facebook ou d&amp;#x27;Instagram.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;L&amp;#x27;onglet « Concepts et projets » disparaît.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Export&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;À gauche, un seul bloc de texte : la première ligne est le titre, la suite la description. Le nombre de caractères&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;est affiché dans le bloc. Les emojis du menu sont plus petits.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;À droite, un seul rectangle : le menu des concepts, les logos des réseaux (en couleur si le concept y a une chaîne)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;et **« Ouvrir les pages d&amp;#x27;envoi »**, qui ouvre la page de chaque chaîne du concept, un onglet chacune, en un clic.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**YouTube Studio s&amp;#x27;ouvre directement sur la bonne chaîne.** Si vous n&amp;#x27;y êtes pas connecté, Google vous demande de&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;vous connecter.&lt;/p&gt;
+&lt;h3&gt;Calendrier&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Vos vidéos publiées arrivent toutes seules** : le logiciel lit la page publique des chaînes YouTube et TikTok de&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;vos concepts et ajoute au calendrier les vidéos et shorts des 20 derniers jours, avec leur titre et leur description.&lt;/p&gt;
+&lt;p&gt;Une publication que vous aviez prévue le même jour et qui leur ressemble est reconnue : elle prend la date et l&amp;#x27;heure&lt;/p&gt;
+&lt;p&gt;réelles de mise en ligne (la plus tôt si les réseaux diffèrent). Cela se fait toutes les heures, ou d&amp;#x27;un clic sur le&lt;/p&gt;
+&lt;p&gt;petit bouton à côté de « Aujourd&amp;#x27;hui ».&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Un menu pour voir un concept, ou tous les concepts en même temps, au-dessus de la liste « À venir ».&lt;/li&gt;
+&lt;li&gt;Chaque vidéo programmée est un petit rectangle à sa date : le concept, le nom de la vidéo et trois petits logos&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(YouTube, TikTok, Meta). Un clic met un logo en couleur, un autre clic le grise.&lt;/p&gt;
+&lt;p&gt;C&amp;#x27;est pour votre organisation : le logiciel ne publie rien à partir de ces cases.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Nouvelle publication** s&amp;#x27;ouvre dans un petit rectangle, sans nouvelle fenêtre. Vous y choisissez :&lt;/li&gt;
+&lt;li&gt;le concept, puis la vidéo ;&lt;/li&gt;
+&lt;li&gt;un seul bloc de texte ;&lt;/li&gt;
+&lt;li&gt;la date et l&amp;#x27;heure ;&lt;/li&gt;
+&lt;li&gt;les trois logos.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;La publication apparaît aussitôt dans le calendrier.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;À droite du calendrier, la liste **À venir** : toutes les vidéos programmées, de la plus proche à la plus&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;lointaine. Les jours hors du mois sont nettement grisés.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;En modifiant une publication, la vidéo exportée se glisse directement dans la page d&amp;#x27;envoi, et l&amp;#x27;icône dossier la&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;montre dans l&amp;#x27;Explorateur. Si elle n&amp;#x27;est pas encore exportée, ou plus à son emplacement, c&amp;#x27;est indiqué.&lt;/p&gt;
+&lt;p&gt;Les logos du rectangle et ceux du calendrier sont liés.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Les listes « À faire maintenant » et « Sans date » sont retirées, ainsi que la miniature, la proposition de texte et&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;les destinations.&lt;/p&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.31.2/StudioVideo-0.31.2-Setup.exe" sparkle:version="0.31.2" sparkle:shortVersionString="0.31.2" sparkle:os="windows-x64" length="208092568" type="application/octet-stream" sparkle:edSignature="C68fYVbXZWEImw/qUpC0zvv7gMaFoNlCpvjUDjd42cweH5POFrrvqeV8KUcyccxlRQVyKHh5ivV62og7du1NCA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.30.0</title>
       <pubDate>Thu, 29 Oct 2026 09:15:11 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.30.0 — Export repensé, statistiques sans API, Atelier de publication&lt;/h2&gt;
@@ -376,32 +459,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.11.0/StudioVideo-0.11.0-Setup.exe" sparkle:version="0.11.0" sparkle:shortVersionString="0.11.0" sparkle:os="windows-x64" length="193663941" type="application/octet-stream" sparkle:edSignature="+ocAU1VVGxXGnTFyRHh0y8NzwoADYL16B2Zrxjh2NnaPzK+USnp1UnG+nZh+Z35gQkz+E6ef9nuEibKgJLmzBw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.10.0</title>
-      <pubDate>Wed, 21 Oct 2026 22:39:15 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.10.0 — Calendrier et publication (début de la V3)&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Nouvel espace **Calendrier** : toutes les publications de tous les concepts, mois par mois, filtrables par concept&lt;/li&gt;
-&lt;li&gt;**Nouvelle publication** (ou « Programmer la publication… » à la fin d&amp;#x27;un export) : la vidéo, un titre, un texte,&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;des hashtags, puis les comptes du concept (un compte hors concept demande une confirmation explicite)&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Chaque destination a son propre horaire et peut avoir son propre texte (le reste suit le texte commun)&lt;/li&gt;
-&lt;li&gt;Contrôle des limites de chaque plateforme : titre YouTube, légende TikTok / Instagram, 30 hashtags Instagram,&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;280 caractères sur X, Shorts de plus de 3 minutes, format horizontal sur TikTok / Instagram&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;À l&amp;#x27;heure prévue (logiciel ouvert), un rappel apparaît (● sur « Calendrier ») et la **publication assistée** guide&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;l&amp;#x27;envoi : texte à copier, vidéo affichée, page d&amp;#x27;envoi de la plateforme ouverte. La publication n&amp;#x27;est marquée&lt;/p&gt;
-&lt;p&gt;« Publiée » qu&amp;#x27;avec le lien public de la vidéo, vérifié pour la bonne plateforme&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Tableau de bord : prochaines publications&lt;/li&gt;
-&lt;li&gt;Pas encore de mise en ligne automatique : elle nécessite de connecter chaque compte à l&amp;#x27;API de sa plateforme&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.10.0/StudioVideo-0.10.0-Setup.exe" sparkle:version="0.10.0" sparkle:shortVersionString="0.10.0" sparkle:os="windows-x64" length="193661603" type="application/octet-stream" sparkle:edSignature="yvUmnMyKTUlNmWcy/JEqkJDVl5lCaECy7lz58LWqL1akGLAOnMdJc3+i97+bOJwPYQPIbxNmayDRaC8AD6FiAg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
