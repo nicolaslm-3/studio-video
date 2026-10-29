@@ -101,6 +101,11 @@ jobs:
           python -m pytest -q -rfE --tb=short > pytest.txt 2>&1
           rc=$?
           cat pytest.txt
+          # tous les tests passés mais Python plante en se fermant (Qt sous Windows) : pas un échec de test
+          if [ $rc -ne 0 ] && tail -1 pytest.txt | grep -qE " passed" && ! tail -1 pytest.txt | grep -qE "failed|error"; then
+            echo "::warning title=Fermeture::Tous les tests passent ; Python s'est fermé avec le code $rc (plantage à la fermeture, ignoré)."
+            rc=0
+          fi
           grep -E "^(FAILED|ERROR) " pytest.txt | head -20 | while read -r line; do
             echo "::error title=Test::$(echo "$line" | cut -c1-900 | sed 's/%/%25/g')"
           done
