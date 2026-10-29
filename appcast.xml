@@ -4,6 +4,107 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.30.0</title>
+      <pubDate>Thu, 29 Oct 2026 09:15:11 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.30.0 — Export repensé, statistiques sans API, Atelier de publication&lt;/h2&gt;
+&lt;h3&gt;Export, en deux colonnes&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**À gauche, la vidéo** : nom du fichier, titre, description et petit aperçu. En dessous, « Que faire de la vidéo ? » :&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;**Brouillon sur les réseaux** ou **Sur mon PC seulement**.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**À droite, l&amp;#x27;Atelier de publication.** La vidéo exportée est en haut : glissez-la dans la page d&amp;#x27;envoi, ou&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;affichez-la dans l&amp;#x27;Explorateur. En dessous, une carte par réseau : **YouTube, TikTok et Meta** (Facebook et&lt;/p&gt;
+&lt;p&gt;Instagram réunis). Chaque carte montre le compte et un bouton « Ouvrir la page d&amp;#x27;envoi ».&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;La page d&amp;#x27;envoi s&amp;#x27;ouvre dans un nouvel onglet de votre navigateur, et le texte est copié pour être collé. Le&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;dernier clic « Publier » reste le vôtre. Le lien de la vidéo est ensuite retrouvé tout seul, ou vous le collez.&lt;/p&gt;
+&lt;h3&gt;Publier sans API&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Votre navigateur habituel** : les pages d&amp;#x27;envoi s&amp;#x27;ouvrent dans un nouvel onglet de votre navigateur déjà&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;ouvert (Brave, Chrome, Edge, Firefox…), là où vous êtes connecté à vos comptes. Le logiciel ne voit jamais votre&lt;/p&gt;
+&lt;p&gt;mot de passe.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Lien retrouvé tout seul** : une fois la vidéo en ligne, son lien est cherché sur la page publique du compte&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(YouTube et TikTok), au démarrage puis toutes les heures.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Une correspondance sûre est confirmée d&amp;#x27;elle-même.&lt;/li&gt;
+&lt;li&gt;Un doute vous est proposé : « Est-ce cette vidéo ? ».&lt;/li&gt;
+&lt;li&gt;Pour Instagram et Facebook, il faut encore coller le lien.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Renseignez l&amp;#x27;adresse publique du compte pour en profiter.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;La connexion par API reste possible, repliée dans « Avancé : connexion par API ».&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Statistiques&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Relevées sans API** : la page publique de chaque vidéo publiée est lue 6 heures après la publication. Puis à&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;J+1, J+3, J+7, J+14 et J+30, puis chaque mois.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;YouTube : vues, j&amp;#x27;aime et commentaires.&lt;/li&gt;
+&lt;li&gt;TikTok : la même chose, plus les partages.&lt;/li&gt;
+&lt;li&gt;Facebook et Instagram : lus avec la session de votre navigateur, qui doit être fermé au moment du relevé.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Un chiffre que la page ne montre pas reste « — », jamais 0.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Analytiques → Par vidéo** : une même vidéo sur YouTube, TikTok, Facebook et Instagram, dans un seul tableau.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Il donne les vues totales, puis le détail réseau par réseau.&lt;/p&gt;
+&lt;h3&gt;Traduction&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Sous-titres traduits par ElevenLabs** : nouveau moteur de traduction, au choix (roue crantée). Il traduit à&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;partir du son de la vidéo et utilise vos crédits de doublage ElevenLabs.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Avec le **doublage ElevenLabs**, les sous-titres sont ceux d&amp;#x27;ElevenLabs : le texte et la voix correspondent.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Clipping&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Les deux colonnes sont centrées, avec de l&amp;#x27;espace sur les bords. L&amp;#x27;aperçu commence en haut de sa colonne.&lt;/li&gt;
+&lt;li&gt;Avant d&amp;#x27;importer : seulement une petite zone de dépôt au centre.&lt;/li&gt;
+&lt;li&gt;Changer d&amp;#x27;extrait, de version ou de projet remet la lecture au début, partout dans le logiciel.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Tâches&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Arrêter une tâche à tout instant** : bouton carré sur chaque tâche en cours. Pour un export ou une publication,&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;le logiciel demande confirmation.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Colonnes séparées : le média, l&amp;#x27;action en cours, puis l&amp;#x27;outil, le modèle ou l&amp;#x27;alternative utilisée.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Le reste&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;**Transcription** en haut de l&amp;#x27;écran : lire et corriger la transcription, enregistrée au fil de la frappe.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Elle peut aussi être faite par ElevenLabs Scribe v2.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Historique** des transcriptions, traductions et voix : chaque nouvelle version s&amp;#x27;applique, et on peut revenir à&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;une ancienne.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Traduction** :&lt;/li&gt;
+&lt;li&gt;bouton « Traduire » ;&lt;/li&gt;
+&lt;li&gt;traduction corrigeable langue par langue ;&lt;/li&gt;
+&lt;li&gt;doublage ElevenLabs à partir du son de la vidéo ;&lt;/li&gt;
+&lt;li&gt;un exemple de chaque voix à écouter ;&lt;/li&gt;
+&lt;li&gt;régénérations illimitées.&lt;/li&gt;
+&lt;li&gt;**La voix doublée s&amp;#x27;entend** dès qu&amp;#x27;on appuie sur lecture dans une version traduite.&lt;/li&gt;
+&lt;li&gt;Le logiciel s&amp;#x27;ouvre directement dans Montage libre et suit l&amp;#x27;heure de votre PC. Les drapeaux s&amp;#x27;affichent partout, y&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;compris dans les textes de la vidéo.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;La fenêtre Médias est flottante.&lt;/li&gt;
+&lt;li&gt;Vos projets et médias sont conservés lors de la mise à jour (sauvegarde automatique avant).&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.30.0/StudioVideo-0.30.0-Setup.exe" sparkle:version="0.30.0" sparkle:shortVersionString="0.30.0" sparkle:os="windows-x64" length="208093618" type="application/octet-stream" sparkle:edSignature="8RU2pRhsHilIx7rhe6n54fIZZ7gH+qg21p0pVVkk+eujUiz9Wu8J4GMn2MslUCTjTyuJ+WTx1Vj2qE8+R6lVAw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.29.0</title>
       <pubDate>Tue, 27 Oct 2026 07:41:12 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.29.0 — Un projet, une vidéo, de l&amp;#x27;import à la publication&lt;/h2&gt;
@@ -301,30 +402,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.10.0/StudioVideo-0.10.0-Setup.exe" sparkle:version="0.10.0" sparkle:shortVersionString="0.10.0" sparkle:os="windows-x64" length="193661603" type="application/octet-stream" sparkle:edSignature="yvUmnMyKTUlNmWcy/JEqkJDVl5lCaECy7lz58LWqL1akGLAOnMdJc3+i97+bOJwPYQPIbxNmayDRaC8AD6FiAg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.9.0</title>
-      <pubDate>Wed, 21 Oct 2026 22:29:39 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.9.0 — Intervenants et masquage de zones&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Transcription → Plus ▾ → « Identifier les intervenants… » : qui parle, phrase par phrase, calculé sur votre PC&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;(nombre automatique ou imposé). Les noms « Intervenant 1, 2… » se renomment d&amp;#x27;un double-clic et sont reportés&lt;/p&gt;
-&lt;p&gt;sur les traductions ; l&amp;#x27;original reste disponible&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Modèle d&amp;#x27;empreintes vocales à télécharger une fois (26 Mo) : Paramètres → Matériel et moteurs → Modèles&lt;/li&gt;
-&lt;li&gt;Limite connue : deux voix très proches peuvent être réunies en mode automatique ; imposez alors le nombre&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;d&amp;#x27;intervenants&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Cadrage → « Masquer une zone » : sous-titres incrustés ou logo d&amp;#x27;origine, par flou, effacement ou bande noire.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;Zone réglable en %, plusieurs zones possibles ; visible dans l&amp;#x27;aperçu fidèle et l&amp;#x27;export&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Pas encore de détection automatique du texte incrusté (prévue)&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.9.0/StudioVideo-0.9.0-Setup.exe" sparkle:version="0.9.0" sparkle:shortVersionString="0.9.0" sparkle:os="windows-x64" length="193623799" type="application/octet-stream" sparkle:edSignature="F2FvfLQjoSC3ciN1lAPjj5ZslYop60QGWhaG53hcgzHKuJpidB7fwO/15m9HycAODx+jYqaLsreM0uaHuJoUCA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
