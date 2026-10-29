@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QWidget, Q
 
 from ..core import AppContext
 from .widgets import button, label, local_time
+from .widgets import ask
 
 COLS = ["Vidéo", "Concept", "Médias", "Vidéos", "Modifié", "État"]
 
@@ -132,9 +133,9 @@ class ProjectsPanel(QWidget):
             QMessageBox.information(self, "Supprimer", "Cette vidéo est ouverte dans le Studio : ouvrez-en un autre "
                                     "avant de le supprimer.")
             return
-        if QMessageBox.question(self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, ses clips "
+        if not ask(self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, ses clips "
                                 "et l'historique de ses exports sont retirés. Les fichiers vidéo (sources et "
-                                "exports) restent sur le disque et les médias dans Médias.") != QMessageBox.Yes:
+                                "exports) restent sur le disque et les médias dans Médias."):
             return
         try:
             self.app.projects.delete(pid)

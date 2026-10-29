@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeade
 
 from ..core import AppContext
 from .widgets import STATUS_LABELS, button, label, local_time, tool
+from .widgets import ask
 
 FILTERS = [("Toutes", None), ("Actives", ("pending", "running")), ("Échouées", ("failed",)),
            ("Terminées", ("succeeded",)), ("Annulées", ("cancelled",))]
@@ -20,6 +21,7 @@ STEPS = {"transcribe": "Transcription", "translate": "Traduction", "translate_vi
          "import_file": "Import", "import_url": "Téléchargement de la vidéo", "export_timeline": "Export",
          "export_still": "Image", "separate": "Séparation voix / musique", "detect_text": "Repérage des textes",
          "publish_upload": "Publication", "match_published": "Recherche des liens publiés",
+         "sync_calendar": "Vidéos publiées → calendrier",
          "diarize": "Intervenants", "reframe": "Suivi de la tête",
          "make_proxy": "Préparation de l'aperçu", "waveform": "Forme d'onde", "find_silences": "Silences",
          "optimize_audio": "Son optimisé", "analyze_audio": "Analyse du son", "write_copy": "Rédaction",
@@ -90,7 +92,7 @@ def describe_parts(app: AppContext, j) -> tuple[str, str, str]:
     elif j.kind in ("find_highlights", "auto_clips"):
         eng = p.get("engine") or {}
         model = eng.get("model") or ("analyse locale" if eng else "")
-    elif j.kind in ("refresh_stats", "match_published"):
+    elif j.kind in ("refresh_stats", "match_published", "sync_calendar"):
         model = "pages publiques (yt-dlp)"
     if not step:
         return "", j.label, ""
@@ -208,15 +210,15 @@ class JobsPanel(QWidget):
         j = self.app.jobs.get(jid) if jid else None
         self.retry_btn.setEnabled(bool(j and j.status in ("failed", "cancelled")))
 
-    def stop(self, jid: int, ask: bool = True) -> None:
+    def stop(self, jid: int, confirm: bool = True) -> None:
         """Arrête la tâche tout de suite. Un export ou une publication en cours (tâches « critiques ») : après
         confirmation, le fichier ou l'envoi pouvant rester incomplet."""
         j = self.app.jobs.get(jid)
         if j is None or j.status not in ("pending", "running"):
             return
-        if ask and j.critical and j.status == "running" and QMessageBox.question(
+        if confirm and j.critical and j.status == "running" and not ask(
                 self, "Arrêter la tâche", "Cette tâche est un export ou une publication en cours. L'arrêter maintenant "
-                "peut laisser un fichier ou un envoi incomplet.\n\nL'arrêter quand même ?") != QMessageBox.Yes:
+                "peut laisser un fichier ou un envoi incomplet.\n\nL'arrêter quand même ?"):
             return
         self.app.jobs.cancel(jid)
 

@@ -1413,6 +1413,56 @@ def _register_handlers(app: AppContext) -> None:
 
     app.jobs.register("reframe", reframe_job)
     app.jobs.register("detect_text", detect_text)
+    def sync_calendar(ctx: JobContext, params: dict) -> dict:
+        """Calendrier : les vidéos et shorts mis en ligne ces `days` derniers jours (20 par défaut) sur les chaînes
+        des concepts (page publique, yt-dlp ; YouTube et TikTok) y entrent avec leur titre et leur description ;
+        une publication du même jour qui leur ressemble est reliée et prend l'heure réelle de mise en ligne
+        (`PublicationService.sync_published`). Rien n'est téléchargé ; une pause entre deux pages."""
+        import random
+        import time as _time
+        from datetime import datetime as _dt
+
+        from .publish import reconcile
+        days = int(params.get("days", 20))
+        delay = params.get("delay", (1.0, 3.0))
+        since = _time.time() - days * 86400
+        out = {"added": 0, "matched": 0, "known": 0, "errors": []}
+        pages = []
+        for c in app.concepts.list_concepts():
+            for acc, _d in app.concepts.concept_accounts(c.id):
+                if acc.platform.value in reconcile.SUPPORTED:
+                    pages += [(c.id, acc, u) for u in reconcile.listing_urls(acc.platform.value, acc.public_url)]
+        for k, (cid, acc, page) in enumerate(pages):
+            ctx.check()
+            ctx.progress(k / max(1, len(pages)), f"{acc.platform.label} · {acc.name}")
+            try:
+                entries = reconcile.list_recent(page, 15)
+            except Exception as exc:
+                out["errors"].append(f"{acc.platform.label} {acc.name} : {(str(exc).splitlines() or ['?'])[0][:160]}")
+                continue
+            for e in entries:
+                ctx.check()
+                if not e.get("url"):
+                    continue
+                if reconcile._epoch(e) is None or not e.get("description"):     # YouTube : pas dans la liste
+                    if delay:
+                        ctx.cancel_event.wait(random.uniform(*delay))
+                    try:
+                        e.update({x: y for x, y in reconcile.details(e["url"]).items() if y and x not in ("url", "id")})
+                    except Exception:
+                        continue
+                ts = reconcile._epoch(e)
+                if ts is None:
+                    continue
+                if ts < since:
+                    break                                 # liste de la plus récente à la plus ancienne
+                when = _dt.fromtimestamp(ts).strftime("%Y-%m-%dT%H:%M")
+                r = app.publications.sync_published(cid, acc.platform.value, e["url"], e.get("title") or "",
+                                                    e.get("description") or "", when)
+                out[r] += 1
+        app.settings.set("calendar_sync", {"at": _utc_now(), "added": out["added"], "matched": out["matched"]})
+        return out
+
     def match_published(ctx: JobContext, params: dict) -> dict:
         """Atelier de publication, niveau 3 : retrouve sur la page publique de chaque compte le lien des vidéos
         publiées à la main. Pages lues avec yt-dlp, peu souvent, avec des pauses au hasard entre deux pages."""
@@ -1491,6 +1541,7 @@ def _register_handlers(app: AppContext) -> None:
 
     app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("match_published", match_published)
+    app.jobs.register("sync_calendar", sync_calendar)
     app.jobs.register("connect_account", connect_account)
     app.jobs.register("publish_upload", publish_upload)
     app.jobs.register("diarize", diarize_job)

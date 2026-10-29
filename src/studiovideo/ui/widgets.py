@@ -57,6 +57,57 @@ class Popover(QFrame):
         self.show()
 
 
+class _Confirm(Popover):
+    """Question oui / non dans un rectangle volant, au centre de la fenêtre."""
+
+    def __init__(self, parent, title: str, text: str, yes: str, no: str):
+        super().__init__(parent)
+        self.answer = False
+        self.setMaximumWidth(460)
+        t = label(title, "h2")
+        self.body.addWidget(t)
+        msg = QLabel(text)
+        msg.setWordWrap(True)
+        msg.setMinimumWidth(320)
+        self.body.addWidget(msg)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(button(no, "ghost", on_click=self.close))
+        self.yes = button(yes, "primary", on_click=self._yes)
+        row.addWidget(self.yes)
+        self.body.addLayout(row)
+
+    def _yes(self) -> None:
+        self.answer = True
+        self.close()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        if getattr(self, "loop", None):
+            self.loop.quit()
+
+
+def ask(parent, title: str, text: str, *_buttons, yes: str = "Oui", no: str = "Non") -> bool:
+    """Confirmation (« Supprimer… ? ») dans un rectangle volant au lieu d'une fenêtre ; un clic à côté vaut
+    « Non ». Sans écran (tests), la boîte de dialogue standard de Qt, qu'on peut simuler."""
+    from PySide6.QtCore import QEventLoop, QPoint
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWidgets import QMessageBox
+    if QGuiApplication.platformName() in ("offscreen", "minimal"):
+        return QMessageBox.question(parent, title, text) == QMessageBox.Yes
+    win = parent.window() if parent is not None else None
+    pop = _Confirm(win, title, text, yes, no)
+    pop.adjustSize()
+    if win is not None:
+        c = win.mapToGlobal(win.rect().center())
+        pop.move(c - QPoint(pop.width() // 2, pop.height() // 2))
+    pop.loop = QEventLoop()
+    pop.show()
+    pop.yes.setFocus()
+    pop.loop.exec()
+    return pop.answer
+
+
 class _HistoryEntry(QFrame):
     clicked = Signal()
 
@@ -398,6 +449,21 @@ class PageHeader(QWidget):
 
     def add_action(self, w: QWidget) -> None:
         self.lay.addWidget(w)
+
+
+def dot_icon(hex_color: str, size: int = 10):
+    """Point de couleur plein (menus des concepts, comme une liste à puces)."""
+    from PySide6.QtGui import QIcon
+    pm = QPixmap(size * 2, size * 2)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor(hex_color))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(size // 2, size // 2, size, size)
+    p.end()
+    pm.setDevicePixelRatio(2)
+    return QIcon(pm)
 
 
 def color_dot(hex_color: str, size: int = 10) -> QLabel:

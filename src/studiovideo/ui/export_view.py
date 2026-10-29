@@ -37,6 +37,8 @@ from .concepts_box import ConceptsBox, concept_account
 from .publish_workshop import LinkBox, VideoTile, reveal, upload_url
 from .simple_views import _View, _active_job, _open_folder, _row
 from .widgets import button, label, tool
+from .widgets import ask
+from .widgets import dot_icon
 
 # réseaux de l'onglet Export : (clé, nom affiché) ; Meta réunit Facebook et Instagram (une page d'envoi)
 NETWORKS = [("youtube", "YouTube"), ("tiktok", "TikTok"), ("meta", "Meta")]
@@ -83,6 +85,7 @@ def load_emojis() -> tuple[list[str], list[tuple[str, int, str, str]]]:
 
 
 _emoji_pix: dict[tuple[str, float], QPixmap] = {}
+E, CELL = 16, 22                                    # emojis petits : deux fois moins de place
 
 
 class _EmojiDelegate(QStyledItemDelegate):
@@ -100,21 +103,21 @@ class _EmojiDelegate(QStyledItemDelegate):
         dpr = p.device().devicePixelRatioF() if p.device() else 1.0
         pm = _emoji_pix.get((e, dpr))
         if pm is None:
-            pm = QPixmap(int(30 * dpr), int(30 * dpr))
+            pm = QPixmap(int(E * dpr), int(E * dpr))
             pm.fill(Qt.transparent)
             q = QPainter(pm)
             f = QFont(opt.font)
-            f.setPixelSize(int(22 * dpr))
+            f.setPixelSize(int(E * 0.72 * dpr))
             q.setFont(f)
-            q.drawText(QRectF(0, 0, 30 * dpr, 30 * dpr), Qt.AlignCenter, e)
+            q.drawText(QRectF(0, 0, E * dpr, E * dpr), Qt.AlignCenter, e)
             q.end()
             pm.setDevicePixelRatio(dpr)
             _emoji_pix[(e, dpr)] = pm
         r = opt.rect
-        p.drawPixmap(r.x() + (r.width() - 30) // 2, r.y() + (r.height() - 30) // 2, pm)
+        p.drawPixmap(r.x() + (r.width() - E) // 2, r.y() + (r.height() - E) // 2, pm)
 
     def sizeHint(self, _opt, _index) -> QSize:
-        return QSize(38, 38)
+        return QSize(CELL, CELL)
 
 
 class EmojiPicker(QFrame):
@@ -151,7 +154,7 @@ class EmojiPicker(QFrame):
         self.list.setMovement(QListWidget.Static)
         self.list.setResizeMode(QListWidget.Adjust)
         self.list.setUniformItemSizes(True)
-        self.list.setGridSize(QSize(38, 38))
+        self.list.setGridSize(QSize(CELL, CELL))
         self.list.setWordWrap(False)
         self.list.setLayoutMode(QListView.Batched)
         self.list.setBatchSize(200)
@@ -262,21 +265,22 @@ class EmojiButton(QToolButton):
 
 
 class NetworkCard(QFrame):
-    """Un réseau, sur une ligne : son logo et la chaîne du concept choisi à gauche, « Ouvrir la page d'envoi » à
-    droite ; dessous, le lien de la vidéo une fois publiée."""
+    """Un réseau dans le rectangle de publication : logo et chaîne du concept, état ; dessous, le lien de la vidéo
+    une fois publiée. Masqué si le concept n'a pas de chaîne sur ce réseau."""
 
     def __init__(self, view: "ExportView", key: str, name: str):
         super().__init__()
         self.view, self.key, self.name = view, key, name
         self.acc_id: int | None = None
-        self.setProperty("role", "card")
+        self.setObjectName("netRow")
+        self.setStyleSheet("QFrame#netRow { background: transparent; border: none; }")    # sur le rectangle
         v = QVBoxLayout(self)
-        v.setContentsMargins(14, 8, 10, 8)
-        v.setSpacing(6)
+        v.setContentsMargins(0, 2, 0, 2)
+        v.setSpacing(4)
         head = QHBoxLayout()
         head.setSpacing(8)
         self.icon = QLabel()
-        self.icon.setPixmap(theme.platform_icon(key, 20).pixmap(QSize(20, 20)))
+        self.icon.setPixmap(theme.platform_icon(key, 18).pixmap(QSize(18, 18)))
         self.icon.setToolTip(name)
         head.addWidget(self.icon)
         self.channel = label("", None, hint=False)
@@ -284,15 +288,7 @@ class NetworkCard(QFrame):
         head.addWidget(self.channel, 1)
         self.state = label("", "muted", hint=False)
         head.addWidget(self.state)
-        self.open_btn = button("Ouvrir la page d'envoi", "soft", icon="upload",
-                               tooltip="Ouvre la page d'envoi dans un nouvel onglet de ton navigateur et copie le "
-                               "texte du réseau : glisse la vidéo, colle le texte, clique toi-même sur « Publier »",
-                               on_click=lambda: self.view.open_upload(self.key))
-        head.addWidget(self.open_btn)
         v.addLayout(head)
-        self.note = label("", "faint", wrap=True, hint=False)
-        self.note.hide()
-        v.addWidget(self.note)
         self.link = LinkBox(view.app, view.open_url)
         self.link.changed.connect(self.view.refresh_cards)
         v.addWidget(self.link)
@@ -301,29 +297,19 @@ class NetworkCard(QFrame):
         return self.acc_id
 
     def set_account(self, acc) -> None:
-        """La chaîne du concept sur ce réseau (None : le concept n'en a pas)."""
+        """La chaîne du concept sur ce réseau (None : le concept n'en a pas, la ligne est masquée)."""
         self.acc_id = acc.id if acc else None
         if acc:
             net = f"  ·  {rules.RULES[acc.platform.value].label}" if self.key == "meta" else ""
             self.channel.setText(acc.name + net)
-            self.channel.setProperty("hint", "")
-            self.channel.setStyleSheet("font-weight: 700;")
             self.channel.setToolTip(acc.public_url or acc.name)
-        else:
-            self.channel.setText(f"Pas de chaîne {self.name} dans ce concept")
-            self.channel.setStyleSheet(f"color: {theme.color('faint')};")
-            self.channel.setToolTip("Ajoute-la dans « Concepts », en bas")
+        self.setVisible(acc is not None)
 
     def show_state(self, exported: bool, pub_id: int | None) -> None:
-        """Page d'envoi possible une fois la vidéo exportée et la chaîne connue ; état de la publication."""
+        """État de la publication (à publier, publiée) et son lien."""
         r = self.view.app.publications.get(pub_id) if pub_id else None
         done = bool(r and r["status"] == "published")
         self.state.setText("✓ Publiée" if done else "À publier" if r else "")
-        self.open_btn.setEnabled(bool(self.acc_id) and exported and not done)
-        self.open_btn.setToolTip("" if exported or not self.acc_id else "Exporte d'abord la vidéo (à gauche)")
-        if self.note.text().startswith("Exporte d'abord") or not self.acc_id:
-            self.note.setText("")
-        self.note.setVisible(bool(self.note.text()))
         self.link.set_publication(pub_id)
 
 
@@ -366,9 +352,9 @@ class ExportView(_View):
         tl_.setSpacing(16)
         fl = QVBoxLayout()
         fl.setSpacing(6)
-        fl.addWidget(label("Nom du fichier", "muted", hint=False))
         self.file_name = QLineEdit()
-        self.file_name.setPlaceholderText("Nom de la vidéo exportée")
+        self.file_name.setPlaceholderText("Nom du fichier exporté")
+        self.file_name.setToolTip("Nom du fichier exporté")
         self.file_name.textChanged.connect(self._changed)
         self.date_lbl = label(date_prefix(), "muted", hint=False)        # le fichier commence par la date du jour
         self.date_lbl.setToolTip("Le nom du fichier commence par la date du jour (année-mois-jour)")
@@ -378,21 +364,17 @@ class ExportView(_View):
         self.folder_lbl.setMinimumWidth(80)
         self.folder_btn = tool("folder", "Choisir le dossier où enregistrer la vidéo", self._pick_folder)
         fl.addLayout(_row(self.folder_btn, self.folder_lbl, "stretch", spacing=4))
-        fl.addWidget(label("Titre sur les réseaux", "muted", hint=False))
-        self.title = QLineEdit()
-        self.title.setPlaceholderText("Titre de la vidéo")
-        self.title.textChanged.connect(self._changed)
-        EmojiButton(self.title)
-        fl.addWidget(self.title)
-        fl.addWidget(label("Description", "muted", hint=False))
-        self.desc = QPlainTextEdit()
-        self.desc.setPlaceholderText("Description, hashtags…")
-        self.desc.setFixedHeight(96)
-        self.desc.textChanged.connect(self._changed)
-        EmojiButton(self.desc)
-        fl.addWidget(self.desc)
-        self.count = label("", "faint", wrap=True, hint=False)
-        fl.addWidget(self.count)
+        self.text = QPlainTextEdit()                      # titre (1re ligne), description, hashtags
+        self.text.setPlaceholderText("Texte")
+        self.text.setToolTip("Texte : la première ligne sert de titre (YouTube), le reste de description")
+        self.text.setFixedHeight(150)
+        self.text.textChanged.connect(self._changed)
+        EmojiButton(self.text)
+        fl.addWidget(self.text)
+        self.count = QLabel(self.text)                    # dans le rectangle, en bas à droite
+        self.count.setProperty("role", "faint")
+        self.count.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.text.installEventFilter(self)
         fl.addStretch(1)
         tl_.addLayout(fl, 1)
         self.player = MontagePlayer()                     # petit aperçu, à droite des champs
@@ -439,26 +421,48 @@ class ExportView(_View):
         # -- colonne de droite : l'Atelier de publication
         right = QVBoxLayout()
         right.setSpacing(12)
-        self.concept = QComboBox()
-        self.concept.setToolTip("Le concept de la vidéo : ses chaînes YouTube, TikTok et Meta reçoivent les pages "
-                                "d'envoi")
-        self.concept.currentIndexChanged.connect(self._concept_changed)
-        right.addLayout(_row(label("Atelier de publication", "h2"), "stretch", label("Concept", "muted", hint=False),
-                             self.concept, spacing=8))
         vr = QHBoxLayout()
-        vr.setSpacing(8)
+        vr.setSpacing(6)
         self.tile = VideoTile("")
         vr.addWidget(self.tile)
-        self.reveal_btn = button("Afficher dans l'Explorateur", "ghost", icon="folder-open",
-                                 on_click=lambda: reveal(self._last_path()))
+        self.reveal_btn = tool("folder-open", "Afficher dans l'Explorateur", lambda: reveal(self._last_path()))
         vr.addWidget(self.reveal_btn, 0, Qt.AlignVCenter)
         vr.addStretch(1)
         right.addLayout(vr)
+        pub = QFrame()                                    # concept, réseaux, pages d'envoi : un seul rectangle
+        pub.setProperty("role", "card")
+        pl = QVBoxLayout(pub)
+        pl.setContentsMargins(14, 10, 14, 12)
+        pl.setSpacing(8)
+        head = QHBoxLayout()
+        head.setSpacing(4)
+        self.concept = QComboBox()
+        self.concept.setToolTip("Concept : ses chaînes YouTube, TikTok et Meta reçoivent les pages d'envoi")
+        self.concept.currentIndexChanged.connect(self._concept_changed)
+        head.addWidget(self.concept)
+        head.addStretch(1)
+        self.net_icons: dict[str, QLabel] = {}
+        for key, name in NETWORKS:
+            ic = QLabel()
+            ic.setFixedSize(24, 24)
+            ic.setAlignment(Qt.AlignCenter)
+            head.addWidget(ic)
+            self.net_icons[key] = ic
+        pl.addLayout(head)
         self.nets: dict[str, NetworkCard] = {}
         for key, name in NETWORKS:
             c = NetworkCard(self, key, name)
             self.nets[key] = c
-            right.addWidget(c)
+            pl.addWidget(c)
+        self.open_all = button("Ouvrir les pages d'envoi", "soft", icon="upload", on_click=self.open_pages,
+                               tooltip="Ouvre la page d'envoi de chaque chaîne du concept, chacune dans un nouvel "
+                               "onglet de ton navigateur, et copie le texte : glisse la vidéo, colle le texte, "
+                               "clique toi-même sur « Publier »")
+        pl.addWidget(self.open_all, 0, Qt.AlignLeft)
+        self.pub_note = label("", "faint", wrap=True, hint=False)
+        self.pub_note.hide()
+        pl.addWidget(self.pub_note)
+        right.addWidget(pub)
         # -- sous les réseaux : les concepts et leurs chaînes
         right.addSpacing(10)
         self.concepts = ConceptsBox(app)
@@ -498,7 +502,7 @@ class ExportView(_View):
         if self._loading or not self.pid:
             return
         a = self.actions.checkedId()
-        st = {"title": self.title.text(), "description": self.desc.toPlainText(),
+        st = {"title": self._title(), "description": self._desc(),
               "action": ACTIONS[a] if 0 <= a < len(ACTIONS) else "local",
               "file_name": self.file_name.text().strip(), "folder": self.folder,
               "concept": self.concept.currentData()}
@@ -515,9 +519,29 @@ class ExportView(_View):
             acc = c.account_id()
             if acc:
                 pf = self.app.concepts.get_account(acc).platform.value
-                problems += rules.check(pf, self.title.text(), self.desc.toPlainText(), "")
-        n = len(self.desc.toPlainText())
-        self.count.setText(f"{n} caractères" + (f"  ·  ⚠ {problems[0]}" if problems else ""))
+                problems += rules.check(pf, self._title(), self._desc(), "")
+        n = len(self.text.toPlainText())
+        self.count.setText(f"{n} caractère{'s' if n > 1 else ''}" + (f"  ·  ⚠ {problems[0]}" if problems else ""))
+        self.count.setToolTip(problems[0] if problems else "")
+        self._place_count()
+
+    def _title(self) -> str:
+        """Le titre : la première ligne du texte."""
+        return (self.text.toPlainText().strip().splitlines() or [""])[0].strip()
+
+    def _desc(self) -> str:
+        """La description : le texte après la première ligne."""
+        return "\n".join(self.text.toPlainText().strip().splitlines()[1:]).strip()
+
+    def _place_count(self) -> None:
+        self.count.adjustSize()
+        self.count.move(self.text.width() - self.count.width() - 10, self.text.height() - self.count.height() - 6)
+        self.count.raise_()
+
+    def eventFilter(self, obj, e) -> bool:
+        if obj is self.text and e.type() == QEvent.Resize:
+            self._place_count()
+        return super().eventFilter(obj, e)
 
     def _pick_folder(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Dossier de la vidéo exportée", self.folder)
@@ -535,7 +559,7 @@ class ExportView(_View):
         self.concept.blockSignals(True)
         self.concept.clear()
         for c in self.app.concepts.list_concepts():
-            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
+            self.concept.addItem(dot_icon(c.color), c.name, c.id)
         self.concept.setCurrentIndex(max(0, self.concept.findData(chosen)))
         self.concept.blockSignals(False)
         self._show_channels()
@@ -570,10 +594,9 @@ class ExportView(_View):
             if self.file_name.text() != name:
                 self.file_name.setText(name)
             title = st["title"] if st["title"] or st["description"] else self._default_title()
-            if self.title.text() != title:
-                self.title.setText(title)
-            if self.desc.toPlainText() != st["description"]:
-                self.desc.setPlainText(st["description"])
+            text = "\n".join(x for x in (title, st["description"]) if x)
+            if self.text.toPlainText().strip() != text.strip():
+                self.text.setPlainText(text)
             p = self.app.projects.get(self.pid)
             self._fill_concepts(st["concept"] or (p["concept_id"] if p else None))
             self.concepts.refresh()
@@ -641,6 +664,16 @@ class ExportView(_View):
         self.tile.set_video(path if exported else "")
         self.reveal_btn.setEnabled(exported)
         pubs = self._last().get("pubs") or {}
+        for k, name in NETWORKS:                          # logos : en couleur si le concept a une chaîne
+            acc = self.nets[k].account_id()
+            ic = theme.platform_icon(k, 18) if acc else theme.icon(theme.PLATFORMS[k][0], theme.color("faint"), 18)
+            self.net_icons[k].setPixmap(ic.pixmap(QSize(18, 18)))
+            self.net_icons[k].setToolTip(f"{name} : {self.app.concepts.get_account(acc).name}" if acc else
+                                         f"{name} : pas de chaîne dans ce concept (ajoute-la dans Concepts)")
+        has = any(c.account_id() for c in self.nets.values())
+        self.open_all.setEnabled(exported and has)
+        self.open_all.setToolTip("" if exported and has else "Exporte d'abord la vidéo (à gauche)" if has else
+                                 "Ce concept n'a pas encore de chaîne : ajoute-la dans Concepts, en dessous")
         for k, c in self.nets.items():
             pid = pubs.get(k)
             r = self.app.publications.get(pid) if pid else None
@@ -664,40 +697,46 @@ class ExportView(_View):
         mid = last.get("master_id")
         if not mid or ps.master(mid) is None:
             p = self.app.projects.get(self.pid)
-            mid = ps.create_master(p["concept_id"], self.title.text().strip(), self.desc.toPlainText().strip(), "",
+            mid = ps.create_master(p["concept_id"], self._title(), self._desc(), "",
                                    language=data.get("version_lang") or "fr", variant_id=last.get("variant_id"))
             last["master_id"] = mid
         ps.set_destinations(mid, [acc_id], confirmed_external={acc_id})
         pub = next(pb for pb in ps.list_for_master(mid) if pb.account.id == acc_id)
-        t = compose_for(pub.account.platform.value, self.title.text(), self.desc.toPlainText())
+        t = compose_for(pub.account.platform.value, self._title(), self._desc())
         ps.override(pub.id, title=t["title"], description=t["text"])
         pubs[key] = pub.id
         data["export_last"] = last
         self.app.projects.save_data(self.pid, data)
         return pub.id
 
-    def open_upload(self, key: str) -> None:
-        """Ouvre la page d'envoi du réseau dans le navigateur dédié du compte et copie son texte ; le clic final
-        reste à l'utilisateur, le lien est ensuite retrouvé tout seul (ou collé)."""
-        c = self.nets[key]
+    def open_upload(self, key: str) -> str:
+        """Page d'envoi d'un réseau, dans un nouvel onglet ; renvoie un message d'erreur, ou ""."""
         pid = self._publication_for(key)
         if pid is None:
-            return
+            return ""
         r = self.app.publications.get(pid)
         if r["status"] not in ("published", "cancelled", "manual_action"):
             self.app.publications.mark_manual(pid, "Envoyée depuis l'Atelier de publication : lien à confirmer.")
-        t = compose_for(r["platform"], self.title.text(), self.desc.toPlainText())
-        QApplication.clipboard().setText(t["title"] or t["text"])
-        url, where = upload_url(key), ""
+        url = upload_url(key)
         if key == "youtube":                              # YouTube Studio directement sur la chaîne du concept
             ch = self.youtube_channel(r["account_id"])
             if ch:
-                url, where = reconcile.youtube_upload_url(ch), " sur la chaîne " + r["account"]
-        note = browser_login.open_page(self.app, r["account_id"], url, self.open_url)
+                url = reconcile.youtube_upload_url(ch)
+        return browser_login.open_page(self.app, r["account_id"], url, self.open_url)
+
+    def open_pages(self) -> list[str]:
+        """« Ouvrir les pages d'envoi » : un onglet par chaîne du concept (YouTube, TikTok, Meta) en un clic ; le
+        texte (titre puis description) est copié pour être collé dans chaque page."""
+        keys = [k for k, c in self.nets.items() if c.account_id()
+                and not (c.state.text().startswith("✓"))]
+        notes = [n for n in (self.open_upload(k) for k in keys) if n]
+        QApplication.clipboard().setText(self.text.toPlainText().strip())
         self.refresh_cards()
-        c.note.setText(note or f"Page d'envoi ouverte dans un nouvel onglet{where} ; "
-                       f"{'titre' if t['title'] else 'texte'} copié.")
-        c.note.show()
+        names = ", ".join(self.nets[k].name for k in keys)
+        self.pub_note.setText(" ".join(notes) or (f"Pages d'envoi ouvertes ({names}) ; texte copié." if keys else
+                                                  "Toutes les vidéos de ce concept sont déjà publiées."))
+        self.pub_note.show()
+        return keys
 
     def youtube_channel(self, account_id: int) -> str:
         """Identifiant de la chaîne YouTube du compte (lu une fois sur sa page publique, puis gardé)."""
@@ -718,8 +757,8 @@ class ExportView(_View):
         """Fichier de sortie : nom et dossier choisis ; un fichier du même nom n'est remplacé qu'avec accord."""
         folder = Path(st["folder"] or self.export_dir)
         dest = folder / file_name(st['file_name'] or self._default_name())
-        if dest.exists() and QMessageBox.question(
-                self, "Exporter", f"« {dest.name} » existe déjà dans ce dossier.\n\nLe remplacer ?") != QMessageBox.Yes:
+        if dest.exists() and not ask(
+                self, "Exporter", f"« {dest.name} » existe déjà dans ce dossier.\n\nLe remplacer ?"):
             return None
         return dest
 

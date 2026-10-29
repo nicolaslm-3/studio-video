@@ -12,6 +12,7 @@ from ..media.ffmpeg import fmt_timecode
 from ..services import secrets
 from .dialogs import LANGUAGES
 from .widgets import button, label
+from .widgets import ask
 
 CONSENT = ("Je confirme avoir le droit d'utiliser ces voix. Une voix clonée n'est utilisée qu'avec "
            "l'accord explicite de la personne concernée.")
@@ -149,6 +150,6 @@ class DubDialog(QDialog):
         self.accept()
 
     def _delete(self) -> None:
-        if QMessageBox.question(self, "Doublage", "Supprimer ce doublage ?") == QMessageBox.Yes:
+        if ask(self, "Doublage", "Supprimer ce doublage ?"):
             self.app.dubs.delete(self.asset_id, self.language)
             self.reject()

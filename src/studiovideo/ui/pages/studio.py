@@ -24,6 +24,7 @@ from ..highlights_panel import HighlightsPanel
 from ..transcript_panel import TranscriptPanel
 from .. import theme
 from ..widgets import Card, EmptyState, button, label, tool
+from ..widgets import ask
 
 HISTORY_MAX = 100
 
@@ -962,9 +963,9 @@ class StudioPage(QWidget):
             return False
         n = len(self.app.projects.versions(pid))
         more = f" Ses {n} version(s) traduite(s) aussi." if n else ""
-        if QMessageBox.question(parent or self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, "
+        if not ask(parent or self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, "
                                 "ses extraits et l'historique de ses exports sont retirés." + more + " Les fichiers "
-                                "vidéo (sources et exports) restent sur le disque.") != QMessageBox.Yes:
+                                "vidéo (sources et exports) restent sur le disque."):
             return False
         current = pid == self.project_id or self.app.projects.parent_of(self.project_id or 0) == pid
         if current:
@@ -1259,8 +1260,8 @@ class StudioPage(QWidget):
 
     def _text_edit_ranges(self, ranges: list, replace: bool) -> None:
         if replace and self.tl.segments:
-            if QMessageBox.question(self, "Montage par le texte", "Remplacer le contenu actuel de la timeline ? "
-                                    "(Annulable avec Ctrl+Z)") != QMessageBox.Yes:
+            if not ask(self, "Montage par le texte", "Remplacer le contenu actuel de la timeline ? "
+                                    "(Annulable avec Ctrl+Z)"):
                 return
             self.tl.segments = []
             self.tl.subtitles.cues = []
@@ -1286,8 +1287,8 @@ class StudioPage(QWidget):
                                     "cliquez sur « Transcrire ».")
             self.left_tabs.setCurrentIndex(1)
             return
-        if self.tl.subtitles.cues and QMessageBox.question(
-                self, "Sous-titres", "Remplacer les sous-titres actuels (et vos corrections) ?") != QMessageBox.Yes:
+        if self.tl.subtitles.cues and not ask(
+                self, "Sous-titres", "Remplacer les sous-titres actuels (et vos corrections) ?"):
             return
         self.tl.subtitles.cues = generate(self.tl, {i: t for i, t in trs.items() if t is not None})
         self.tl.subtitles.enabled = True
@@ -1462,9 +1463,9 @@ class StudioPage(QWidget):
                                               "Vidéo Studio Vidéo (*.studioproj)")
         if not path:
             return
-        media = QMessageBox.question(self, "Enregistrer la vidéo (archive)", "Inclure les fichiers vidéo et audio dans l'archive ?"
+        media = ask(self, "Enregistrer la vidéo (archive)", "Inclure les fichiers vidéo et audio dans l'archive ?"
                                      "\n\nOui : archive complète, utilisable sur un autre ordinateur.\nNon : archive "
-                                     "légère, les médias devront être présents sur l'autre ordinateur.") == QMessageBox.Yes
+                                     "légère, les médias devront être présents sur l'autre ordinateur.")
         jid = self.app.jobs.submit("export_project", f"Archive · {p['name']}", {
             "project_id": self.project_id, "dest": path, "media": media})
         self._jobs[jid] = "archive"
@@ -1484,9 +1485,9 @@ class StudioPage(QWidget):
                                 "Le moteur de séparation n'est pas installé dans cette version.")
             return
         if not separate.installed(self.app.paths.models):
-            if QMessageBox.question(self, "Séparer voix et musique",
+            if ask(self, "Séparer voix et musique",
                                     "Le modèle de séparation (64 Mo) n'est pas encore installé. "
-                                    "Ouvrir la page des modèles ?") == QMessageBox.Yes:
+                                    "Ouvrir la page des modèles ?"):
                 self.open_models.emit()
             return
         for aid in todo:
@@ -1810,7 +1811,7 @@ class StudioPage(QWidget):
 
     def _delete_clip(self) -> None:
         cid = self._clip_id()
-        if cid and QMessageBox.question(self, "Supprimer", "Supprimer ce clip ? Le média source n'est pas modifié."
-                                        ) == QMessageBox.Yes:
+        if cid and ask(self, "Supprimer", "Supprimer ce clip ? Le média source n'est pas modifié."
+                                        ):
             self.app.db.connect().execute("DELETE FROM clip WHERE id=?", (cid,))
             self._load_clips()

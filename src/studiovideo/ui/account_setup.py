@@ -17,6 +17,7 @@ from ..services import secrets
 from ..services.concepts import ConceptError
 from .dialogs import language_combo
 from .widgets import button, label
+from .widgets import ask
 
 # Application développeur de chaque réseau : réglages (clé de réglage, libellé, secret ?), visibilité, guide
 APPS = {
@@ -240,10 +241,10 @@ class AccountSetupDialog(QDialog):
         self.app.concepts.update_account(self.account_id, public_url=self.url.text().strip())
         if self.adv_btn.isChecked() and self.connect.isVisibleTo(self) and self.connect.isChecked():
             if not app_configured(self.app, self.platform):
-                if QMessageBox.question(self, "Connexion", "L'application du réseau n'est pas encore réglée "
+                if not ask(self, "Connexion", "L'application du réseau n'est pas encore réglée "
                                         "(identifiant et code secret) : le compte est enregistré, mais il ne "
                                         "peut pas encore être connecté. Les vidéos y seront à publier à la main "
-                                        "d'ici là.\n\nFermer quand même ?") != QMessageBox.Yes:
+                                        "d'ici là.\n\nFermer quand même ?"):
                     return
             else:
                 acc = self.app.concepts.get_account(self.account_id)

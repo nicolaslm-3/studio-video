@@ -1401,7 +1401,13 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert not hasattr(ev, "act_publish") and not hasattr(ev, "act_schedule") and not hasattr(ev, "when")
     from studiovideo.ui import export_view as evmod
     assert not hasattr(evmod, "PhonePreview")                   # plus d'aperçus par réseau
-    assert not hasattr(ev.nets["youtube"], "on") and not hasattr(ev.nets["youtube"], "text")   # ni case ni texte
+    assert not hasattr(ev.nets["youtube"], "on") and not hasattr(ev, "title") and not hasattr(ev, "desc")
+    assert ev.text.placeholderText() == "Texte" and ev.file_name.placeholderText() == "Nom du fichier exporté"
+    assert ev.count.parent() is ev.text                         # compteur dans le rectangle de texte
+    assert not [lb for lb in ev.findChildren(QLabel) if lb.text() in ("Nom du fichier", "Titre sur les réseaux",
+                                                                       "Description", "Atelier de publication",
+                                                                       "Concept")]
+    assert ev.reveal_btn.text() == "" and ev.reveal_btn.toolTip() == "Afficher dans l'Explorateur"   # icône seule
     assert ev.player.tl.segments[0].asset_id == aid             # la vidéo du projet, petit aperçu
     assert not ev.player.play_btn.isVisibleTo(ev) and ev.player.view.click_toggles   # clic : lecture / pause
     assert ctx.projects.get(pid)["name"] == "x"                 # le projet a pris le nom du média
@@ -1413,13 +1419,14 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
     assert not ev.tile.isEnabled() and not ev.reveal_btn.isEnabled()      # rien d'exporté encore
     assert ev.tile.maximumWidth() <= 300                        # vidéo à glisser : rectangle étroit
-    # menu « Concept » : chaque réseau reçoit la chaîne du concept, sur une ligne (nom à gauche, bouton à droite)
+    # un rectangle : menu des concepts, logos (en couleur si une chaîne est liée), « Ouvrir les pages d'envoi »
     assert ev.concept.currentData() == p["concept_id"] and ev.nets["youtube"].account_id() is None
     ev.concept.setCurrentIndex(ev.concept.findData(concept.id))
     ytc, meta = ev.nets["youtube"], ev.nets["meta"]
     assert ytc.account_id() == yt.id and ytc.channel.text() == "machaine" and ev.nets["tiktok"].account_id() == tk.id
-    assert ytc.open_btn.text() == "Ouvrir la page d'envoi" and not hasattr(ytc, "account")   # plus de menu de comptes
-    assert meta.account_id() is None and "Pas de chaîne Meta" in meta.channel.text() and not meta.open_btn.isEnabled()
+    assert meta.account_id() is None and not meta.isVisibleTo(ev)          # pas de chaîne Meta : ligne masquée
+    assert "pas de chaîne" in ev.net_icons["meta"].toolTip() and "machaine" in ev.net_icons["youtube"].toolTip()
+    assert ev.open_all.text() == "Ouvrir les pages d'envoi" and not ev.open_all.isEnabled()   # rien d'exporté
     assert ctx.projects.load_data(pid)["export_ui"]["concept"] == concept.id
     # en dessous : les concepts et leurs chaînes (YouTube, TikTok, Meta)
     box = ev.concepts
@@ -1428,12 +1435,13 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert row.nets["meta"].text() == ""                        # logo seul, nom au survol
     cp = row.open_channel("meta")                               # réseau grisé : rectangle volant pour l'ajouter
     from studiovideo.ui.widgets import Popover
-    assert isinstance(cp, Popover) and cp.platform.count() == 2  # Meta : Page Facebook ou compte Instagram
-    cp.platform.setCurrentIndex(cp.platform.findData("instagram"))
-    cp.name.setText("moninsta")
-    cp.url.setText("https://www.instagram.com/moninsta")
+    assert isinstance(cp, Popover) and not hasattr(cp, "name")   # le nom de la chaîne : celui du concept
+    assert not cp.open_btn.isEnabled()
+    cp.url.setText("https://www.instagram.com/moninsta")         # Meta : Instagram d'après l'adresse
+    assert cp.platform() == "instagram" and cp.open_btn.isEnabled()   # lien à ouvrir dans le navigateur
     cp._save()
-    assert row.nets["meta"].linked and meta.account_id() is not None and "moninsta" in meta.channel.text()
+    assert row.nets["meta"].linked and meta.account_id() is not None and "Tous y passent" in meta.channel.text()
+    assert ctx.concepts.get_account(meta.account_id()).platform.value == "instagram"
     ig_id = meta.account_id()
     new = box.new_concept()                                     # « Nouveau concept » : une ligne, sans fenêtre
     assert new.concept is None and new.name.text() == ""
@@ -1441,16 +1449,14 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     new._name_done()
     assert new.concept is not None and ev.concept.findData(new.concept.id) >= 0
     assert ctx.concepts.get_concept(new.concept.id).name == "Deuxième concept"
-    ev.title.setText("Le vrai chiffre")
-    ev.desc.setPlainText("Ce qu'on ne vous dit pas #politique")
+    ev.text.setPlainText("Le vrai chiffre\nCe qu'on ne vous dit pas #politique")   # 1re ligne : le titre
     from studiovideo.ui.export_view import EmojiButton
-    eb = next(b for b in ev.findChildren(EmojiButton) if b.target is ev.title)
-    assert eb.parent() is ev.title and eb.text() == ""          # icône grise, dans le champ, en haut à droite
-    eb.insert("🔥")                                              # menu d'emojis
-    assert "🔥" in ev.title.text()
-    ev.title.setText("Le vrai chiffre")
+    eb = next(b for b in ev.findChildren(EmojiButton) if b.target is ev.text)
+    assert eb.parent() is ev.text and eb.text() == ""           # icône grise, dans le champ, en haut à droite
+    assert ev.count.text().startswith("51 caract")
     ui = ctx.projects.load_data(pid)["export_ui"]
     assert ui["concept"] == concept.id and ui["title"] == "Le vrai chiffre"
+    assert ui["description"] == "Ce qu'on ne vous dit pas #politique"
     sent = []
     real_submit = ctx.jobs.submit
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
@@ -1473,15 +1479,17 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert "enregistrée" in data["export_last"]["summary"] and "master_id" not in data["export_last"]
     assert ev.open_dir.isVisibleTo(ev) and ev.tile.isEnabled() and ev.reveal_btn.isEnabled()
     assert ev.tile.path == str(dest)                            # la vidéo exportée, à glisser
-    # page d'envoi TikTok : publication créée pour retrouver le lien, texte copié, navigateur du compte
-    monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(tmp_path / "absent.exe"))
+    # « Ouvrir les pages d'envoi » : un onglet par chaîne du concept, en un clic ; texte copié
+    from studiovideo.publish import reconcile
+    monkeypatch.setattr(reconcile, "youtube_channel_id", lambda url: "UC" + "x" * 22)
     opened = []
     ev.open_url = opened.append
     tkc = ev.nets["tiktok"]
-    assert tkc.open_btn.isEnabled()
-    tkc.open_btn.click()
-    assert opened == ["https://www.tiktok.com/upload"]
-    assert QApplication.clipboard().text() == "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"
+    assert ev.open_all.isEnabled()
+    ev.open_all.click()
+    assert opened == ["https://studio.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx/videos/upload?d=ud",
+                      "https://www.tiktok.com/upload", "https://business.facebook.com/latest/reels_composer"]
+    assert QApplication.clipboard().text() == "Le vrai chiffre\nCe qu'on ne vous dit pas #politique"
     pubs = ctx.projects.load_data(pid)["export_last"]["pubs"]
     r = ctx.publications.get(pubs["tiktok"])
     assert r["status"] == "manual_action" and r["account_id"] == tk.id and r["output_path"] == str(dest)
@@ -1489,13 +1497,9 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     tkc.link.url.setText("https://www.tiktok.com/@moncompte/video/7")
     tkc.link._confirm()
     assert ctx.publications.get(pubs["tiktok"])["status"] == "published" and "Publiée" in tkc.state.text()
-    assert not tkc.open_btn.isEnabled()
-    # YouTube Studio s'ouvre directement sur la chaîne du concept
-    from studiovideo.publish import reconcile
-    monkeypatch.setattr(reconcile, "youtube_channel_id", lambda url: "UC" + "x" * 22)
-    ytc.open_btn.click()
-    assert opened[-1] == "https://studio.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx/videos/upload?d=ud"
-    assert "sur la chaîne machaine" in ytc.note.text()
+    opened.clear()
+    ev.open_pages()                                             # TikTok déjà publiée : plus rouverte
+    assert len(opened) == 2 and "https://www.tiktok.com/upload" not in opened
     # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram (Meta) n'en propose pas
     con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
     ev.refresh()

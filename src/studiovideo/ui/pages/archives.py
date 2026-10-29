@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QHBoxLayout, QListWidget, QListWidgetItem, QMessag
 
 from ...core import AppContext
 from ..widgets import PageHeader, button, label, local_time
+from ..widgets import ask
 
 
 class ArchivesPage(QWidget):
@@ -70,8 +71,8 @@ class ArchivesPage(QWidget):
         p = self.app.projects.get(pid) if pid else None
         if p is None:
             return
-        if QMessageBox.question(self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage et ses "
-                                "extraits sont retirés. Les fichiers vidéo restent sur le disque.") != QMessageBox.Yes:
+        if not ask(self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage et ses "
+                                "extraits sont retirés. Les fichiers vidéo restent sur le disque."):
             return
         try:
             self.app.projects.delete(pid)

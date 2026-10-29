@@ -108,14 +108,22 @@ champ titre, le titre ouvre la description), petit aperçu, puis « Brouillon su
 API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et Instagram par la page d'envoi) ou
 « Sur mon PC seulement » — ni publication immédiate ni programmation ; à droite l'**Atelier de publication** : la
 vidéo exportée (rectangle étroit, à glisser, ou « Afficher dans l'Explorateur »), puis une carte par réseau (YouTube,
-TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite), sur une ligne : logo, chaîne du
-**concept choisi dans le menu « Concept »** (`concepts_box.concept_account`) à gauche, « Ouvrir la page d'envoi »
-(texte copié) à droite, puis le lien de la vidéo publiée (`publish_workshop.LinkBox`) ; YouTube Studio s'ouvre sur la
-chaîne (`reconcile.youtube_channel_id`, gardé dans les réglages du compte). En dessous, les **concepts**
-(`ui/concepts_box.py`) : liste qu'on fait défiler, colonnes nom, thématique, couleur, langue, puis trois logos (une
-chaîne par réseau : en couleur si le concept en a une, grisé sinon ; clic : rectangle volant nom / adresse publique,
-« Avancé : API ») ; « Nouveau concept » ajoute une ligne sans fenêtre. **Calendrier** (`ui/pages/calendar.py`,
-migration 0010) : menu des concepts (ou tous), vidéos programmées en petits rectangles à leur date (concept, nom de la
+TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite) — vidéo à glisser et icône dossier seule,
+puis un seul rectangle : menu des concepts (point de couleur) et à droite les trois logos (en couleur si le concept a
+une chaîne), une ligne par chaîne (logo, nom, état, lien publié : `publish_workshop.LinkBox`), « Ouvrir les pages
+d'envoi » (un onglet par chaîne en un clic, texte copié ; YouTube Studio sur la chaîne, `reconcile.youtube_channel_id`).
+À gauche, sans libellés : nom du fichier exporté, un seul texte (1re ligne = titre, le reste = description) avec le
+nombre de caractères dans le rectangle ; emojis en petit. Sous la colonne de droite, les **concepts**
+(`ui/concepts_box.py`) : nom, thématique, couleur, langue en drapeau, puis trois logos (une chaîne par réseau, qui
+porte le nom du concept : clic → rectangle volant avec l'adresse publique et un bouton pour l'ouvrir ; Meta : Facebook
+ou Instagram d'après l'adresse) ; « + » discret en bas pour un nouveau concept, sans fenêtre.
+**Confirmations** (« Supprimer… ? ») dans un rectangle volant au centre de la fenêtre (`widgets.ask`), jamais une
+fenêtre. **Calendrier** (`ui/pages/calendar.py`,
+migration 0010) : menu des concepts (ou tous) au-dessus de « À venir » (liste à droite), « + » discret en bas ;
+bouton discret (flèches) et passage toutes les heures : les vidéos publiées ces 20 derniers jours sur les chaînes des
+concepts (YouTube, TikTok) entrent au calendrier, une publication du même jour qui ressemble est reliée et prend
+l'heure réelle (`sync_calendar`, `PublicationService.sync_published`) ; vidéos programmées en petits rectangles à
+leur date (concept, nom de la
 vidéo, trois logos qu'on met en couleur ou grise d'un clic, pour s'organiser : rien n'est publié) ; « Nouvelle
 publication » (ou double-clic sur un jour, clic sur une vidéo pour la modifier) : rectangle volant concept → vidéo,
 un seul bloc de texte, date et heure (`ui/when_picker.py`), logos (`PublicationService.plan`).

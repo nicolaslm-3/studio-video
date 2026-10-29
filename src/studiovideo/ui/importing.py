@@ -10,6 +10,7 @@ from ..core import AppContext
 from ..media import downloader, ffmpeg
 from ..media.importer import fingerprint, guess_kind
 from .widgets import label
+from .widgets import ask
 
 FILE_FILTER = ("Médias et documents (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.mts *.wmv *.mp3 *.wav *.m4a "
                "*.aac *.flac *.ogg *.opus *.png *.jpg *.jpeg *.webp *.pdf *.txt *.docx *.pptx *.srt *.vtt);;"
@@ -41,10 +42,8 @@ def import_paths(app: AppContext, parent: QWidget, paths: list[str], project_id:
             QMessageBox.warning(parent, "Import", f"Lecture impossible : {path.name}\n{exc}")
             continue
         if dup:
-            r = QMessageBox.question(parent, "Média déjà importé",
-                                     f"« {path.name} » est déjà dans Médias.\nL'importer une seconde fois ?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
+            if not ask(parent, "Média déjà importé",
+                       f"« {path.name} » est déjà dans Médias.\nL'importer une seconde fois ?"):
                 continue
             allow = True
         app.jobs.submit("import_file", f"Import · {path.name}",

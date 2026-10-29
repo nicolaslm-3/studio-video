@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDate, QDateTime, QLocale, QSize, Qt, QTime, Signal
 from PySide6.QtWidgets import (QComboBox, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
-                               QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout,
+                               QPlainTextEdit, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout,
                                QWidget)
 
 from ...core import AppContext
@@ -21,6 +21,8 @@ from .. import theme
 from ..publish_workshop import VideoTile, reveal
 from ..when_picker import WhenPicker
 from ..widgets import PageHeader, Popover, button, label, tool
+from ..widgets import ask
+from ..widgets import dot_icon
 
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
           "novembre", "décembre"]
@@ -157,7 +159,7 @@ class PlanPopover(Popover):
         self.body.addWidget(label("Modifier la publication" if row else "Nouvelle publication", "h2"))
         self.concept = QComboBox()
         for c in app.concepts.list_concepts():
-            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
+            self.concept.addItem(dot_icon(c.color), c.name, c.id)
         want = row["concept_id"] if row else concept_id
         self.concept.setCurrentIndex(max(0, self.concept.findData(want)))     # par défaut : le premier
         self.concept.setToolTip("Concept")
@@ -239,7 +241,7 @@ class PlanPopover(Popover):
         self.close()
 
     def _delete(self) -> None:
-        if QMessageBox.question(self, "Supprimer", "Retirer cette publication du calendrier ?") != QMessageBox.Yes:
+        if not ask(self, "Supprimer", "Retirer cette publication du calendrier ?"):
             return
         try:
             self.app.publications.delete_master(self.mid)
@@ -260,14 +262,11 @@ class CalendarPage(QWidget):
         self.year, self.month = t.year, t.month
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 16)
-        hdr = PageHeader("Calendrier")
+        lay.addWidget(PageHeader("Calendrier"))
         self.concept = QComboBox()
         self.concept.setToolTip("Les vidéos d'un concept, ou de tous")
         self.concept.currentIndexChanged.connect(self.refresh)
-        hdr.add_action(self.concept)
-        self.new_btn = button("Nouvelle publication", "primary", on_click=lambda: self.new_publication(), icon="plus")
-        hdr.add_action(self.new_btn)
-        lay.addWidget(hdr)
+        self.new_btn = tool("plus", "Nouvelle publication", lambda: self.new_publication(), size=30)
         nav = QHBoxLayout()
         nav.addWidget(tool("chevron-left", "Mois précédent", lambda: self._shift(-1)))
         self.title = label("", "h2")
@@ -275,6 +274,11 @@ class CalendarPage(QWidget):
         nav.addWidget(self.title)
         nav.addWidget(tool("chevron-right", "Mois suivant", lambda: self._shift(1)))
         nav.addWidget(button("Aujourd'hui", "ghost", on_click=self._today))
+        self.sync_btn = tool("refresh-cw", "Retrouver les vidéos publiées ces 20 derniers jours sur les chaînes des "
+                             "concepts (YouTube, TikTok)", self.sync, size=28, icon_px=15)
+        nav.addWidget(self.sync_btn)
+        self.sync_note = label("", "faint", hint=False)
+        nav.addWidget(self.sync_note)
         nav.addStretch(1)
         lay.addLayout(nav)
         body = QHBoxLayout()
@@ -301,6 +305,7 @@ class CalendarPage(QWidget):
         body.addWidget(gridw, 1)
         side = QVBoxLayout()
         side.setSpacing(8)
+        side.addWidget(self.concept)
         side.addWidget(label("À venir", "h2"))
         self.up_host = QWidget()
         self.upcoming = QVBoxLayout(self.up_host)
@@ -312,6 +317,7 @@ class CalendarPage(QWidget):
         up.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         up.setWidget(self.up_host)
         side.addWidget(up, 1)
+        side.addWidget(self.new_btn, 0, Qt.AlignLeft)           # en bas, discret
         sw = QWidget()
         sw.setLayout(side)
         sw.setFixedWidth(270)
@@ -335,7 +341,7 @@ class CalendarPage(QWidget):
         self.concept.clear()
         self.concept.addItem("Tous les concepts", None)
         for c in self.app.concepts.list_concepts():
-            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
+            self.concept.addItem(dot_icon(c.color), c.name, c.id)
         self.concept.setCurrentIndex(max(0, self.concept.findData(cur)))
         self.concept.blockSignals(False)
 
@@ -371,6 +377,26 @@ class CalendarPage(QWidget):
         if not rows:
             self.upcoming.addWidget(label("Aucune vidéo programmée.", "faint", hint=False))
         self.upcoming.addStretch(1)
+
+    def sync(self) -> int | None:
+        """Bouton discret : les vidéos publiées ces 20 derniers jours entrent dans le calendrier."""
+        if self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'sync_calendar' AND status IN ('pending','running')"):
+            return None
+        self.sync_btn.setEnabled(False)
+        self.sync_note.setText("Recherche des vidéos publiées…")
+        return self.app.jobs.submit("sync_calendar", "Vidéos publiées → calendrier", {})
+
+    def on_job(self, job) -> None:
+        if job.kind != "sync_calendar" or job.status in ("pending", "running"):
+            return
+        self.sync_btn.setEnabled(True)
+        r = job.result or {}
+        if job.status == "succeeded":
+            self.sync_note.setText(f"✓ {r.get('added', 0)} ajoutée(s), {r.get('matched', 0)} reliée(s)"
+                                   + (" · ⚠ " + r["errors"][0] if r.get("errors") else ""))
+        else:
+            self.sync_note.setText("⚠ " + ((job.error or "Arrêtée").splitlines() or ["Arrêtée"])[0][:160])
+        self.refresh()
 
     def pending_count(self) -> int:
         """Plus de liste « à faire » : rien à signaler à côté du nom de la page."""

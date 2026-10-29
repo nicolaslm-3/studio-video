@@ -277,3 +277,51 @@ def test_account_dialog_browser_first(qtbot, app):
     assert app.concepts.get_account(acc.id).public_url == "https://www.tiktok.com/@pp"
     assert d.connect_job is None
     assert AccountSetupDialog(app, "tiktok", acc.id, advanced=True).adv_btn.isChecked()
+
+
+def test_calendar_sync_published_videos(app, monkeypatch):
+    """Vidéos mises en ligne ces 20 derniers jours sur les chaînes du concept : ajoutées au calendrier (titre,
+    description) ; une publication du même jour qui leur ressemble est reliée et prend l'heure réelle (la plus tôt
+    si les réseaux diffèrent) ; une vidéo déjà reliée n'est pas ajoutée deux fois."""
+    from datetime import datetime, timedelta
+
+    from studiovideo.publish import reconcile
+    c = app.concepts.create_concept("Tous y passent")
+    yt = app.concepts.create_account(Platform.YOUTUBE, "Tous y passent", "https://www.youtube.com/@tous")
+    tk = app.concepts.create_account(Platform.TIKTOK, "Tous y passent", "https://www.tiktok.com/@tous")
+    for a in (yt, tk):
+        app.concepts.link(c.id, a.id)
+    day = (datetime.now() - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+    old = app.publications.plan(c.id, None, "Le vrai chiffre du chômage", day.strftime("%Y-%m-%dT") + "18:00",
+                                {"youtube": False, "tiktok": False})
+    ts_yt = (day + timedelta(hours=19, minutes=12)).timestamp()
+    ts_tk = (day + timedelta(hours=17, minutes=40)).timestamp()
+    ts_new = (day - timedelta(days=2) + timedelta(hours=12)).timestamp()
+    ts_too_old = (datetime.now() - timedelta(days=25)).timestamp()
+
+    def fake_list(url, limit=15):
+        if "youtube" in url and url.endswith("/shorts"):
+            return [entry("https://www.youtube.com/shorts/AAAAAAAAAAA", "Ce qu'on ne vous dit pas", None, ts=ts_yt, title="Le vrai chiffre du chômage"),
+                    entry("https://www.youtube.com/shorts/BBBBBBBBBBB", "Tarte aux pommes #cuisine", None, ts=ts_new, title="Une recette"),
+                    entry("https://www.youtube.com/shorts/CCCCCCCCCCC", "x", None, ts=ts_too_old, title="Trop vieille")]
+        if "tiktok" in url:
+            return [entry("https://www.tiktok.com/@tous/video/1", "Le vrai chiffre du chômage #politique", None, ts=ts_tk, title="")]
+        return []
+    monkeypatch.setattr(reconcile, "list_recent", fake_list)
+
+    def wait_job(app, jid):
+        end = time.time() + 20
+        while app.jobs.get(jid).status in ("pending", "running") and time.time() < end:
+            time.sleep(0.05)
+        return app.jobs.get(jid)
+    monkeypatch.setattr(reconcile, "details", lambda url: {})
+    res = wait_job(app, app.jobs.submit("sync_calendar", "Sync", {"delay": None})).result
+    assert res["matched"] == 2 and res["added"] == 1 and not res["errors"]
+    p = app.publications.plan_of(old)
+    assert p["networks"]["youtube"] and p["networks"]["tiktok"]                     # logos en couleur
+    assert p["planned_at"] == day.strftime("%Y-%m-%dT") + "17:40"                 # la mise en ligne la plus tôt
+    added = [r for r in app.publications.planned("2000-01-01T00:00", "9999-01-01T00:00", c.id) if r["id"] != old]
+    assert len(added) == 1 and added[0]["text"] == "Une recette\nTarte aux pommes #cuisine"
+    assert added[0]["links"]["youtube"].endswith("BBBBBBBBBBB")
+    res = wait_job(app, app.jobs.submit("sync_calendar", "Sync", {"delay": None})).result
+    assert res["added"] == 0 and res["matched"] == 0 and res["known"] == 3      # rien en double

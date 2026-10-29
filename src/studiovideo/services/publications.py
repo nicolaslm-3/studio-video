@@ -258,7 +258,9 @@ class PublicationService:
         date et heure locales (« AAAA-MM-JJTHH:MM »), petits logos cochés. Rien n'est publié par le logiciel."""
         text = (text or "").strip()
         title = (text.splitlines() or [""])[0].strip()[:100]
-        nets = json.dumps({k: bool((networks or {}).get(k)) for k in self.NETS})
+        old = self.plan_of(master_id) if master_id else None
+        nets = json.dumps({**{k: bool((networks or {}).get(k)) for k in self.NETS},
+                           "links": (old or {}).get("links", {}), "times": (old or {}).get("times", {})})
         with self.db.transaction() as c:
             if master_id:
                 c.execute("UPDATE master_publication SET concept_id = ?, project_id = ?, title = ?, description = ?,"
@@ -281,6 +283,8 @@ class PublicationService:
         except ValueError:
             nets = {}
         d["networks"] = {k: bool(nets.get(k)) for k in PublicationService.NETS}
+        d["links"] = nets.get("links") or {}             # vidéo retrouvée sur le réseau : son lien
+        d["times"] = nets.get("times") or {}             # et l'heure de sa mise en ligne (heure locale)
         d["text"] = "\n\n".join(x for x in (r["description"] or r["title"] or "", r["hashtags"] or "") if x)
         return d
 
@@ -303,10 +307,51 @@ class PublicationService:
         if d is None or key not in self.NETS:
             raise PublicationError("Publication introuvable.")
         d["networks"][key] = not d["networks"][key]
+        self._save_nets(master_id, d)
+        return d["networks"][key]
+
+    def _save_nets(self, master_id: int, d: dict) -> None:
         with self.db.transaction() as c:
             c.execute("UPDATE master_publication SET networks_json = ? WHERE id = ?",
-                      (json.dumps(d["networks"]), master_id))
-        return d["networks"][key]
+                      (json.dumps({**d["networks"], "links": d["links"], "times": d["times"]}), master_id))
+
+    def sync_published(self, concept_id: int, platform: str, url: str, title: str, description: str,
+                       when: str) -> str:
+        """Une vidéo trouvée sur la page publique d'une chaîne du concept (heure locale `when`) :
+        - déjà reliée à une publication du calendrier : « known » ;
+        - une publication du même jour qui lui ressemble (texte) : reliée, son logo en couleur, et sa date et son
+          heure deviennent celles de la mise en ligne (la plus tôt si les réseaux diffèrent) : « matched » ;
+        - sinon ajoutée au calendrier avec son titre et sa description : « added »."""
+        from ..publish import reconcile
+        net = "meta" if platform in ("facebook", "instagram") else platform
+        key = reconcile.video_key(url)
+        rows = [self._plan_row(r) for r in self.db.query(self._PLAN + "WHERE m.concept_id = ? AND m.planned_at IS "
+                                                                      "NOT NULL", (concept_id,))]
+        if any(reconcile.video_key(u) == key for r in rows for u in r["links"].values()):
+            return "known"
+        found = (title + "\n" + description).strip()
+        day = [r for r in rows if (r["planned_at"] or "")[:10] == when[:10] and not r["links"].get(net)]
+        best, score = None, 0.0
+        for r in day:
+            s = max(reconcile.text_score(r["text"], found), reconcile.text_score(r["title"] or "", title))
+            if s > score:
+                best, score = r, s
+        if best is None and len(day) == 1 and not day[0]["text"].strip():
+            best = day[0]                                # seule publication du jour, sans texte : c'est elle
+        if best is not None and (score >= 0.35 or not best["text"].strip()):
+            best["links"][net], best["times"][net] = url, when
+            best["networks"][net] = True
+            self._save_nets(best["id"], best)
+            first = min(best["times"].values())          # réseaux à des heures différentes : la plus tôt
+            with self.db.transaction() as c:
+                c.execute("UPDATE master_publication SET planned_at = ? WHERE id = ?", (first, best["id"]))
+            return "matched"
+        mid = self.plan(concept_id, None, "\n".join(x for x in (title.strip(), description.strip()) if x), when,
+                        {net: True})
+        d = self.plan_of(mid)
+        d["links"][net], d["times"][net] = url, when
+        self._save_nets(mid, d)
+        return "added"
 
     def delete_master(self, master_id: int) -> None:
         if self.db.query_one("SELECT 1 FROM publication WHERE master_id = ? AND status = 'published'", (master_id,)):

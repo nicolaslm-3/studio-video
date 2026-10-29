@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFormLayout, QHBoxL
 from ..core import AppContext
 from ..services import secrets
 from .widgets import button, label
+from .widgets import ask
 
 QUALITY_ORDER = {"high": 0, "medium": 1, "low": 2, "x_low": 3}
 QUALITY_NAMES = {"x_low": "très basse", "low": "basse", "medium": "moyenne", "high": "haute"}
@@ -178,8 +179,8 @@ class OfflineVoicesPanel(QWidget, _JobWatcher):
         if not rest:
             return
         size = sum(x.size_mb for x in rest)
-        if QMessageBox.question(self, "Voix hors ligne", f"Télécharger {len(rest)} voix, toutes langues confondues "
-                                f"(environ {size / 1024:.1f} Go) ?") == QMessageBox.Yes:
+        if ask(self, "Voix hors ligne", f"Télécharger {len(rest)} voix, toutes langues confondues "
+                                f"(environ {size / 1024:.1f} Go) ?"):
             self._download_all(rest)
 
     def _download_all(self, voices: list) -> None:
@@ -197,7 +198,7 @@ class OfflineVoicesPanel(QWidget, _JobWatcher):
 
     def _delete(self, key: str) -> None:
         from ..ai import piper
-        if QMessageBox.question(self, "Voix", f"Supprimer la voix « {key} » ?") == QMessageBox.Yes:
+        if ask(self, "Voix", f"Supprimer la voix « {key} » ?"):
             piper.delete_voice(self.app.paths.models, key)
             self.fill()
             self.changed.emit()

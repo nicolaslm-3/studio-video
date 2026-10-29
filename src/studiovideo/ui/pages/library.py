@@ -17,6 +17,7 @@ from ...media.ffmpeg import fmt_timecode
 from ..importing import KIND_LABELS, DropZone, import_paths, import_url, pick_and_import
 from .. import theme
 from ..widgets import Card, EmptyState, PageHeader, button, label, local_time
+from ..widgets import ask
 
 COLS = ["", "Nom", "Type", "Durée", "Résolution", "Concept", "Importé le"]
 
@@ -267,9 +268,9 @@ class LibraryPage(QWidget):
         try:
             self.app.library.relink(aid, path)
         except ValueError as exc:
-            if "pas identique" in str(exc) and QMessageBox.question(
+            if "pas identique" in str(exc) and ask(
                     self, "Retrouver le fichier", f"{exc}\n\nL'utiliser quand même ? Les montages qui l'utilisent "
-                    "pourront ne plus tomber au bon endroit.") == QMessageBox.Yes:
+                    "pourront ne plus tomber au bon endroit."):
                 try:
                     self.app.library.relink(aid, path, force=True)
                 except (ValueError, OSError) as exc2:
@@ -303,8 +304,8 @@ class LibraryPage(QWidget):
             self.refresh()
 
     def _remove(self, aid: int) -> None:
-        if QMessageBox.question(self, "Retirer", "Retirer ce média de Médias ?\n"
-                                "Le fichier sur le disque ne sera pas supprimé.") == QMessageBox.Yes:
+        if ask(self, "Retirer", "Retirer ce média de Médias ?\n"
+                                "Le fichier sur le disque ne sera pas supprimé."):
             self.app.library.remove(aid)
             self.refresh()
 

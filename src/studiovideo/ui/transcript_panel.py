@@ -18,6 +18,7 @@ from ..transcribe import engines
 from ..transcribe.model import EXPORT_FORMATS, Transcript, export_text, import_subtitles
 from .dialogs import LANGUAGES
 from .widgets import button, label
+from .widgets import ask
 
 
 class TranscriptPanel(QWidget):
@@ -209,8 +210,8 @@ class TranscriptPanel(QWidget):
         elif c == 1:
             old = self.tr.segments[i].speaker
             new = item.text().strip()
-            if old and new and QMessageBox.question(
-                    self, "Intervenant", f"Renommer « {old} » partout en « {new} » ?") == QMessageBox.Yes:
+            if old and new and ask(
+                    self, "Intervenant", f"Renommer « {old} » partout en « {new} » ?"):
                 self.tr.rename_speaker(old, new)
                 self._save()
                 self._fill()
@@ -246,14 +247,14 @@ class TranscriptPanel(QWidget):
             return
         model = self.model.currentData()
         if model is None:
-            if QMessageBox.question(self, "Transcription", "Aucun modèle de reconnaissance vocale n'est installé. "
-                                    "Ouvrir la page des modèles ?") == QMessageBox.Yes:
+            if ask(self, "Transcription", "Aucun modèle de reconnaissance vocale n'est installé. "
+                                    "Ouvrir la page des modèles ?"):
                 self.open_models.emit()
             return
         if self.lang:
             self.view_lang.setCurrentIndex(0)
-        if self.tr and QMessageBox.question(self, "Retranscrire", "Remplacer la transcription actuelle, "
-                                            "y compris vos corrections ?") != QMessageBox.Yes:
+        if self.tr and not ask(self, "Retranscrire", "Remplacer la transcription actuelle, "
+                                            "y compris vos corrections ?"):
             return
         a = self.app.library.get(self.asset_id)
         self.app.settings.set("whisper_model", model)
@@ -360,8 +361,8 @@ class TranscriptPanel(QWidget):
                                     "attribués phrase par phrase.")
             return
         if not diarize.installed(self.app.paths.models):
-            if QMessageBox.question(self, "Intervenants", "Le modèle d'empreintes vocales (26 Mo) n'est pas encore "
-                                    "installé. Ouvrir la page des modèles ?") == QMessageBox.Yes:
+            if ask(self, "Intervenants", "Le modèle d'empreintes vocales (26 Mo) n'est pas encore "
+                                    "installé. Ouvrir la page des modèles ?"):
                 self.open_models.emit()
             return
         choices = ["Automatique"] + [str(n) for n in range(1, 9)]
@@ -385,7 +386,7 @@ class TranscriptPanel(QWidget):
             self.status.setText("Doublage en cours…")
 
     def _delete_translation(self) -> None:
-        if QMessageBox.question(self, "Traduction", "Supprimer cette traduction ?") == QMessageBox.Yes:
+        if ask(self, "Traduction", "Supprimer cette traduction ?"):
             self.app.transcripts.delete_translation(self.asset_id, self.lang)
             self.lang = ""
             self.set_asset(self.asset_id)
@@ -419,15 +420,15 @@ class TranscriptPanel(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "Import", str(exc))
             return
-        if self.tr and QMessageBox.question(self, "Import", "Remplacer la transcription actuelle ?") != QMessageBox.Yes:
+        if self.tr and not ask(self, "Import", "Remplacer la transcription actuelle ?"):
             return
         self.app.transcripts.store_original(self.asset_id, tr)
         self.set_asset(self.asset_id)
         self.changed.emit(self.asset_id)
 
     def _revert(self) -> None:
-        if QMessageBox.question(self, "Original", "Abandonner vos corrections et revenir au texte original ?"
-                                ) == QMessageBox.Yes:
+        if ask(self, "Original", "Abandonner vos corrections et revenir au texte original ?"
+                                ):
             self.app.transcripts.revert(self.asset_id)
             self.set_asset(self.asset_id)
             self.changed.emit(self.asset_id)

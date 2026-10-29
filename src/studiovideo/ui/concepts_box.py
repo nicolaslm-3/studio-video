@@ -12,17 +12,31 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLineEdit, QMessa
                                QVBoxLayout, QWidget)
 
 from ..core import AppContext
-from ..domain.models import Platform
 from ..services.concepts import ConceptError
 from . import theme
 from .account_setup import URL_HINT
 from .color_picker import ColorButton
-from .dialogs import CONCEPT_COLORS, language_combo
+from .dialogs import CONCEPT_COLORS, LANGUAGES
 from .widgets import Popover, button, label, tool
+from .widgets import ask
 
 NETS = (("youtube", "YouTube", ("youtube",)), ("tiktok", "TikTok", ("tiktok",)),
         ("meta", "Meta", ("facebook", "instagram")))
-COLS = (("Nom", 160), ("Thématique", 0), ("Couleur", 54), ("Langue", 110))
+COLS = (("Nom", 130), ("Thématique", 0), ("Couleur", 44), ("Langue", 56))
+
+
+def flag_combo(selected: str = "fr") -> QComboBox:
+    """Langue en drapeau seulement (le nom au survol)."""
+    from .simple_views import flag_icon
+    cb = QComboBox()
+    cb.setIconSize(QSize(18, 18))
+    for code, name in LANGUAGES:
+        cb.addItem(flag_icon(code), "", code)
+        cb.setItemData(cb.count() - 1, name, Qt.ToolTipRole)
+    cb.setCurrentIndex(max(0, cb.findData(selected)))
+    cb.setToolTip(dict(LANGUAGES).get(selected, ""))
+    cb.currentIndexChanged.connect(lambda _i: cb.setToolTip(dict(LANGUAGES).get(cb.currentData(), "")))
+    return cb
 
 
 def concept_account(app: AppContext, concept_id: int, key: str):
@@ -42,24 +56,22 @@ class ChannelPopover(Popover):
         self.app, self.cid, self.key = app, concept_id, key
         self.acc = concept_account(app, concept_id, key)
         name = dict((k, n) for k, n, _p in NETS)[key]
-        self.setFixedWidth(380)
+        self.setFixedWidth(400)
         self.body.addWidget(label(f"{name} · {app.concepts.get_concept(concept_id).name}", "h2"))
-        self.platform = QComboBox()
-        for p in dict((k, ps) for k, _n, ps in NETS)[key]:
-            self.platform.addItem(theme.platform_icon(p, 16), Platform(p).label, p)
-        if self.acc:
-            self.platform.setCurrentIndex(max(0, self.platform.findData(self.acc.platform.value)))
-        self.platform.setVisible(self.platform.count() > 1)
-        self.platform.currentIndexChanged.connect(self._hint)
-        self.body.addWidget(self.platform)
-        self.name = QLineEdit(self.acc.name if self.acc else "")
-        self.name.setPlaceholderText("Nom de la chaîne")
-        self.body.addWidget(self.name)
+        row = QHBoxLayout()
+        row.setSpacing(4)
         self.url = QLineEdit(self.acc.public_url if self.acc else "")
+        hint = {"youtube": URL_HINT["youtube"], "tiktok": URL_HINT["tiktok"],
+                "meta": "https://www.facebook.com/page ou https://www.instagram.com/nom"}[key]
+        self.url.setPlaceholderText("Adresse publique, ex. " + hint)
         self.url.setToolTip("Adresse de la page publique : la page d'envoi s'ouvre sur cette chaîne (YouTube), le lien "
                             "des vidéos publiées et leurs chiffres y sont retrouvés")
-        self.body.addWidget(self.url)
-        self._hint()
+        row.addWidget(self.url, 1)
+        self.open_btn = tool("link", "Ouvrir dans le navigateur", self._open_link, size=30, icon_px=16)
+        row.addWidget(self.open_btn)
+        self.body.addLayout(row)
+        self.url.textChanged.connect(lambda t: self.open_btn.setEnabled(t.strip().startswith("http")))
+        self.open_btn.setEnabled(self.url.text().strip().startswith("http"))
         foot = QHBoxLayout()
         if self.acc:
             foot.addWidget(button("Retirer", "ghost", icon="trash-2", on_click=self._remove,
@@ -73,20 +85,27 @@ class ChannelPopover(Popover):
         self.msg = label("", "muted", wrap=True, hint=False)
         self.msg.hide()
         self.body.addWidget(self.msg)
-        QTimer.singleShot(0, self.name.setFocus)
+        QTimer.singleShot(0, self.url.setFocus)
 
-    def _hint(self) -> None:
-        self.url.setPlaceholderText("Adresse publique, ex. " + URL_HINT.get(self.platform.currentData(), "https://…"))
+    def platform(self) -> str:
+        """Le réseau de la chaîne ; Meta : Instagram si l'adresse est celle d'Instagram, sinon Facebook."""
+        if self.key != "meta":
+            return self.key
+        return "instagram" if "instagram.com" in self.url.text().lower() else "facebook"
+
+    def _open_link(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(self.url.text().strip()))
 
     def _say(self, text: str) -> None:
         self.msg.setText(text)
         self.msg.show()
 
     def save(self) -> int | None:
-        name, url, pf = self.name.text().strip(), self.url.text().strip(), self.platform.currentData()
-        if not name:
-            self._say("Donne un nom à la chaîne.")
-            return None
+        """La chaîne porte le nom du concept ; seule son adresse publique se règle ici."""
+        url, pf = self.url.text().strip(), self.platform()
+        name = self.app.concepts.get_concept(self.cid).name
         try:
             if self.acc and self.acc.platform.value == pf:
                 self.app.concepts.update_account(self.acc.id, name=name, public_url=url)
@@ -119,7 +138,7 @@ class ChannelPopover(Popover):
         self.changed.emit()
         self.close()
         from .account_setup import AccountSetupDialog
-        AccountSetupDialog(self.app, self.platform.currentData(), aid, self.parent(), advanced=True).exec()
+        AccountSetupDialog(self.app, self.platform(), aid, self.parent(), advanced=True).exec()
         self.changed.emit()
 
 
@@ -177,11 +196,12 @@ class ConceptRow(QFrame):
         cl.addWidget(self.color, 0, Qt.AlignCenter)
         cw.setFixedWidth(COLS[2][1])
         h.addWidget(cw)
-        self.lang = language_combo(concept.language if concept else "fr")
+        self.lang = flag_combo(concept.language if concept else "fr")
         self.lang.setFixedWidth(COLS[3][1])
         self.lang.currentIndexChanged.connect(lambda _i: self._update(language=self.lang.currentData()))
         h.addWidget(self.lang)
-        self.del_btn = tool("trash-2", "Supprimer ce concept", self._delete, size=28, icon_px=15)
+        self.del_btn = tool("trash-2", "Supprimer ce concept", self._delete, size=28, icon_px=15,
+                            color=theme.color("faint"))
         h.addWidget(self.del_btn)
         v.addLayout(h)
         nets = QHBoxLayout()
@@ -234,6 +254,9 @@ class ConceptRow(QFrame):
             return
         try:
             self.concept = self.app.concepts.update_concept(self.concept.id, **fields)
+            if "name" in fields:                          # ses chaînes portent son nom
+                for acc, _d in self.app.concepts.concept_accounts(self.concept.id):
+                    self.app.concepts.update_account(acc.id, name=fields["name"])
         except Exception as exc:                          # nom déjà pris
             QMessageBox.information(self, "Concept", str(exc).replace("UNIQUE constraint failed: concept.workspace_id, "
                                                                       "concept.name", "Ce nom est déjà pris."))
@@ -245,8 +268,8 @@ class ConceptRow(QFrame):
         if self.concept is None:
             self.removed.emit(self)
             return
-        if QMessageBox.question(self, "Supprimer", f"Supprimer le concept « {self.concept.name} » ?\n\nSes chaînes "
-                                "restent enregistrées.") != QMessageBox.Yes:
+        if not ask(self, "Supprimer", f"Supprimer le concept « {self.concept.name} » ?\n\nSes chaînes "
+                                "restent enregistrées."):
             return
         try:
             self.app.concepts.delete_concept(self.concept.id)
@@ -267,12 +290,7 @@ class ConceptsBox(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 12, 16, 14)
         v.setSpacing(8)
-        head = QHBoxLayout()
-        head.addWidget(label("Concepts", "h2"))
-        head.addStretch(1)
-        self.new_btn = button("Nouveau concept", "soft", icon="plus", on_click=self.new_concept)
-        head.addWidget(self.new_btn)
-        v.addLayout(head)
+        v.addWidget(label("Concepts", "h2"))
         cols = QHBoxLayout()
         cols.setContentsMargins(1, 0, 40, 0)
         cols.setSpacing(8)
@@ -294,6 +312,8 @@ class ConceptsBox(QFrame):
         self.scroll.setWidget(self.rows_host)
         self.scroll.setFixedHeight(330)
         v.addWidget(self.scroll)
+        self.new_btn = tool("plus", "Nouveau concept", self.new_concept, size=30)      # en bas, discret
+        v.addWidget(self.new_btn, 0, Qt.AlignLeft)
         self.refresh()
 
     def items(self) -> list[ConceptRow]:

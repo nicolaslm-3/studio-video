@@ -21,6 +21,7 @@ from ...transcribe import engines as asr
 from ...update import rollback
 from .. import theme
 from ..widgets import Card, PageHeader, button, label
+from ..widgets import ask
 
 CONNECTION_LABELS = {"disconnected": "Non connecté", "connected": "Connecté", "expired": "Expiré",
                      "revoked": "Révoqué", "error": "Erreur"}
@@ -224,9 +225,9 @@ class SettingsPage(QWidget):
         if self.app.jobs.active_count():
             QMessageBox.warning(self, "Restaurer", "Attendez la fin des tâches en cours avant de restaurer.")
             return
-        if QMessageBox.question(self, "Restaurer", "Remplacer les données actuelles par cette sauvegarde ?\n"
+        if ask(self, "Restaurer", "Remplacer les données actuelles par cette sauvegarde ?\n"
                                 "Une sauvegarde de l'état actuel sera faite d'abord.\n"
-                                "Le logiciel devra être redémarré.") == QMessageBox.Yes:
+                                "Le logiciel devra être redémarré."):
             self.app.db.restore(Path(it.data(Qt.UserRole)))
             QMessageBox.information(self, "Restaurer", "Sauvegarde restaurée. Redémarrez Studio Vidéo.")
             self._refresh_backups()
@@ -360,8 +361,8 @@ class SettingsPage(QWidget):
 
     def _delete_model(self, key: str) -> None:
         from ...transcribe import engines
-        if QMessageBox.question(self, "Modèle", f"Supprimer le modèle « {key} » ? Il pourra être retéléchargé."
-                                ) == QMessageBox.Yes:
+        if ask(self, "Modèle", f"Supprimer le modèle « {key} » ? Il pourra être retéléchargé."
+                                ):
             if key.startswith("spk:"):
                 from ...ai import diarize
                 diarize.model_path(self.app.paths.models, diarize.BY_KEY[key[4:]]).unlink(missing_ok=True)
@@ -444,9 +445,9 @@ class SettingsPage(QWidget):
         if self.app.jobs.active_count():
             QMessageBox.warning(self, "Restauration", "Attendez la fin des tâches en cours.")
             return
-        if QMessageBox.question(self, "Revenir à la version précédente",
+        if not ask(self, "Revenir à la version précédente",
                                 "Studio Vidéo va se fermer, réinstaller la version précédente et restaurer "
-                                "la base telle qu'elle était avant la mise à jour.\nContinuer ?") != QMessageBox.Yes:
+                                "la base telle qu'elle était avant la mise à jour.\nContinuer ?"):
             return
         try:
             self.app.db.backup("avant-retour-version-precedente")

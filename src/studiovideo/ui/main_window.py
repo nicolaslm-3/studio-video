@@ -24,6 +24,7 @@ from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
 from .widgets import JobBridge, button, label
+from .widgets import ask
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +195,11 @@ class MainWindow(QMainWindow):
         liens (tâche « match_published ») s'il y a des publications à confirmer."""
         self._links.setInterval(3_600_000)
         self.check_stats()
+        if not self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'sync_calendar' AND status IN "
+                                     "('pending','running')") and any(
+                a.public_url and a.platform.value in ("youtube", "tiktok")
+                for c in self.app.concepts.list_concepts() for a, _d in self.app.concepts.concept_accounts(c.id)):
+            self.app.jobs.submit("sync_calendar", "Vidéos publiées → calendrier", {})    # toutes les heures
         if not self.app.publications.awaiting_link():
             return None
         if self.app.db.query_one("SELECT 1 FROM job WHERE kind = 'match_published' AND status IN "
@@ -233,8 +239,8 @@ class MainWindow(QMainWindow):
             return False
         pid = a["project_id"]
         if pid is None or self.app.projects.get(pid) is None:
-            if QMessageBox.question(self, "Ouvrir", f"« {a['file_name']} » n'appartient à aucune vidéo du Studio.\n\n"
-                                    "Créer une vidéo à partir de ce média ?") != QMessageBox.Yes:
+            if not ask(self, "Ouvrir", f"« {a['file_name']} » n'appartient à aucune vidéo du Studio.\n\n"
+                                    "Créer une vidéo à partir de ce média ?"):
                 return False
             concepts = self.app.concepts.list_concepts()
             pid = self.app.projects.create(concepts[0].id, Path(a["file_name"]).stem[:60] or "Vidéo")
@@ -415,6 +421,7 @@ class MainWindow(QMainWindow):
             self.studio.on_job(j)
             self.settings_page.on_job(j)
             self.analytics.on_job(j)
+            self.calendar.on_job(j)
         if j and j.status == "succeeded" and j.kind.startswith("import"):
             if not hasattr(self, "_import_refresh"):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
@@ -486,9 +493,8 @@ class MainWindow(QMainWindow):
         if not self._closing_for_update:
             critical = self.app.jobs.critical_running()
             if critical:
-                r = QMessageBox.question(self, "Quitter", f"{len(critical)} export(s) ou publication(s) en cours. "
-                                         "Quitter maintenant les interrompra. Quitter quand même ?")
-                if r != QMessageBox.Yes:
+                if not ask(self, "Quitter", f"{len(critical)} export(s) ou publication(s) en cours. "
+                           "Quitter maintenant les interrompra. Quitter quand même ?"):
                     e.ignore()
                     return
         if hasattr(self, "_import_refresh"):

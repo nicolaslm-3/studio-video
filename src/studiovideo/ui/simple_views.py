@@ -29,6 +29,7 @@ from .importing import DropZone, import_paths, pick_and_import
 from .montage_player import MontagePlayer
 from .scrub import ScrubNumber, ScrubTime, _tc
 from .widgets import ElidedLabel, HistoryPopover, Popover, ToggleSwitch, button, label, tc_html, tool
+from .widgets import ask
 
 VIDEO_FILTER = "Vidéos (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.mts *.wmv)"
 
@@ -1674,7 +1675,7 @@ class TranslationView(_View):
         voice = self.voice if self.do_voice.isChecked() else None
         if voice and not self.app.settings.get("dub_consent", False):
             from .dub_dialog import CONSENT
-            if QMessageBox.question(self, "Voix", CONSENT + " ?") != QMessageBox.Yes:
+            if not ask(self, "Voix", CONSENT + " ?"):
                 return
             self.app.settings.set("dub_consent", True)
         self.host.flush()
