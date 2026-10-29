@@ -21,7 +21,6 @@ from ..core import AppContext
 from ..publish import reconcile, rules
 from ..services.publications import PublicationError
 from . import browser_login, theme
-from .publication_dialog import video_info
 from .widgets import button, label
 
 # page d'envoi de Meta (Meta Business Suite) : une vidéo pour la Page Facebook et le compte Instagram reliés
@@ -31,6 +30,21 @@ META_UPLOAD_URL = "https://business.facebook.com/latest/reels_composer"
 def upload_url(platform: str) -> str:
     """Page d'envoi du réseau ; Facebook et Instagram : celle de Meta."""
     return META_UPLOAD_URL if platform in ("meta", "facebook", "instagram") else rules.RULES[platform].upload_url
+
+
+def video_info(row) -> dict | None:
+    """Fichier de la publication (existe-t-il, format, durée) pour vérifier les règles du réseau."""
+    if not row or not row["output_path"]:
+        return None
+    from ..media import ffmpeg
+    p = Path(row["output_path"])
+    info = {"exists": p.exists(), "aspect": row["aspect"]}
+    if p.exists():
+        try:
+            info["duration"] = ffmpeg.probe(p).duration_s
+        except Exception:
+            pass
+    return info
 
 
 def reveal(path: str) -> None:

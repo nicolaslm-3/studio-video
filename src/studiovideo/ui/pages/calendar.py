@@ -1,35 +1,109 @@
-"""Calendrier éditorial (V3, §19) : toutes les publications, tous concepts et comptes, par jour."""
+"""Calendrier : les vidéos programmées, mois par mois, comme un agenda.
+
+Un menu « Concept » montre les vidéos d'un concept, ou de tous. Chaque vidéo est un petit rectangle à sa date : le
+concept, le nom de la vidéo et trois petits logos (YouTube, TikTok, Meta) qu'on met en couleur ou qu'on grise d'un
+clic, pour s'organiser — le logiciel ne publie rien à partir de ces cases. « Nouvelle publication » (ou un double-clic
+sur un jour, ou un clic sur une vidéo pour la modifier) ouvre un rectangle volant : concept, vidéo, un seul bloc de
+texte, date et heure, logos (`PublicationService.plan`).
+"""
 from __future__ import annotations
 
 import calendar as _cal
 from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-                               QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
+from PySide6.QtCore import QDate, QDateTime, QSize, Qt, QTime, Signal
+from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
+                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from ...core import AppContext
-from ..publication_dialog import PLATFORM_SHORT, STATUS, PublicationDialog
-from ..publish_workshop import PublishWorkshop
-from ..widgets import PageHeader, button, label, tool
+from .. import theme
+from ..when_picker import WhenPicker
+from ..widgets import PageHeader, Popover, button, label, tool
 
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
           "novembre", "décembre"]
 DAYS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
-STATUS_MARK = {"published": "✓ ", "failed": "⚠ ", "manual_action": "● ", "cancelled": "✕ "}
+NETS = (("youtube", "YouTube"), ("tiktok", "TikTok"), ("meta", "Meta"))
+
+
+class NetToggle(QToolButton):
+    """Petit logo d'un réseau : en couleur (coché) ou grisé ; le nom du réseau seulement au survol."""
+
+    def __init__(self, key: str, name: str, size: int = 18, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setCheckable(True)
+        self.setFixedSize(size + 6, size + 6)
+        self.setIconSize(QSize(size, size))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(name)
+        self.setStyleSheet("QToolButton { border: none; background: transparent; padding: 0; }")
+        self._size = size
+        self.toggled.connect(lambda _on: self._paint())
+        self._paint()
+
+    def _paint(self) -> None:
+        self.setIcon(theme.platform_icon(self.key, self._size) if self.isChecked()
+                     else theme.icon(theme.PLATFORMS[self.key][0], theme.color("faint"), self._size))
+
+
+class PlanChip(QFrame):
+    """Une vidéo programmée : concept, nom de la vidéo, trois petits logos."""
+    open = Signal(int)
+
+    def __init__(self, app: AppContext, row: dict, parent=None):
+        super().__init__(parent)
+        self.app, self.mid = app, row["id"]
+        self.setProperty("role", "projitem")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(f"QFrame {{ border-left: 3px solid {row['color'] or '#8A8F98'}; }}")
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(6, 2, 4, 2)
+        v.setSpacing(0)
+        when = (row["planned_at"] or "")[11:16]
+        top = label(f"{when}  {row['concept']}" if when else row["concept"], "faint", hint=False)
+        top.setStyleSheet("font-size: 10px; border: none;")
+        v.addWidget(top)
+        name = row["video"] or row["title"] or "Sans titre"
+        nm = QLabel(name)
+        nm.setStyleSheet("font-size: 11px; font-weight: 700; border: none;")
+        nm.setMinimumWidth(0)
+        nm.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        v.addWidget(nm)
+        h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        self.toggles: dict[str, NetToggle] = {}
+        for key, nm_ in NETS:
+            t = NetToggle(key, nm_, 13)
+            t.setChecked(row["networks"].get(key, False))
+            t.clicked.connect(lambda _=False, k=key: self.app.publications.toggle_network(self.mid, k))
+            h.addWidget(t)
+            self.toggles[key] = t
+        h.addStretch(1)
+        v.addLayout(h)
+        self.setToolTip(f"{row['concept']} · {name}\n{row['text'][:300]}")
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton:
+            self.open.emit(self.mid)
+        super().mouseReleaseEvent(e)
 
 
 class DayCell(QFrame):
     open_master = Signal(int)
     new_on_day = Signal(str)
+    MAX = 3
 
-    def __init__(self, parent=None):
+    def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
+        self.app = app
         self.setProperty("role", "card")
         self.setMinimumHeight(96)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.lay = QVBoxLayout(self)
-        self.lay.setContentsMargins(6, 4, 6, 4)
+        self.lay.setContentsMargins(4, 3, 4, 3)
         self.lay.setSpacing(2)
         self.day = ""
 
@@ -43,20 +117,15 @@ class DayCell(QFrame):
         self.day = d.isoformat()
         head = label(("● " if today else "") + str(d.day), "h2" if today else ("muted" if in_month else "faint"))
         self.lay.addWidget(head)
-        for r in items[:4]:
-            t = (r["at"] or "")[11:16]
-            b = QPushButton(f"{STATUS_MARK.get(r['status'], '')}{t} {PLATFORM_SHORT.get(r['platform'], '')} · "
-                            f"{(r['title'] or 'Sans titre')[:22]}")
-            b.setFlat(True)
-            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-            b.setMinimumWidth(0)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setToolTip(f"{r['concept']} · {r['account']} · {STATUS.get(r['status'], r['status'])}\n{r['title'] or ''}")
-            b.setStyleSheet(f"text-align:left; padding:1px 4px; border-left:3px solid {r['color'] or '#8A8F98'};")
-            b.clicked.connect(lambda _=False, m=r["master_id"]: self.open_master.emit(m))
-            self.lay.addWidget(b)
-        if len(items) > 4:
-            self.lay.addWidget(label(f"+ {len(items) - 4} autre(s)", "faint"))
+        for r in items[:self.MAX]:
+            c = PlanChip(self.app, r)
+            c.open.connect(self.open_master.emit)
+            self.lay.addWidget(c)
+        if len(items) > self.MAX:
+            more = label(f"+ {len(items) - self.MAX} autre(s)", "faint", hint=False)
+            more.setToolTip("\n".join(f"{r['concept']} · {r['video'] or r['title'] or 'Sans titre'}"
+                                      for r in items[self.MAX:]))
+            self.lay.addWidget(more)
         self.lay.addStretch(1)
 
     def mouseDoubleClickEvent(self, e):
@@ -64,19 +133,109 @@ class DayCell(QFrame):
         super().mouseDoubleClickEvent(e)
 
 
+class PlanPopover(Popover):
+    """Nouvelle publication (ou modification) : concept, vidéo, texte, date et heure, logos des réseaux."""
+    saved = Signal()
+
+    def __init__(self, app: AppContext, master_id: int | None = None, day: str | None = None,
+                 concept_id: int | None = None, project_id: int | None = None, parent=None):
+        super().__init__(parent)
+        self.app, self.mid = app, master_id
+        row = app.publications.plan_of(master_id) if master_id else None
+        self.setFixedWidth(420)
+        self.body.addWidget(label("Modifier la publication" if row else "Nouvelle publication", "h2"))
+        self.concept = QComboBox()
+        for c in app.concepts.list_concepts():
+            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
+        want = row["concept_id"] if row else concept_id
+        self.concept.setCurrentIndex(max(0, self.concept.findData(want)))
+        self.body.addWidget(label("Concept", "muted", hint=False))
+        self.body.addWidget(self.concept)
+        self.video = QComboBox()
+        self.video.addItem("— Aucune vidéo —", None)
+        for p in app.projects.all(include_archived=False):
+            self.video.addItem(p["name"], p["id"])
+        want = row["project_id"] if row else project_id
+        self.video.setCurrentIndex(max(0, self.video.findData(want)))
+        self.body.addWidget(label("Vidéo", "muted", hint=False))
+        self.body.addWidget(self.video)
+        self.text = QPlainTextEdit(row["text"] if row else "")
+        self.text.setPlaceholderText("Titre, description, hashtags…")
+        self.text.setFixedHeight(110)
+        self.body.addWidget(label("Texte", "muted", hint=False))
+        self.body.addWidget(self.text)
+        self.when = WhenPicker()
+        if row and row["planned_at"]:
+            self.when.cal.setMinimumDate(QDate(2000, 1, 1))
+            self.when.setDateTime(QDateTime.fromString(row["planned_at"][:16], "yyyy-MM-ddTHH:mm"))
+        elif day:
+            d = QDate.fromString(day, "yyyy-MM-dd")
+            self.when.cal.setMinimumDate(min(d, QDate.currentDate()))
+            self.when.setDateTime(QDateTime(d, QTime(18, 0)))
+        self.body.addWidget(label("Date et heure", "muted", hint=False))
+        self.body.addWidget(self.when)
+        nets = QHBoxLayout()
+        nets.setSpacing(4)
+        self.nets: dict[str, NetToggle] = {}
+        for key, nm in NETS:
+            t = NetToggle(key, nm, 20)
+            t.setChecked(row["networks"].get(key, False) if row else True)
+            nets.addWidget(t)
+            self.nets[key] = t
+        nets.addStretch(1)
+        self.body.addLayout(nets)
+        foot = QHBoxLayout()
+        if row:
+            foot.addWidget(button("Supprimer", "ghost", icon="trash-2", on_click=self._delete))
+        foot.addStretch(1)
+        self.save_btn = button("Enregistrer", "primary", on_click=self._save)
+        foot.addWidget(self.save_btn)
+        self.body.addLayout(foot)
+        self.msg = label("", "muted", wrap=True, hint=False)
+        self.msg.hide()
+        self.body.addWidget(self.msg)
+
+    def _save(self) -> None:
+        cid = self.concept.currentData()
+        if cid is None:
+            self.msg.setText("Crée d'abord un concept (onglet Export, en bas).")
+            self.msg.show()
+            return
+        when = self.when.dateTime().toString("yyyy-MM-ddTHH:mm")
+        self.mid = self.app.publications.plan(cid, self.video.currentData(), self.text.toPlainText(), when,
+                                              {k: t.isChecked() for k, t in self.nets.items()}, self.mid)
+        self.saved.emit()
+        self.close()
+
+    def _delete(self) -> None:
+        if QMessageBox.question(self, "Supprimer", "Retirer cette publication du calendrier ?") != QMessageBox.Yes:
+            return
+        try:
+            self.app.publications.delete_master(self.mid)
+        except Exception as exc:                                   # déjà publiée sur un réseau
+            self.msg.setText(str(exc))
+            self.msg.show()
+            return
+        self.saved.emit()
+        self.close()
+
+
 class CalendarPage(QWidget):
     def __init__(self, app: AppContext, parent=None):
         super().__init__(parent)
         self.app = app
+        self.pop: PlanPopover | None = None
         t = date.today()
         self.year, self.month = t.year, t.month
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 16)
         hdr = PageHeader("Calendrier")
         self.concept = QComboBox()
+        self.concept.setToolTip("Les vidéos d'un concept, ou de tous")
         self.concept.currentIndexChanged.connect(self.refresh)
         hdr.add_action(self.concept)
-        hdr.add_action(button("Nouvelle publication", "primary", on_click=lambda: self.new_publication(), icon="plus"))
+        self.new_btn = button("Nouvelle publication", "primary", on_click=lambda: self.new_publication(), icon="plus")
+        hdr.add_action(self.new_btn)
         lay.addWidget(hdr)
         nav = QHBoxLayout()
         nav.addWidget(tool("chevron-left", "Mois précédent", lambda: self._shift(-1)))
@@ -87,7 +246,6 @@ class CalendarPage(QWidget):
         nav.addWidget(button("Aujourd'hui", "ghost", on_click=self._today))
         nav.addStretch(1)
         lay.addLayout(nav)
-        split = QSplitter(Qt.Horizontal)
         gridw = QWidget()
         self.grid = QGridLayout(gridw)
         self.grid.setSpacing(4)
@@ -98,36 +256,16 @@ class CalendarPage(QWidget):
             self.grid.addWidget(h, 0, i)
         self.cells: list[DayCell] = []
         for k in range(42):
-            c = DayCell()
-            c.open_master.connect(self.open_master)
-            c.new_on_day.connect(lambda d: self.new_publication(day=d))
+            c = DayCell(app)
+            c.open_master.connect(lambda m, c=c: self.open_master(m, c))
+            c.new_on_day.connect(lambda d, c=c: self.new_publication(day=d, anchor=c))
             self.grid.addWidget(c, 1 + k // 7, k % 7)
             self.cells.append(c)
         for i in range(7):
             self.grid.setColumnStretch(i, 1)
         for r in range(1, 7):
             self.grid.setRowStretch(r, 1)
-        split.addWidget(gridw)
-        side = QWidget()
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(8, 0, 0, 0)
-        self.todo_lbl = label("À faire maintenant", "h2")
-        sl.addWidget(self.todo_lbl)
-        self.todo = QListWidget()
-        self.todo.itemActivated.connect(self._todo_open)
-        self.todo.itemDoubleClicked.connect(self._todo_open)
-        sl.addWidget(self.todo, 1)
-        self.undated_lbl = label("Sans date", "h2")
-        sl.addWidget(self.undated_lbl)
-        self.undated = QListWidget()
-        self.undated.itemDoubleClicked.connect(lambda it: self.open_master(it.data(Qt.UserRole)))
-        sl.addWidget(self.undated, 1)
-        sl.addStretch(0)
-        self.side = side
-        split.addWidget(side)
-        split.setStretchFactor(0, 4)
-        split.setStretchFactor(1, 1)
-        lay.addWidget(split, 1)
+        lay.addWidget(gridw, 1)
 
     # -- navigation ----------------------------------------------------------------------------
     def _shift(self, n: int) -> None:
@@ -146,7 +284,7 @@ class CalendarPage(QWidget):
         self.concept.clear()
         self.concept.addItem("Tous les concepts", None)
         for c in self.app.concepts.list_concepts():
-            self.concept.addItem(c.name, c.id)
+            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
         self.concept.setCurrentIndex(max(0, self.concept.findData(cur)))
         self.concept.blockSignals(False)
 
@@ -157,61 +295,37 @@ class CalendarPage(QWidget):
         first = date(self.year, self.month, 1)
         start = first - timedelta(days=first.weekday())
         end = start + timedelta(days=42)
-        rows = self.app.publications.calendar(start.isoformat() + "T00:00", end.isoformat() + "T00:00", cid)
         by_day: dict[str, list] = {}
-        for r in rows:
-            by_day.setdefault(r["at"][:10], []).append(r)
+        for r in self.app.publications.planned(start.isoformat() + "T00:00", end.isoformat() + "T00:00", cid):
+            by_day.setdefault(r["planned_at"][:10], []).append(r)
         today = date.today()
         for k, cell in enumerate(self.cells):
             d = start + timedelta(days=k)
             cell.set_day(d, d.month == self.month, d == today, by_day.get(d.isoformat(), []))
-        self.todo.clear()
-        for r in self.app.db.query(self.app.publications._CAL + "WHERE p.status IN ('manual_action','failed') "
-                                   + ("AND c.id = ? " if cid else "") + "ORDER BY at", (cid,) if cid else ()):
-            it = QListWidgetItem(f"{STATUS_MARK.get(r['status'], '')}{PLATFORM_SHORT.get(r['platform'], '')} "
-                                 f"{r['account']} · {r['title'] or 'Sans titre'}")
-            it.setToolTip(r["last_error"] or STATUS.get(r["status"], ""))
-            if self.app.publications.matches(r["id"]):          # lien retrouvé, à vérifier dans l'Atelier
-                it.setText(it.text() + "  · lien à vérifier")
-            it.setData(Qt.UserRole, r["id"])
-            self.todo.addItem(it)
-        has_todo = self.todo.count() > 0
-        self.undated.clear()
-        seen = set()
-        for r in self.app.publications.undated(cid):
-            if r["master_id"] in seen:
-                continue
-            seen.add(r["master_id"])
-            it = QListWidgetItem(f"{r['concept']} · {r['title'] or 'Sans titre'}")
-            it.setData(Qt.UserRole, r["master_id"])
-            self.undated.addItem(it)
-        has_undated = self.undated.count() > 0
-        for w, on in ((self.todo_lbl, has_todo), (self.todo, has_todo), (self.undated_lbl, has_undated),
-                      (self.undated, has_undated)):
-            w.setVisible(on)
-        self.side.setVisible(has_todo or has_undated)           # colonne masquée quand il n'y a rien
 
     def pending_count(self) -> int:
-        return self.app.db.query_one("SELECT COUNT(*) n FROM publication WHERE status = 'manual_action'")["n"]
+        """Plus de liste « à faire » : rien à signaler à côté du nom de la page."""
+        return 0
 
     # -- actions -------------------------------------------------------------------------------
-    def new_publication(self, variant_id: int | None = None, day: str | None = None) -> None:
-        if not self.app.concepts.list_concepts():
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Publication", "Ajoutez d'abord un compte dans Concepts et projets.")
-            return
-        if PublicationDialog(self.app, variant_id=variant_id, day=day, parent=self).exec():
-            self.refresh()
+    def _popover(self, pop: PlanPopover, anchor: QWidget | None) -> PlanPopover:
+        pop.saved.connect(self.refresh)
+        self.pop = pop
+        pop.show_at(anchor or self.new_btn)
+        return pop
 
-    def open_master(self, master_id: int) -> None:
-        PublicationDialog(self.app, master_id, parent=self).exec()
-        self.refresh()
+    def new_publication(self, variant_id: int | None = None, day: str | None = None,
+                        anchor: QWidget | None = None) -> PlanPopover:
+        project = None
+        if variant_id:
+            r = self.app.db.query_one("SELECT c.project_id FROM video_variant v JOIN clip c ON c.id = v.clip_id "
+                                      "WHERE v.id = ?", (variant_id,))
+            project = r["project_id"] if r else None
+        return self._popover(PlanPopover(self.app, day=day, concept_id=self.concept.currentData(),
+                                         project_id=project, parent=self), anchor)
 
-    def _todo_open(self, it: QListWidgetItem) -> None:
-        pid = it.data(Qt.UserRole)
-        if pid:
-            PublishWorkshop(self.app, pid, self).exec()
-            self.refresh()
+    def open_master(self, master_id: int, anchor: QWidget | None = None) -> PlanPopover:
+        return self._popover(PlanPopover(self.app, master_id, parent=self), anchor)
 
 
 def now_local() -> str:

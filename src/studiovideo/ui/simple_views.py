@@ -528,7 +528,7 @@ class ClippingView(_View):
             self.full_card.clicked.connect(self._select)
             self.full_slot.addWidget(self.full_card)
         for r in rows:
-            tag = ("Vidéo de ce projet" if made.get(r["id"]) == self.pid else "Vidéo créée" if r["id"] in made
+            tag = ("Cette vidéo" if made.get(r["id"]) == self.pid else "Vidéo créée" if r["id"] in made
                    else "")
             dur = (r["end_s"] or 0) - (r["start_s"] or 0)
             card = MomentCard(r["id"], self._title_of(r, data), self._opening(r),
@@ -633,12 +633,12 @@ class ClippingView(_View):
         checked = [r for r in rows if r["state"] == "accepted"]
         todo = [r for r in checked if r["id"] not in made]
         if todo:
-            return self._banner(f"Crée {len(todo)} vidéo(s)", "Le premier extrait devient la vidéo de ce projet, "
-                                "les autres un projet chacun : format vertical, sous-titres et accroche.", step=2)
+            return self._banner(f"Crée {len(todo)} vidéo(s)", "Le premier extrait devient cette vidéo, "
+                                "les autres une vidéo chacun : format vertical, sous-titres et accroche.", step=2)
         if made.get(data.get("clip_of")) == self.pid:
             others = len([c for c, p in made.items() if p != self.pid])
             return self._banner("Ta vidéo est prête", "Elle passe telle quelle dans les autres onglets, en bas."
-                                + (f" {others} autre(s) extrait(s) ont leur projet, à gauche." if others else ""),
+                                + (f" {others} autre(s) extrait(s) sont devenus des vidéos, à gauche." if others else ""),
                                 step=3)
         return self._banner("Coche les extraits à garder", f"{len(rows)} extrait(s) proposé(s), du plus fort "
                             "au moins fort. Clique sur un extrait pour le voir.", step=2)
@@ -876,7 +876,7 @@ class ClippingView(_View):
         p = self.app.projects.get(self.pid) if self.pid else None
         if not p:
             return
-        name, ok = QInputDialog.getText(self, "Renommer", "Nom du projet :", text=p["name"])
+        name, ok = QInputDialog.getText(self, "Renommer", "Nom de la vidéo :", text=p["name"])
         if ok and name.strip():
             self.app.projects.rename(self.pid, name.strip())
             self.schedule_refresh()
@@ -1554,7 +1554,7 @@ class TranslationView(_View):
         n = len(self._langs())
         self.go.setText(f"Préparer  ·  {n} langue{'s' if n > 1 else ''}" if n else "Préparer")
         self.go.setEnabled(bool(self.video() and n and (self.do_subs.isChecked() or self.do_voice.isChecked())))
-        self.go.setToolTip("Chaque langue devient une version de la vidéo, rangée sous le projet (barre de gauche).")
+        self.go.setToolTip("Chaque langue devient une version de la vidéo, rangée sous elle (barre de gauche).")
 
     def _pick_voice(self, current: dict | None = None) -> None:
         dlg = VoiceDialog(self.app, current or self.voice or

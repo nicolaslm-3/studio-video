@@ -133,7 +133,7 @@ class TranscriptDialog(QDialog):
         self.again_btn.setVisible(has and not self.lang)
         self.history_btn.setEnabled(self.aid is not None)
         if self.aid is None:
-            self.info.setText("Ce projet n'a pas encore de vidéo : importe-la en haut.")
+            self.info.setText("Pas encore de vidéo : importe-la en haut.")
             return
         if not has:
             running = self.app.db.query_one(

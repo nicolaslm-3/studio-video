@@ -9,6 +9,7 @@ Règles :
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ..db.database import Database
@@ -247,6 +248,65 @@ class PublicationService:
 
     def cancel(self, publication_id: int) -> None:
         self.set_status(publication_id, PublicationStatus.CANCELLED)
+
+    # -- calendrier : vidéos programmées (organisation personnelle) ---------------------------
+    NETS = ("youtube", "tiktok", "meta")
+
+    def plan(self, concept_id: int, project_id: int | None, text: str, when: str,
+             networks: dict | None = None, master_id: int | None = None) -> int:
+        """Vidéo programmée au calendrier : concept, vidéo, un seul bloc de texte (titre, description, hashtags),
+        date et heure locales (« AAAA-MM-JJTHH:MM »), petits logos cochés. Rien n'est publié par le logiciel."""
+        text = (text or "").strip()
+        title = (text.splitlines() or [""])[0].strip()[:100]
+        nets = json.dumps({k: bool((networks or {}).get(k)) for k in self.NETS})
+        with self.db.transaction() as c:
+            if master_id:
+                c.execute("UPDATE master_publication SET concept_id = ?, project_id = ?, title = ?, description = ?,"
+                          " hashtags = '', planned_at = ?, networks_json = ? WHERE id = ?",
+                          (concept_id, project_id, title, text, when, nets, master_id))
+                return master_id
+            return c.execute("INSERT INTO master_publication(concept_id, project_id, title, description, planned_at,"
+                             " networks_json) VALUES (?,?,?,?,?,?)",
+                             (concept_id, project_id, title, text, when, nets)).lastrowid
+
+    _PLAN = ("SELECT m.id, m.concept_id, c.name concept, c.color, m.project_id, pr.name video, m.title,"
+             " m.description, m.hashtags, m.planned_at, m.networks_json FROM master_publication m"
+             " JOIN concept c ON c.id = m.concept_id LEFT JOIN project pr ON pr.id = m.project_id ")
+
+    @staticmethod
+    def _plan_row(r) -> dict:
+        d = dict(r)
+        try:
+            nets = json.loads(r["networks_json"] or "{}")
+        except ValueError:
+            nets = {}
+        d["networks"] = {k: bool(nets.get(k)) for k in PublicationService.NETS}
+        d["text"] = "\n\n".join(x for x in (r["description"] or r["title"] or "", r["hashtags"] or "") if x)
+        return d
+
+    def planned(self, start: str, end: str, concept_id: int | None = None) -> list[dict]:
+        """Vidéos programmées dans [start, end[ (heure locale), d'un concept ou de tous."""
+        sql = self._PLAN + "WHERE m.planned_at >= ? AND m.planned_at < ?"
+        params: list = [start, end]
+        if concept_id:
+            sql += " AND m.concept_id = ?"
+            params.append(concept_id)
+        return [self._plan_row(r) for r in self.db.query(sql + " ORDER BY m.planned_at, m.id", tuple(params))]
+
+    def plan_of(self, master_id: int) -> dict | None:
+        r = self.db.query_one(self._PLAN + "WHERE m.id = ?", (master_id,))
+        return self._plan_row(r) if r else None
+
+    def toggle_network(self, master_id: int, key: str) -> bool:
+        """Petit logo d'une vidéo du calendrier : en couleur ↔ grisé. Renvoie le nouvel état."""
+        d = self.plan_of(master_id)
+        if d is None or key not in self.NETS:
+            raise PublicationError("Publication introuvable.")
+        d["networks"][key] = not d["networks"][key]
+        with self.db.transaction() as c:
+            c.execute("UPDATE master_publication SET networks_json = ? WHERE id = ?",
+                      (json.dumps(d["networks"]), master_id))
+        return d["networks"][key]
 
     def delete_master(self, master_id: int) -> None:
         if self.db.query_one("SELECT 1 FROM publication WHERE master_id = ? AND status = 'published'", (master_id,)):

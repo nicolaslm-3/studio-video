@@ -24,7 +24,7 @@ STEPS = {"transcribe": "Transcription", "translate": "Traduction", "translate_vi
          "make_proxy": "Préparation de l'aperçu", "waveform": "Forme d'onde", "find_silences": "Silences",
          "optimize_audio": "Son optimisé", "analyze_audio": "Analyse du son", "write_copy": "Rédaction",
          "write_script": "Rédaction du script", "create_original": "Création originale",
-         "export_project": "Sauvegarde du projet", "import_project": "Ouverture d'un projet",
+         "export_project": "Sauvegarde de la vidéo", "import_project": "Ouverture d'une vidéo enregistrée",
          "refresh_stats": "Statistiques", "connect_account": "Connexion du compte"}
 # étapes de la traduction en un clic (message « EN · voix · … »)
 TV_STEPS = {"voix": "génération de la voix", "traduction du texte": "traduction",

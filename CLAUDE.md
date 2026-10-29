@@ -36,8 +36,11 @@ et sa voix doublée : on le retrouve dans tous les onglets (sous-titres dans Tex
 montage (`Timeline`), même format ; la vidéo importée est placée d'office dans la timeline (`StudioPage.
 _sync_project_video`, `project_video`). Un clic sur un parcours affiche le projet ouvert dans cette interface
 (`project.mode` = dernière interface, `ProjectService.set_mode`) ; sans projet ouvert, le dernier, sinon un projet
-vierge conservé seulement à la première modification (`ProjectService.is_untouched`). Clic droit sur un projet :
-renommer, supprimer (un projet supprimé emporte ses versions). L'en-tête du Studio est commun à tous les onglets :
+vierge conservé seulement à la première modification (`ProjectService.is_untouched`). **Dans l'interface, un projet
+s'appelle une « vidéo »** (le code garde `project`). Au survol d'une vidéo de la barre (et au clic droit) : renommer,
+archiver, supprimer (`StudioPage.project_action` ; une vidéo supprimée ou archivée emporte ses versions) ; les vidéos
+archivées sont dans **Archives** (menu des trois barres, `ui/pages/archives.py`, restaurer ou supprimer). Il n'y a
+plus de page « Concepts et projets ». L'en-tête du Studio est commun à tous les onglets :
 Médias (rectangle volant : la liste des vidéos, moitié de la hauteur de l'écran), Importer, lien (icônes grises, à
 gauche), **Transcription** (`ui/transcript_dialog.py` : relire et corriger la transcription, enregistré de lui-même ;
 la version corrigée sert partout, `TranscriptService.save_edit`, et les sous-titres déjà faits de cette vidéo sont
@@ -105,8 +108,17 @@ champ titre, le titre ouvre la description), petit aperçu, puis « Brouillon su
 API : YouTube privé, boîte de réception TikTok, Page Facebook ; les autres et Instagram par la page d'envoi) ou
 « Sur mon PC seulement » — ni publication immédiate ni programmation ; à droite l'**Atelier de publication** : la
 vidéo exportée (rectangle étroit, à glisser, ou « Afficher dans l'Explorateur »), puis une carte par réseau (YouTube,
-TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite) : icône et nom, compte, « Ouvrir la page
-d'envoi » (texte copié), lien de la vidéo publiée (`publish_workshop.LinkBox`) ; pas de case à cocher.
+TikTok, **Meta** = Facebook + Instagram, page d'envoi Meta Business Suite), sur une ligne : logo, chaîne du
+**concept choisi dans le menu « Concept »** (`concepts_box.concept_account`) à gauche, « Ouvrir la page d'envoi »
+(texte copié) à droite, puis le lien de la vidéo publiée (`publish_workshop.LinkBox`) ; YouTube Studio s'ouvre sur la
+chaîne (`reconcile.youtube_channel_id`, gardé dans les réglages du compte). En dessous, les **concepts**
+(`ui/concepts_box.py`) : liste qu'on fait défiler, colonnes nom, thématique, couleur, langue, puis trois logos (une
+chaîne par réseau : en couleur si le concept en a une, grisé sinon ; clic : rectangle volant nom / adresse publique,
+« Avancé : API ») ; « Nouveau concept » ajoute une ligne sans fenêtre. **Calendrier** (`ui/pages/calendar.py`,
+migration 0010) : menu des concepts (ou tous), vidéos programmées en petits rectangles à leur date (concept, nom de la
+vidéo, trois logos qu'on met en couleur ou grise d'un clic, pour s'organiser : rien n'est publié) ; « Nouvelle
+publication » (ou double-clic sur un jour, clic sur une vidéo pour la modifier) : rectangle volant concept → vidéo,
+un seul bloc de texte, date et heure (`ui/when_picker.py`), logos (`PublicationService.plan`).
 « Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte et adresse publique ; les pages
 des réseaux s'ouvrent dans un **nouvel onglet du navigateur par défaut déjà ouvert**, avec les comptes où
 l'utilisateur est connecté (`browser_login.open_page`) — pas de profil séparé ni de « Se connecter à ce compte » (le

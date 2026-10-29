@@ -57,7 +57,10 @@ src/studiovideo/
     ├── pages/          studio, médias, calendrier, analytics, paramètres (pas de page d'accueil)
     ├── player.py       lecteur source + points d'entrée/sortie
     ├── montage_player.py lecteur du montage, aperçu en direct du cadrage (coins arrondis, sans bandes noires)
-    ├── project_sidebar.py barre des projets (Clipping, Traduction, Textes), ordre stable, versions en retrait
+    ├── project_sidebar.py barre des vidéos (Clipping, Traduction, Textes, Export), ordre stable, versions en retrait,
+    │                     renommer / archiver / supprimer au survol
+    ├── concepts_box.py concepts et leurs chaînes (YouTube, TikTok, Meta), en bas de l'onglet Export
+    ├── when_picker.py  date (calendrier, jour dans un rond) et heure, minutes par 5
     ├── scrub.py        valeurs réglables à la souris (temps, nombres) : remplacent les champs numériques
     ├── effects.py      bouton robot : effets de l'image (miroir, zoom, mouvement, filtre, rotation, vitesse)
     ├── audio_out.py    le son suit la sortie audio de Windows (écouteurs Bluetooth)
@@ -147,7 +150,9 @@ src/studiovideo/
 | `ui/shell.py` | Dock des onglets, bulles et infobulles aux couleurs du thème (`TipFilter`), bouton des tâches |
 | `edit/translation.py` | Vidéo traduite clé en main : styles de sous-titres, voix doublée, texte du haut ; utilisé par la tâche `translate_video` |
 | `ui/color_picker.py` | Choix de couleur intégré (panneau flottant aux couleurs du thème) |
-| `ui/pages/calendar.py`, `ui/pages/analytics.py` | Calendrier éditorial, comparaisons et rétention |
+| `ui/pages/calendar.py` | Calendrier : vidéos programmées par concept (ou toutes), petits rectangles avec trois logos à cocher (organisation personnelle, colonnes `project_id` et `networks_json` de `master_publication`, migration 0010) ; nouvelle publication en rectangle volant |
+| `ui/pages/archives.py` | Vidéos archivées (menu des trois barres) : restaurer, supprimer |
+| `ui/pages/analytics.py` | Comparaisons et rétention ; une vidéo sur les quatre réseaux |
 
 Tous les modèles d'IA tournent sur le PC (onnxruntime, CTranslate2) et sont téléchargés à la demande avec
 vérification d'empreinte. Les services distants (ElevenLabs, DeepL, Google, plateformes sociales) ne sont

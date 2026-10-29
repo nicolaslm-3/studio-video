@@ -19,7 +19,7 @@ from .jobs_panel import JobsPanel
 from .shell import Dock, Drawer, Popover, TipFilter, Toast
 from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
-from .pages.concepts import ConceptsPage
+from .pages.archives import ArchivesPage
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 # pas de page d'accueil : le logiciel s'ouvre dans Montage libre (la page 0 reste vide, les numéros ne changent pas)
 NAV = [(1, "Studio", "clapperboard", "Ctrl+1"), (2, "Médias", "film", "Ctrl+2"),
        (3, "Calendrier", "calendar-days", "Ctrl+3"), (4, "Analytics", "chart-no-axes-column", "Ctrl+4"),
-       (6, "Concepts et projets", "folder-kanban", "Ctrl+5"), (5, "Paramètres", "settings", "Ctrl+6")]
+       (6, "Archives", "archive", "Ctrl+5"), (5, "Paramètres", "settings", "Ctrl+6")]
 
 
 class MainWindow(QMainWindow):
@@ -65,9 +65,9 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
         self.calendar = CalendarPage(app)
         self.analytics = AnalyticsPage(app)
-        self.concepts_page = ConceptsPage(app, self.settings_page)
+        self.archives = ArchivesPage(app)
         for p in (QWidget(), self.studio, self.library, self.calendar, self.analytics, self.settings_page,
-                  self.concepts_page):
+                  self.archives):
             self.pages.addWidget(p)
         root.addWidget(self.pages, 1)
 
@@ -106,10 +106,8 @@ class MainWindow(QMainWindow):
         self.studio.view_changed.connect(self._sync_dock)
         self.studio.goto_tab.connect(self.start_parcours)
         self.studio.open_ai_settings.connect(lambda: (self.go(5), self.settings_page.show_models()))
-        self.concepts_page.edit_concept.connect(self.edit_concept)
-        self.concepts_page.open_project.connect(self.open_project)
+        self.archives.restored.connect(lambda _pid: self.studio.refresh())
         self.settings_page.llm_changed.connect(self.studio.highlights.refresh_engines)
-        self.settings_page.edit_concept.connect(self.edit_concept)
         self.settings_page.theme_changed.connect(self.set_theme)
         self.settings_page.check_updates.connect(self.updater.check_now)
 
@@ -235,11 +233,11 @@ class MainWindow(QMainWindow):
             return False
         pid = a["project_id"]
         if pid is None or self.app.projects.get(pid) is None:
-            if QMessageBox.question(self, "Ouvrir", f"« {a['file_name']} » n'appartient à aucun projet.\n\n"
-                                    "Créer un projet pour ce média ?") != QMessageBox.Yes:
+            if QMessageBox.question(self, "Ouvrir", f"« {a['file_name']} » n'appartient à aucune vidéo du Studio.\n\n"
+                                    "Créer une vidéo à partir de ce média ?") != QMessageBox.Yes:
                 return False
             concepts = self.app.concepts.list_concepts()
-            pid = self.app.projects.create(concepts[0].id, Path(a["file_name"]).stem[:60] or "Projet")
+            pid = self.app.projects.create(concepts[0].id, Path(a["file_name"]).stem[:60] or "Vidéo")
             self.app.db.connect().execute("UPDATE source_asset SET project_id = ? WHERE id = ?", (pid, asset_id))
         self.open_project(pid)
         self.studio._select_asset(asset_id)
@@ -298,7 +296,7 @@ class MainWindow(QMainWindow):
             self.app.jobs.submit("import_file", f"Import · {v.name}",
                                  {"path": str(v), "project_id": pid, "auto_clips": True})
         self.open_project(pid)
-        self.notify("Projet brouillon créé : transcription et recherche des extraits en cours…", 7000)
+        self.notify("Vidéo créée : transcription et recherche des extraits en cours…", 7000)
         return pid
 
     def notify(self, text: str, ms: int = 5000) -> None:
@@ -366,7 +364,7 @@ class MainWindow(QMainWindow):
     # -- actions ------------------------------------------------------------
     def new_project(self, concept_id=None) -> None:
         if not self.app.concepts.list_concepts():
-            QMessageBox.information(self, "Nouveau projet", "Créez d'abord un concept éditorial.")
+            QMessageBox.information(self, "Nouvelle vidéo", "Créez d'abord un concept éditorial.")
             self.edit_concept(None)
             if not self.app.concepts.list_concepts():
                 return
@@ -382,24 +380,24 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
 
         from .pages.studio import default_export_dir
-        path, _ = QFileDialog.getOpenFileName(self, "Importer un projet", str(default_export_dir()),
-                                              "Projet Studio Vidéo (*.studioproj)")
+        path, _ = QFileDialog.getOpenFileName(self, "Importer une vidéo enregistrée", str(default_export_dir()),
+                                              "Vidéo Studio Vidéo (*.studioproj)")
         if not path:
             return
-        self._import_job = self.app.jobs.submit("import_project", "Import du projet", {
-            "path": path, "media_dir": str(default_export_dir() / "Projets importés")})
-        self.notify("Import du projet en cours…", 10000)
+        self._import_job = self.app.jobs.submit("import_project", "Import de la vidéo", {
+            "path": path, "media_dir": str(default_export_dir() / "Vidéos importées")})
+        self.notify("Import de la vidéo en cours…", 10000)
 
     def _on_project_imported(self, j) -> None:
         if j.status == "succeeded":
             r = j.result
-            msg = f"Projet « {r['name']} » importé."
+            msg = f"Vidéo « {r['name']} » importée."
             if r["missing"]:
                 msg += f"\n\nMédias introuvables ({len(r['missing'])}) : {', '.join(r['missing'][:5])}"
-            QMessageBox.information(self, "Importer un projet", msg)
+            QMessageBox.information(self, "Importer une vidéo enregistrée", msg)
             self.open_project(r["project_id"])
         elif j.status == "failed":
-            QMessageBox.warning(self, "Importer un projet", j.error[:600])
+            QMessageBox.warning(self, "Importer une vidéo enregistrée", j.error[:600])
 
     def edit_concept(self, concept_id=None) -> None:
         if ConceptDialog(self.app, concept_id, self).exec():

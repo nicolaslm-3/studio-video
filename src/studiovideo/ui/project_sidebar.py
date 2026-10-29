@@ -1,6 +1,7 @@
-"""Barre des projets, à gauche des onglets Clipping, Traduction et Textes : nom de l'onglet et « + » (nouveau
-projet), puis les projets, chacun avec le nom du fichier importé ; ses versions traduites juste en dessous, en
-retrait. Clic : ouvrir dans l'onglet affiché ; clic droit : renommer ou supprimer."""
+"""Barre des vidéos, à gauche des onglets Clipping, Traduction, Textes et Export : nom de l'onglet et « + » (nouvelle
+vidéo), puis les vidéos, chacune avec des mots-clés de sa transcription ; ses versions traduites juste en dessous, en
+retrait. Clic : ouvrir dans l'onglet affiché ; au survol, trois petits boutons : renommer, archiver (menu des trois
+barres → Archives), supprimer — aussi au clic droit."""
 from __future__ import annotations
 
 import json
@@ -16,9 +17,11 @@ from .widgets import ElidedLabel, tool
 
 
 class ProjectItem(QFrame):
-    """Un projet de la liste : nom, et en gris le fichier importé (ou la langue d'une version traduite)."""
+    """Une vidéo de la liste : nom, et en gris des mots-clés (ou la langue d'une version traduite) ; au survol,
+    renommer, archiver, supprimer."""
     clicked = Signal(int)
     menu = Signal(int, object)
+    action = Signal(int, str)                           # « rename », « archive » ou « delete »
 
     def __init__(self, pid: int, name: str, sub: str, current: bool, indent: int = 0):
         super().__init__()
@@ -26,15 +29,28 @@ class ProjectItem(QFrame):
         self.setProperty("role", "projitem")
         self.setProperty("selected", "true" if current else "false")
         self.setCursor(Qt.PointingHandCursor)
-        v = QVBoxLayout(self)
-        v.setContentsMargins(12, 5 if current else 8, 12, 5 if current else 8)     # projet ouvert : moins haut
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 5 if current else 8, 6, 5 if current else 8)     # vidéo ouverte : moins haute
+        row.setSpacing(2)
+        v = QVBoxLayout()
         v.setSpacing(1)
+        row.addLayout(v, 1)
+        self.actions = QWidget()
+        al = QHBoxLayout(self.actions)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.setSpacing(0)
+        for kind, ic, tip in (("rename", "pencil", "Renommer"), ("archive", "archive", "Archiver (menu ☰ → Archives)"),
+                              ("delete", "trash-2", "Supprimer")):
+            b = tool(ic, tip, lambda _=False, k=kind: self.action.emit(self.pid, k), size=24, icon_px=14)
+            al.addWidget(b)
+        self.actions.hide()
+        row.addWidget(self.actions)
         self.name = ElidedLabel(name)                    # une ligne chacun, « … » si la place manque
         self.name.setStyleSheet("font-weight: 700;" + (" font-size: 12px;" if indent else ""))
         v.addWidget(self.name)
         self.sub = ElidedLabel(sub, "faint")
         v.addWidget(self.sub)
-        self.setToolTip(f"{name}\n{sub}\n\nClic droit : renommer ou supprimer")
+        self.setToolTip(f"{name}\n{sub}")
         self.name.setToolTip(self.toolTip())
         self.sub.setToolTip(self.toolTip())
         if indent:
@@ -48,9 +64,17 @@ class ProjectItem(QFrame):
     def contextMenuEvent(self, e) -> None:
         self.menu.emit(self.pid, e.globalPos())
 
+    def enterEvent(self, e) -> None:
+        self.actions.show()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e) -> None:
+        self.actions.hide()
+        super().leaveEvent(e)
+
 
 class ProjectSidebar(QFrame):
-    """La colonne des projets, sur toute la hauteur, pour l'onglet `mode` affiché."""
+    """La colonne des vidéos, sur toute la hauteur, pour l'onglet `mode` affiché."""
 
     def __init__(self, app, host, parent=None):
         super().__init__(parent)
@@ -68,7 +92,7 @@ class ProjectSidebar(QFrame):
         self.title = QLabel()
         self.title.setStyleSheet("font-size: 17px; font-weight: 700;")
         self.title.setWordWrap(True)
-        self.new_btn = tool("plus", "Nouveau projet", lambda: self.host.new_blank.emit(self.mode), size=30)
+        self.new_btn = tool("plus", "Nouvelle vidéo", lambda: self.host.new_blank.emit(self.mode), size=30)
         head = QHBoxLayout()
         head.setSpacing(6)
         head.addWidget(self.logo)
@@ -95,7 +119,7 @@ class ProjectSidebar(QFrame):
         self.mode = mode
         self._sig = None
         name, ic, col, _d = theme.EXPORT_TAB if mode == "export" else theme.PARCOURS[mode]
-        self.new_btn.setVisible(mode != "export")        # Export : on choisit un projet existant
+        self.new_btn.setVisible(mode != "export")        # Export : on choisit une vidéo existante
         self.logo.setIcon(theme.icon(ic, col, 22))
         self.title.setText(name)
         self.new_btn.setIcon(theme.icon("plus", theme.color("muted"), 18))
@@ -202,4 +226,5 @@ class ProjectSidebar(QFrame):
             it = ProjectItem(pid, name, sub, pid == self.host.project_id, indent=child)
             it.clicked.connect(lambda p: self.host.open_from_list(p, self.mode))
             it.menu.connect(lambda p, pos: self.host.project_menu(p, self.mode, self, pos))
+            it.action.connect(lambda p, k: self.host.project_action(p, k, self.mode, self))
             self.items.addWidget(it)

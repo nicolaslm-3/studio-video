@@ -147,3 +147,31 @@ def details(url: str) -> dict:
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, "js_runtimes": js_runtimes()}
     with yt_dlp.YoutubeDL(opts) as ydl:
         return _entry(ydl.extract_info(url, download=False) or {})
+
+
+def youtube_channel_id(public_url: str) -> str:
+    """Identifiant « UC… » de la chaîne YouTube (adresse /channel/UC…, sinon lu sur sa page publique avec yt-dlp) :
+    YouTube Studio s'ouvre alors sur cette chaîne. "" si introuvable."""
+    m = re.search(r"/channel/(UC[\w-]{20,})", public_url or "")
+    if m:
+        return m.group(1)
+    urls = listing_urls("youtube", public_url)
+    if not urls:
+        return ""
+    import yt_dlp
+
+    from ..media.downloader import js_runtimes
+    opts = {"extract_flat": "in_playlist", "playlistend": 1, "quiet": True, "no_warnings": True,
+            "skip_download": True, "js_runtimes": js_runtimes()}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(urls[1], download=False) or {}
+    except Exception:
+        return ""
+    cid = info.get("channel_id") or ""
+    return cid if re.fullmatch(r"UC[\w-]{20,}", cid) else ""
+
+
+def youtube_upload_url(channel_id: str) -> str:
+    """Page d'envoi de YouTube Studio sur cette chaîne (Google demande de s'y connecter au besoin)."""
+    return f"https://studio.youtube.com/channel/{channel_id}/videos/upload?d=ud"

@@ -1,4 +1,4 @@
-"""Ajouter, régler et connecter un compte d'un réseau (onglet Export, « Ajouter un compte » ; Concepts et projets).
+"""Ajouter, régler et connecter un compte d'un réseau (onglet Export, chaînes des concepts : « Avancé : API »).
 
 Sans API, le compte n'a besoin que de son adresse publique : les pages d'envoi s'ouvrent dans le navigateur de
 l'utilisateur, où il est connecté. La connexion par API (application développeur du réseau, OAuth)

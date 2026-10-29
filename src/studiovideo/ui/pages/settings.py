@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QHeaderView,
                                QListWidget, QListWidgetItem, QMessageBox, QTableWidget, QTableWidgetItem, QTabWidget,
                                QVBoxLayout, QWidget)
@@ -17,10 +17,8 @@ from ... import __version__
 from ...core import AppContext
 from ...media import downloader, ffmpeg
 from ...services import secrets
-from ...services.concepts import ConceptError
 from ...transcribe import engines as asr
 from ...update import rollback
-from ..dialogs import AccountDialog
 from .. import theme
 from ..widgets import Card, PageHeader, button, label
 
@@ -47,7 +45,6 @@ def _fit_height(t: QTableWidget) -> None:
 
 
 class SettingsPage(QWidget):
-    edit_concept = Signal(object)
     theme_changed = Signal(str)
     check_updates = Signal()
     llm_changed = Signal()
@@ -92,157 +89,9 @@ class SettingsPage(QWidget):
     def show_about(self) -> None:
         self.show_tab("À propos")
 
-    # -- concepts et comptes ------------------------------------------------
-    def _concepts_tab(self) -> QWidget:
-        w = QWidget()
-        h = QHBoxLayout(w)
-        h.setContentsMargins(0, 16, 0, 0)
-        h.setSpacing(16)
-        left = Card()
-        left.lay.addWidget(label("Concepts", "h2"))
-        self.concept_list = QListWidget()
-        self.concept_list.itemDoubleClicked.connect(lambda it: self.edit_concept.emit(it.data(Qt.UserRole)))
-        left.lay.addWidget(self.concept_list, 1)
-        lb = QHBoxLayout()
-        lb.addWidget(button("Nouveau", "soft", on_click=lambda: self.edit_concept.emit(None), icon="plus"))
-        lb.addWidget(button("Modifier", "ghost", on_click=self._edit_selected_concept))
-        lb.addWidget(button("Archiver", "ghost", on_click=self._archive_concept))
-        lb.addStretch(1)
-        left.lay.addLayout(lb)
-        h.addWidget(left, 1)
-
-        right = Card()
-        right.lay.addWidget(label("Comptes sociaux", "h2"))
-        right.lay.addWidget(label("Un compte peut appartenir à plusieurs concepts. Les pages d'envoi s'ouvrent dans ton "
-                                  "navigateur, où tu es connecté. La connexion par API reste possible dans les "
-                                  "réglages du compte (Avancé).", "muted", wrap=True))
-        self.acc_table = QTableWidget(0, 5)
-        self.acc_table.setHorizontalHeaderLabels(["Plateforme", "Nom", "Langue", "Connexion", "Concepts"])
-        self.acc_table.verticalHeader().hide()
-        self.acc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.acc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.acc_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        self.acc_table.setShowGrid(False)
-        self.acc_table.itemDoubleClicked.connect(lambda _it: self._account_settings())
-        right.lay.addWidget(self.acc_table, 1)
-        rb = QHBoxLayout()
-        rb.addWidget(button("Nouveau compte", "soft", on_click=self._new_account, icon="plus"))
-        rb.addWidget(button("Supprimer", "ghost", on_click=self._delete_account))
-        rb.addStretch(1)
-        rb.addWidget(button("Déconnecter l'API", "ghost", on_click=self._disconnect_account, icon="unplug"))
-        rb.addWidget(button("Réglages du compte…", "ghost", on_click=self._account_settings, icon="settings"))
-        right.lay.addLayout(rb)
-        self.acc_status = label("", "muted", wrap=True)
-        right.lay.addWidget(self.acc_status)
-
-        h.addWidget(right, 2)
-        self.refresh()
-        return w
-
     def refresh(self) -> None:
-        self.concept_list.clear()
-        for c in self.app.concepts.list_concepts():
-            n = len(self.app.concepts.concept_accounts(c.id))
-            it = QListWidgetItem(f"{c.name}   ·  {n} compte(s)")
-            from ..widgets import color_dot
-            it.setIcon(QIcon(color_dot(c.color, 12).pixmap()))
-            it.setData(Qt.UserRole, c.id)
-            self.concept_list.addItem(it)
-        accounts = self.app.concepts.list_accounts()
-        self.acc_table.setRowCount(len(accounts))
-        for i, a in enumerate(accounts):
-            concepts = ", ".join(c.name for c in self.app.concepts.concepts_of_account(a.id)) or "—"
-            from ..browser_login import state_text
-            conn = CONNECTION_LABELS.get(a.connection_status, a.connection_status)
-            if a.connection_status in ("disconnected", "connected"):
-                conn = state_text(self.app, a.id)                   # API, sinon navigateur dédié
-            for j, v in enumerate((a.platform.label, a.name, a.language.upper(), conn, concepts)):
-                item = QTableWidgetItem(v)
-                item.setData(Qt.UserRole, a.id)
-                if j == 0:
-                    item.setIcon(theme.platform_icon(a.platform.value, 18))
-                if j == 3:
-                    from PySide6.QtGui import QColor
-                    item.setForeground(QColor(theme.color("ok") if v.startswith("Connecté") else
-                                              theme.color("danger") if a.connection_status in ("expired", "revoked",
-                                                                                                "error")
-                                              else theme.color("muted")))
-                self.acc_table.setItem(i, j, item)
+        """Les concepts et leurs chaînes sont dans l'onglet Export ; rien à relire ici."""
 
-    def _saved(self, what: str) -> None:
-        msg = f"Réglages {what} enregistrés."
-        self.acc_status.setText(msg) if hasattr(self, "acc_status") else None
-        win = self.window()
-        if hasattr(win, "notify"):
-            win.notify(msg, 3000)
-
-    def _selected_account(self):
-        row = self.acc_table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Comptes", "Sélectionnez un compte dans la liste.")
-            return None
-        return self.app.concepts.get_account(self.acc_table.item(row, 0).data(Qt.UserRole))
-
-    def _account_settings(self) -> None:
-        """Réglages du compte : adresse publique, navigateur dédié et (avancé) connexion par API."""
-        acc = self._selected_account()
-        if acc is None:
-            return
-        from ..account_setup import AccountSetupDialog
-        dlg = AccountSetupDialog(self.app, acc.platform.value, acc.id, self)
-        dlg.finished.connect(lambda _r: self.refresh())
-        if dlg.exec() and dlg.connect_job:
-            self._connect_job = dlg.connect_job
-            self.acc_status.setText(f"Autorisez l'accès dans la page {acc.platform.label} ouverte dans votre "
-                                    "navigateur…")
-
-    def _disconnect_account(self) -> None:
-        acc = self._selected_account()
-        if acc is None:
-            return
-        for name in (f"youtube_refresh_{acc.id}", f"tiktok_refresh_{acc.id}", f"meta_token_{acc.id}",
-                     f"x_refresh_{acc.id}"):
-            try:
-                secrets.delete_secret(name)
-            except Exception:
-                pass
-        with self.app.db.transaction() as c:
-            c.execute("UPDATE social_account SET connection_status = 'disconnected', remote_id = '' WHERE id = ?",
-                      (acc.id,))
-        self.acc_status.setText(f"{acc.display} déconnecté.")
-        self.refresh()
-
-    def _edit_selected_concept(self) -> None:
-        it = self.concept_list.currentItem()
-        if it:
-            self.edit_concept.emit(it.data(Qt.UserRole))
-
-    def _archive_concept(self) -> None:
-        it = self.concept_list.currentItem()
-        if it and QMessageBox.question(self, "Archiver", "Archiver ce concept ? Il disparaîtra des listes, "
-                                       "ses projets et médias sont conservés.") == QMessageBox.Yes:
-            self.app.concepts.update_concept(it.data(Qt.UserRole), archived=1)
-            self.refresh()
-
-    def _new_account(self) -> None:
-        if AccountDialog(self.app, self).exec():
-            self.refresh()
-
-    def _delete_account(self) -> None:
-        row = self.acc_table.currentRow()
-        if row < 0:
-            return
-        aid = self.acc_table.item(row, 0).data(Qt.UserRole)
-        if QMessageBox.question(self, "Supprimer", "Supprimer ce compte ? Il sera retiré de tous les concepts."
-                                ) != QMessageBox.Yes:
-            return
-        try:
-            self.app.concepts.delete_account(aid)
-        except ConceptError as exc:
-            QMessageBox.warning(self, "Compte", str(exc))
-        self.refresh()
-
-    # -- général ------------------------------------------------------------
     def _general_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -294,7 +143,7 @@ class SettingsPage(QWidget):
         p = self.app.paths
         info = Card()
         info.lay.addWidget(label("Emplacement des données", "h2"))
-        info.lay.addWidget(label("Projets, réglages, historique et modèles sont conservés ici, séparément du "
+        info.lay.addWidget(label("Vidéos, réglages, historique et modèles sont conservés ici, séparément du "
                                  "programme : une mise à jour ne les supprime jamais.", "muted", wrap=True))
         loc = label(str(p.root))
         loc.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -535,11 +384,10 @@ class SettingsPage(QWidget):
 
     def on_job(self, job) -> None:
         if job.kind == "connect_account" and job.status in ("succeeded", "failed", "cancelled"):
-            if job.status == "succeeded":
-                self.acc_status.setText(f"✓ Connecté à la chaîne « {job.result.get('channel')} ».")
-            else:
-                self.acc_status.setText(f"⚠ Connexion impossible : {(job.error or 'annulée')[:300]}")
-            self.refresh()
+            win = self.window()
+            if hasattr(win, "notify"):
+                win.notify(f"✓ Connecté à la chaîne « {job.result.get('channel')} »." if job.status == "succeeded"
+                           else f"⚠ Connexion impossible : {(job.error or 'annulée')[:300]}", 8000)
         if job.id in getattr(self, "_model_jobs", {}):
             if job.status in ("succeeded", "failed", "cancelled"):
                 self._model_jobs.pop(job.id, None)

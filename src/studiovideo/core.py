@@ -1305,7 +1305,7 @@ def _register_handlers(app: AppContext) -> None:
                                  ctx.progress, lambda: ctx.cancelled)
         finally:
             shutil.rmtree(work, ignore_errors=True)
-        ctx.progress(0.95, "Import dans le projet")
+        ctx.progress(0.95, "Import de la vidéo")
         imp = app.importer().import_file(dest, project_id=pid, allow_duplicate=True, provenance="création originale")
         if res["transcript"].segments:
             app.transcripts.store_original(imp.asset_id, res["transcript"])

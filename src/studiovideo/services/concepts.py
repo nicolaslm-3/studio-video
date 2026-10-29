@@ -47,7 +47,7 @@ class ConceptService:
                 if c.archived:
                     self.update_concept(c.id, archived=0)
                 return self.get_concept(c.id)
-        return self.create_concept(self.DRAFTS, theme="Projets pas encore rangés", color="#ADA698")
+        return self.create_concept(self.DRAFTS, theme="Vidéos pas encore rangées", color="#ADA698")
 
     def create_concept(self, name: str, theme: str = "", color: str = "#8A8F98",
                        language: str = "fr") -> Concept:
@@ -89,7 +89,7 @@ class ConceptService:
     def delete_concept(self, concept_id: int) -> None:
         n = self.db.query_one("SELECT COUNT(*) n FROM project WHERE concept_id = ?", (concept_id,))["n"]
         if n:
-            raise ConceptError(f"Ce concept contient {n} projet(s). Archivez-le plutôt que de le supprimer.")
+            raise ConceptError(f"Ce concept contient {n} vidéo(s). Archivez-le plutôt que de le supprimer.")
         with self.db.transaction() as c:
             c.execute("DELETE FROM concept WHERE id = ?", (concept_id,))
         self.db.audit("concept.delete", str(concept_id))

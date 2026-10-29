@@ -903,7 +903,7 @@ class MontagePanel(QTabWidget):
         self.lay_border_col.set(lay["border_color"] or "#FFFFFF")
         note = "Glissez une vue dans l'aperçu pour la déplacer, molette pour zoomer."
         if kind == "split2" and lay["asset2"] is None:
-            note = "Importez une seconde vidéo dans ce projet pour l'afficher en bas. " + note
+            note = "Importez une seconde vidéo (Médias) pour l'afficher en bas. " + note
         elif not compose.uses_second(lay):
             note += " La vidéo est lue une seule fois : le son n'est pas doublé."
         self.lay_note.setText(note)
@@ -1710,7 +1710,7 @@ class MontagePanel(QTabWidget):
         self.apply_concept_btn = button("", "ghost", on_click=self.apply_concept_requested.emit)
         f.addRow(self.save_concept_btn)
         f.addRow(self.apply_concept_btn)
-        f.addRow(label("Exports de ce projet", "h2"))
+        f.addRow(label("Exports de cette vidéo", "h2"))
         self.history = QListWidget()
         self.history.setMaximumHeight(140)
         self.history.itemDoubleClicked.connect(self._open_export)

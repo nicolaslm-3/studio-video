@@ -190,7 +190,7 @@ class NewProjectDialog(QDialog):
         self.app = app
         self.project_id: int | None = None
         self.mode = ProjectMode.FREE_EDIT
-        self.setWindowTitle("Nouveau projet")
+        self.setWindowTitle("Nouvelle vidéo")
         self.setMinimumWidth(640)
         lay = QVBoxLayout(self)
         lay.setSpacing(12)
@@ -201,7 +201,7 @@ class NewProjectDialog(QDialog):
         if concept_id:
             self.concept.setCurrentIndex(max(0, self.concept.findData(concept_id)))
         self.name = QLineEdit()
-        self.name.setPlaceholderText("Nom du projet")
+        self.name.setPlaceholderText("Nom de la vidéo")
         form.addRow("Concept", self.concept)
         form.addRow("Nom", self.name)
         lay.addLayout(form)
@@ -226,7 +226,7 @@ class NewProjectDialog(QDialog):
         lay.addLayout(grid)
         self._select(ProjectMode.FREE_EDIT)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Créer le projet")
+        bb.button(QDialogButtonBox.Ok).setText("Créer la vidéo")
         bb.button(QDialogButtonBox.Ok).setProperty("kind", "primary")
         bb.button(QDialogButtonBox.Cancel).setText("Annuler")
         bb.accepted.connect(self._ok)
@@ -240,11 +240,11 @@ class NewProjectDialog(QDialog):
 
     def _ok(self) -> None:
         if self.concept.count() == 0:
-            QMessageBox.information(self, "Nouveau projet", "Créez d'abord un concept éditorial.")
+            QMessageBox.information(self, "Nouvelle vidéo", "Créez d'abord un concept éditorial.")
             return
         try:
             self.project_id = self.app.projects.create(self.concept.currentData(), self.name.text(), self.mode)
         except ValueError as exc:
-            QMessageBox.warning(self, "Nouveau projet", str(exc))
+            QMessageBox.warning(self, "Nouvelle vidéo", str(exc))
             return
         self.accept()

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QWidget, Q
 from ..core import AppContext
 from .widgets import button, label, local_time
 
-COLS = ["Projet", "Concept", "Médias", "Vidéos", "Modifié", "État"]
+COLS = ["Vidéo", "Concept", "Médias", "Vidéos", "Modifié", "État"]
 
 
 class ProjectsPanel(QWidget):
@@ -20,7 +20,7 @@ class ProjectsPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
-        top.addWidget(label("Projets", "h2"))
+        top.addWidget(label("Vidéos", "h2"))
         top.addStretch(1)
         self.show_archived = QCheckBox("Archivés")
         self.show_archived.setChecked(True)
@@ -129,10 +129,10 @@ class ProjectsPanel(QWidget):
         pid = self.selected()
         p = self.app.projects.get(pid)
         if pid == self.current_id:
-            QMessageBox.information(self, "Supprimer", "Ce projet est ouvert dans le Studio : ouvrez-en un autre "
+            QMessageBox.information(self, "Supprimer", "Cette vidéo est ouverte dans le Studio : ouvrez-en un autre "
                                     "avant de le supprimer.")
             return
-        if QMessageBox.question(self, "Supprimer", f"Supprimer le projet « {p['name']} » ?\n\nSon montage, ses clips "
+        if QMessageBox.question(self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, ses clips "
                                 "et l'historique de ses exports sont retirés. Les fichiers vidéo (sources et "
                                 "exports) restent sur le disque et les médias dans Médias.") != QMessageBox.Yes:
             return
@@ -145,12 +145,12 @@ class ProjectsPanel(QWidget):
 
 
 class ProjectsDialog(QDialog):
-    """Fenêtre « Tous les projets » (le panneau est aussi dans la page Concepts et projets)."""
+    """Fenêtre « Toutes les vidéos » (Ctrl+O)."""
     open_project = Signal(int)
 
     def __init__(self, app: AppContext, parent=None, current_id: int | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Tous les projets")
+        self.setWindowTitle("Toutes les vidéos")
         self.resize(820, 520)
         lay = QVBoxLayout(self)
         self.panel = ProjectsPanel(app, self, current_id)

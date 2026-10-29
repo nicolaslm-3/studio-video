@@ -208,61 +208,63 @@ def test_mask_controls(window):
 
 
 def test_calendar_publication_flow(window, monkeypatch, tmp_path):
+    """Calendrier : menu des concepts (ou tous), « Nouvelle publication » en rectangle volant (concept, vidéo, un
+    seul texte, date et heure, logos), vidéos en petits rectangles à leur date avec trois logos à cocher."""
+    from PySide6.QtCore import QDate, QDateTime, QTime
     from PySide6.QtWidgets import QApplication
     from studiovideo.domain.models import Platform
-    from studiovideo.ui import publication_dialog as pd
     from studiovideo.ui.pages import calendar as calmod
+    from studiovideo.ui.widgets import Popover
     w, ctx = window
-    c = ctx.concepts.create_concept("Poussey Pass")
-    yt = ctx.concepts.create_account(Platform.YOUTUBE, "Chaîne")
-    tk = ctx.concepts.create_account(Platform.TIKTOK, "Compte")
-    other = ctx.concepts.create_account(Platform.X, "Autre")
-    ctx.concepts.link(c.id, yt.id)
-    ctx.concepts.link(c.id, tk.id)
+    c = ctx.concepts.create_concept("Tous y passent")
+    c2 = ctx.concepts.create_concept("Autre concept")
+    pid = ctx.projects.create(c.id, "Mon sketch")
     w.go(3)
     cal = w.calendar
-    dlg = pd.PublicationDialog(ctx, day="2026-11-05")
-    dlg.concept.setCurrentIndex(dlg.concept.findData(c.id))
-    assert {r["account"].id for r in dlg.rows} == {yt.id, tk.id}
-    assert other.id not in {r["account"].id for r in dlg.rows}          # hors concept : jamais proposé
-    dlg.title.setText("Mon sketch")
-    dlg.tags.setText("humour, sketch")
-    assert "Textes conformes" in dlg.warn.text()
-    dlg.title.setText("x" * 120)
-    assert "titre trop long" in dlg.warn.text()
-    dlg.title.setText("Mon sketch")
-    dlg._save()
-    m = dlg.master_id
-    pubs = {p.account.id: p for p in ctx.publications.list_for_master(m)}
-    assert set(pubs) == {yt.id, tk.id} and all(p.scheduled_at == "2026-11-05T18:00" for p in pubs.values())
-    assert ctx.publications.master(m)["hashtags"] == "#humour #sketch"
+    assert not hasattr(cal, "todo") and not hasattr(cal, "undated")        # plus de « À faire » ni « Sans date »
+    assert cal.concept.itemText(0) == "Tous les concepts" and cal.concept.findData(c.id) > 0
+    pop = cal.new_publication(day="2026-11-05")
+    assert isinstance(pop, Popover)                                        # rectangle volant, pas une fenêtre
+    assert not hasattr(pop, "thumb") and not hasattr(pop, "rows")          # ni miniature ni « Destinations »
+    pop.concept.setCurrentIndex(pop.concept.findData(c.id))
+    pop.video.setCurrentIndex(pop.video.findData(pid))
+    pop.text.setPlainText("Mon sketch\nLa suite\n#humour")
+    assert pop.when.dateTime().toString("yyyy-MM-ddTHH:mm") == "2026-11-05T18:00"
+    pop.when.setDateTime(QDateTime(QDate(2026, 11, 5), QTime(20, 30)))
+    pop.nets["tiktok"].setChecked(False)
+    assert pop.nets["tiktok"].text() == "" and pop.nets["tiktok"].toolTip() == "TikTok"   # logo seul
+    pop._save()                                                           # « Enregistrer » : visible au calendrier
+    (row,) = ctx.publications.planned("2026-11-01T00:00", "2026-12-01T00:00")
+    assert row["planned_at"] == "2026-11-05T20:30" and row["video"] == "Mon sketch" and row["title"] == "Mon sketch"
+    assert row["networks"] == {"youtube": True, "tiktok": False, "meta": True}
     cal.year, cal.month = 2026, 11
     cal.refresh()
-    from PySide6.QtWidgets import QPushButton
-    texts = [b.text() for cell in cal.cells for b in cell.findChildren(QPushButton)]
-    assert sum("Mon sketch" in t for t in texts) == 2
-    # rappel : l'heure est passée → action manuelle demandée, badge sur la navigation
-    monkeypatch.setattr("studiovideo.ui.main_window.now_local", lambda: "2026-11-05T18:01")
-    assert w.check_reminders() == 2
-    assert "● 2" in w.nav_group.button(3).text()
-    cal.refresh()
-    assert cal.todo.count() == 2
-    # Atelier de publication puis confirmation par le lien public (sans Edge : navigateur par défaut, signalé)
+    chips = [ch for cell in cal.cells for ch in cell.findChildren(calmod.PlanChip)]
+    assert len(chips) == 1
+    chip = chips[0]
+    assert not chip.toggles["tiktok"].isChecked() and chip.toggles["youtube"].isChecked()
+    chip.toggles["tiktok"].click()                                        # en couleur : juste pour s'organiser
+    assert ctx.publications.plan_of(row["id"])["networks"]["tiktok"] is True
+    assert ctx.publications.list_for_master(row["id"]) == []              # rien n'est publié
+    cal.concept.setCurrentIndex(cal.concept.findData(c2.id))              # autre concept : ses vidéos seulement
+    assert not [ch for cell in cal.cells for ch in cell.findChildren(calmod.PlanChip) if ch.isVisibleTo(cell)]
+    cal.concept.setCurrentIndex(0)
+    edit = cal.open_master(row["id"])                                      # clic : modifier
+    assert edit.text.toPlainText().startswith("Mon sketch") and edit.video.currentData() == pid
+    # Atelier de publication (Calendrier) : page d'envoi dans un nouvel onglet, lien confirmé
+    yt = ctx.concepts.create_account(Platform.YOUTUBE, "Chaîne")
+    ctx.concepts.link(c.id, yt.id)
+    m = ctx.publications.create_master(c.id, "Mon sketch")
+    (pub,) = ctx.publications.set_destinations(m, [yt.id])
     from studiovideo.ui.publish_workshop import PublishWorkshop
-    monkeypatch.setenv("STUDIOVIDEO_BROWSER", str(tmp_path / "absent.exe"))
     opened = []
-    a = PublishWorkshop(ctx, pubs[yt.id].id, open_url=opened.append)
+    a = PublishWorkshop(ctx, pub, open_url=opened.append)
     a._open()
-    assert QApplication.clipboard().text() == "Mon sketch"            # titre copié en ouvrant la page d'envoi
-    assert opened == ["https://www.youtube.com/upload"]
-    assert "nouvel onglet" in a.msg.text()
-    assert ctx.publications.get(pubs[yt.id].id)["status"] == "manual_action"
-    a.link.url.setText("https://www.tiktok.com/@x/video/1")
-    a.link._confirm()
-    assert "plateforme" in a.msg.text()
+    assert QApplication.clipboard().text() == "Mon sketch"
+    assert opened == ["https://www.youtube.com/upload"] and "nouvel onglet" in a.msg.text()
     a.link.url.setText("https://youtu.be/abc")
     a.link._confirm()
-    assert ctx.publications.get(pubs[yt.id].id)["status"] == "published"
+    assert ctx.publications.get(pub)["status"] == "published"
     assert calmod.now_local()[:2] == "20"
 
 
@@ -524,28 +526,6 @@ def test_opens_in_free_edit_without_home(window):
     assert w.pages.currentWidget() is w.studio and w.studio._mode() == "free_edit"    # pas de page d'accueil
     assert "Accueil" not in [b.text() for b in w.nav_group.buttons()]
     assert "Publication" not in [w.settings_page.tabs.tabText(i) for i in range(w.settings_page.tabs.count())]
-
-
-def test_propose_copy_in_publication(window, tmp_path, monkeypatch):
-    from test_copywriter import TEXT
-    from studiovideo.edit.model import Timeline
-    from studiovideo.transcribe.model import TSegment, Transcript
-    from studiovideo.ui.publication_dialog import PublicationDialog
-    w, ctx = window
-    c = ctx.concepts.list_concepts()[0]
-    pid = ctx.projects.create(c.id, "Copie")
-    con = ctx.db.connect()
-    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
-                "duration_s) VALUES (1,?,'video','x','x.mp4','fcp',1,30)", (pid,))
-    aid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
-    ctx.transcripts.store_original(aid, Transcript([TSegment(0, 10, TEXT)], "fr"))
-    tl = Timeline()
-    tl.add_segment(aid, 0, 10)
-    vid = ctx.montage.record_export(pid, tl, {"path": str(tmp_path / "o.mp4"), "duration": 10}, None)
-    d = PublicationDialog(ctx, variant_id=vid)
-    d._propose_copy()
-    assert d.title.text().startswith("Aujourd'hui") and "#Citron" in d.tags.text()
-    assert "relisez" in d.warn.text()
 
 
 def test_import_project_opens_it(window, tmp_path, monkeypatch):
@@ -832,7 +812,7 @@ def test_dock_parcours_and_drafts(window):
     w.go(2)                                                     # hors Studio : plus de parcours actif
     assert not w.dock.buttons["original"].isChecked()
     w.drawer.navigate.emit(6)
-    assert w.pages.currentWidget() is w.concepts_page
+    assert w.pages.currentWidget() is w.archives                # menu ☰ : Archives (plus de Concepts et projets)
 
 
 def test_workspaces_show_only_their_tools(window):
@@ -890,7 +870,7 @@ def test_import_bar_same_in_every_tab_and_attach_existing_video(window):
     assert [lay.itemAt(i).widget() for i in range(3)] == [st.media_btn, st.import_btn, st.link_edit]
     assert not hasattr(st, "doc_action") and not hasattr(st, "format_combo")    # plus de menu « … »
     assert not hasattr(st, "concept_lbl")                       # plus de rectangle « Brouillons »
-    assert st.project_combo.toolTip() == "Tous les projets"
+    assert st.project_combo.toolTip() == "Toutes les vidéos"
     assert st.jobs_btn.isVisibleTo(st)                           # tâches : en haut
     st.tl.set_aspect("1:1")                                     # une modification…
     st._autosave()                                              # « Enregistré » : en haut de la liste des tâches
@@ -1241,7 +1221,7 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     cv.refresh()
     assert "prête" in cv.b_title.text() and not cv.gen.isVisibleTo(cv) and not hasattr(cv, "next")
     tags = {c: [lb.text() for lb in card.findChildren(QLabel)] for c, card in cv.cards.items()}
-    assert "Vidéo de ce projet" in tags[ids[1]] and "Vidéo créée" in tags[ids[2]]
+    assert "Cette vidéo" in tags[ids[1]] and "Vidéo créée" in tags[ids[2]]
     cv.out_s.minus.click()                                      # l'extrait réglé : la vidéo du projet suit
     assert st.tl.segments[0].src_out == 95.0                    # − : une seconde de moins
     cv.on_job(JobInfo(id=950, kind="reframe", label="", status="succeeded", progress=1, message="", error="",
@@ -1384,8 +1364,11 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     w.start_parcours("free_edit")
     pid = st.project_id
     p = ctx.projects.get(pid)
-    yt = ctx.concepts.create_account(Platform.YOUTUBE, "machaine")
+    concept = ctx.concepts.create_concept("Tous y passent")
+    yt = ctx.concepts.create_account(Platform.YOUTUBE, "machaine", "https://www.youtube.com/@machaine")
     tk = ctx.concepts.create_account(Platform.TIKTOK, "moncompte")
+    for a in (yt, tk):
+        ctx.concepts.link(concept.id, a.id)
     con = ctx.db.connect()
     con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
                 "duration_s, width, height) VALUES (1,?,'video',?,'x.mp4','fx',1,20,1080,1920)", (pid, __file__))
@@ -1410,20 +1393,34 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert ev.go.text() == "Exporter sur mon PC" and ev.go.isEnabled()
     assert not ev.tile.isEnabled() and not ev.reveal_btn.isEnabled()      # rien d'exporté encore
     assert ev.tile.maximumWidth() <= 300                        # vidéo à glisser : rectangle étroit
-    acc = ev.nets["youtube"].account
-    from studiovideo.ui.export_view import ADD_ACCOUNT, CONNECT_ACCOUNT
-    assert acc.itemData(0) == yt.id and not acc.itemIcon(0).isNull()    # pastille du compte
-    assert acc.itemData(acc.count() - 1) == ADD_ACCOUNT and acc.itemText(acc.count() - 1) == "Ajouter un compte"
-    assert acc.itemData(acc.count() - 2) == CONNECT_ACCOUNT          # « Connecter ce compte… »
-    added = []
-    monkeypatch.setattr(ev, "add_account", lambda pf, a=None: added.append(pf))
-    acc.setCurrentIndex(acc.count() - 1)                        # « Ajouter un compte » : le compte reste choisi
-    assert added == ["youtube"] and acc.currentData() == yt.id
-    meta = ev.nets["meta"]
-    assert meta.no_account.isVisibleTo(meta) and meta.no_account.text() == "Ajouter un compte"   # pas de compte Meta
-    assert not meta.open_btn.isEnabled()
-    meta.no_account.click()
-    assert added[-1] == "facebook"
+    # menu « Concept » : chaque réseau reçoit la chaîne du concept, sur une ligne (nom à gauche, bouton à droite)
+    assert ev.concept.currentData() == p["concept_id"] and ev.nets["youtube"].account_id() is None
+    ev.concept.setCurrentIndex(ev.concept.findData(concept.id))
+    ytc, meta = ev.nets["youtube"], ev.nets["meta"]
+    assert ytc.account_id() == yt.id and ytc.channel.text() == "machaine" and ev.nets["tiktok"].account_id() == tk.id
+    assert ytc.open_btn.text() == "Ouvrir la page d'envoi" and not hasattr(ytc, "account")   # plus de menu de comptes
+    assert meta.account_id() is None and "Pas de chaîne Meta" in meta.channel.text() and not meta.open_btn.isEnabled()
+    assert ctx.projects.load_data(pid)["export_ui"]["concept"] == concept.id
+    # en dessous : les concepts et leurs chaînes (YouTube, TikTok, Meta)
+    box = ev.concepts
+    row = next(r for r in box.items() if r.concept and r.concept.id == concept.id)
+    assert row.nets["youtube"].linked and row.nets["tiktok"].linked and not row.nets["meta"].linked
+    assert row.nets["meta"].text() == ""                        # logo seul, nom au survol
+    cp = row.open_channel("meta")                               # réseau grisé : rectangle volant pour l'ajouter
+    from studiovideo.ui.widgets import Popover
+    assert isinstance(cp, Popover) and cp.platform.count() == 2  # Meta : Page Facebook ou compte Instagram
+    cp.platform.setCurrentIndex(cp.platform.findData("instagram"))
+    cp.name.setText("moninsta")
+    cp.url.setText("https://www.instagram.com/moninsta")
+    cp._save()
+    assert row.nets["meta"].linked and meta.account_id() is not None and "moninsta" in meta.channel.text()
+    ig_id = meta.account_id()
+    new = box.new_concept()                                     # « Nouveau concept » : une ligne, sans fenêtre
+    assert new.concept is None and new.name.text() == ""
+    new.name.setText("Deuxième concept")
+    new._name_done()
+    assert new.concept is not None and ev.concept.findData(new.concept.id) >= 0
+    assert ctx.concepts.get_concept(new.concept.id).name == "Deuxième concept"
     ev.title.setText("Le vrai chiffre")
     ev.desc.setPlainText("Ce qu'on ne vous dit pas #politique")
     from studiovideo.ui.export_view import EmojiButton
@@ -1433,7 +1430,7 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     assert "🔥" in ev.title.text()
     ev.title.setText("Le vrai chiffre")
     ui = ctx.projects.load_data(pid)["export_ui"]
-    assert ui["nets"]["tiktok"]["account"] == tk.id and ui["title"] == "Le vrai chiffre"
+    assert ui["concept"] == concept.id and ui["title"] == "Le vrai chiffre"
     sent = []
     real_submit = ctx.jobs.submit
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params, k))
@@ -1461,7 +1458,7 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     opened = []
     ev.open_url = opened.append
     tkc = ev.nets["tiktok"]
-    assert tkc.open_btn.isEnabled() and tkc.open_btn.text() == "Ouvrir la page d'envoi TikTok"
+    assert tkc.open_btn.isEnabled()
     tkc.open_btn.click()
     assert opened == ["https://www.tiktok.com/upload"]
     assert QApplication.clipboard().text() == "Le vrai chiffre\n\nCe qu'on ne vous dit pas #politique"
@@ -1473,11 +1470,16 @@ def test_export_tab_texts_networks_and_publication(window, monkeypatch, tmp_path
     tkc.link._confirm()
     assert ctx.publications.get(pubs["tiktok"])["status"] == "published" and "Publiée" in tkc.state.text()
     assert not tkc.open_btn.isEnabled()
+    # YouTube Studio s'ouvre directement sur la chaîne du concept
+    from studiovideo.publish import reconcile
+    monkeypatch.setattr(reconcile, "youtube_channel_id", lambda url: "UC" + "x" * 22)
+    ytc.open_btn.click()
+    assert opened[-1] == "https://studio.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx/videos/upload?d=ud"
+    assert "sur la chaîne machaine" in ytc.note.text()
     # brouillon sur les réseaux : YouTube connecté envoyé en brouillon ; Instagram (Meta) n'en propose pas
-    ig = ctx.concepts.create_account(Platform.INSTAGRAM, "moninsta")
     con.execute("UPDATE social_account SET connection_status = 'connected' WHERE id = ?", (yt.id,))
     ev.refresh()
-    assert ev.nets["meta"].account_id() == ig.id
+    assert ev.nets["meta"].account_id() == ig_id
     ev.act_draft.setChecked(True)
     assert ev.go.text().startswith("Exporter en brouillon") and "Meta" in ev.go.text()
     ev.file_name.setText("brouillon")
@@ -1802,3 +1804,44 @@ def test_transcript_button_translate_and_voices(window, monkeypatch):
     root_tl = st.tl                                              # projet d'origine : l'original à l'aperçu
     tv._preview()
     assert tv.player.tl is root_tl and isinstance(root_tl, Timeline)
+
+
+def test_sidebar_hover_actions_and_archives(window, monkeypatch):
+    """Barre des vidéos : au survol, renommer / archiver / supprimer ; une vidéo archivée quitte la barre et se
+    retrouve dans Archives (menu des trois barres), d'où on la restaure."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QEnterEvent
+    from PySide6.QtWidgets import QApplication, QInputDialog
+
+    from studiovideo.ui.project_sidebar import ProjectItem
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("smart_clipping")
+    keep = st.project_id
+    ctx.projects.rename(keep, "Garder")
+    st.new_blank.emit("smart_clipping")
+    gone = st.project_id
+    ctx.projects.rename(gone, "À archiver")
+    st.sidebar.refresh()
+    items = {it.pid: it for it in st.sidebar.findChildren(ProjectItem)}
+    it = items[gone]
+    assert not it.actions.isVisibleTo(it)
+    QApplication.sendEvent(it, QEnterEvent(it.rect().center(), it.rect().center(), it.mapToGlobal(it.rect().center())))
+    assert it.actions.isVisibleTo(it)                                 # au survol : les trois boutons
+    tips = [b.toolTip() for b in it.actions.findChildren(type(st.sidebar.new_btn))]
+    assert tips[0] == "Renommer" and tips[1].startswith("Archiver") and tips[2] == "Supprimer"
+    QApplication.sendEvent(it, QEvent(QEvent.Leave))
+    assert not it.actions.isVisibleTo(it)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Nouveau nom", True))
+    st.project_action(keep, "rename", "smart_clipping")
+    assert ctx.projects.get(keep)["name"] == "Nouveau nom"
+    st.project_action(gone, "archive", "smart_clipping")              # vidéo ouverte archivée : une autre s'ouvre
+    assert ctx.projects.get(gone)["status"] == "archived" and st.project_id != gone
+    assert gone not in [e[0] for e in st.sidebar.entries()]
+    w.drawer.navigate.emit(6)
+    ar = w.archives
+    assert w.pages.currentWidget() is ar and ar.list.count() == 1
+    ar.list.setCurrentRow(0)
+    ar.restore()
+    assert ctx.projects.get(gone)["status"] == "active" and ar.list.count() == 0
+    assert gone in [e[0] for e in st.sidebar.entries()]

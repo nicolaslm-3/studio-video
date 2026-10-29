@@ -29,7 +29,7 @@ def export_project(app, project_id: int, dest: Path, include_media: bool = True,
     from .. import __version__
     p = app.projects.get(project_id)
     if p is None:
-        raise ArchiveError("Projet introuvable.")
+        raise ArchiveError("Vidéo introuvable.")
     data = app.projects.load_data(project_id)
     tl = data.get("timeline") or {}
     ids = {r["id"] for r in app.db.query("SELECT id FROM source_asset WHERE project_id = ?", (project_id,))}
@@ -103,7 +103,7 @@ def import_project(app, archive: Path, media_dir: Path, concept_id: int | None =
     with z:
         names = set(z.namelist())
         if "project.json" not in names:
-            raise ArchiveError("Ce n'est pas une archive de projet Studio Vidéo.")
+            raise ArchiveError("Ce n'est pas une vidéo enregistrée par Studio Vidéo.")
         for n in names:                                  # protection contre les chemins hors du dossier
             if n.startswith("/") or ".." in Path(n).parts:
                 raise ArchiveError("Archive invalide (chemin interdit).")
@@ -194,5 +194,5 @@ def import_project(app, archive: Path, media_dir: Path, concept_id: int | None =
             man.asset_id = aid
             app.dubs.store(man, ddir)
     app.db.audit("project.import", f"{archive.name} -> {pid}")
-    progress(1.0, "Projet importé")
+    progress(1.0, "Vidéo importée")
     return {"project_id": pid, "name": name, "reused": reused, "extracted": extracted, "missing": missing}

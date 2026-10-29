@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
                                QProgressBar, QRadioButton, QScrollArea, QStyle, QStyledItemDelegate, QToolButton,
@@ -30,16 +30,16 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFileDialo
 from ..core import AppContext
 from ..domain.models import PublicationStatus
 from ..edit.model import Timeline
-from ..publish import rules
+from ..publish import reconcile, rules
 from . import browser_login, theme
 from .montage_player import MontagePlayer
+from .concepts_box import ConceptsBox, concept_account
 from .publish_workshop import LinkBox, VideoTile, reveal, upload_url
 from .simple_views import _View, _active_job, _open_folder, _row
 from .widgets import button, label, tool
 
 # réseaux de l'onglet Export : (clé, nom affiché) ; Meta réunit Facebook et Instagram (une page d'envoi)
 NETWORKS = [("youtube", "YouTube"), ("tiktok", "TikTok"), ("meta", "Meta")]
-NET_PLATFORMS = {"youtube": ("youtube",), "tiktok": ("tiktok",), "meta": ("facebook", "instagram")}
 EMOJI_FILE = Path(__file__).parent / "assets" / "emojis.json"
 
 
@@ -261,137 +261,67 @@ class EmojiButton(QToolButton):
         t.setFocus()
 
 
-# -- comptes ---------------------------------------------------------------------------------------------
-def account_icon(acc, size: int = 22) -> QIcon:
-    """Photo de profil du compte (ronde) ; sans photo, l'initiale sur la couleur du réseau."""
-    pm = QPixmap(size * 2, size * 2)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    path = QPainterPath()
-    path.addEllipse(QRectF(0, 0, size * 2, size * 2))
-    src = QPixmap(acc.avatar_path) if getattr(acc, "avatar_path", "") and Path(acc.avatar_path).exists() else None
-    if src is not None and not src.isNull():
-        p.setClipPath(path)
-        sc = src.scaled(size * 2, size * 2, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        p.drawPixmap(-(sc.width() - size * 2) // 2, -(sc.height() - size * 2) // 2, sc)
-    else:
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(theme.PLATFORMS.get(acc.platform.value, ("", "#8A8F98"))[1] or "#8A8F98"))
-        p.drawPath(path)
-        f = QFont()
-        f.setBold(True)
-        f.setPixelSize(int(size * 0.95))
-        p.setFont(f)
-        p.setPen(QColor("#FFFFFF"))
-        p.drawText(QRectF(0, 0, size * 2, size * 2), Qt.AlignCenter, (acc.name.lstrip("@") or "?")[0].upper())
-    p.end()
-    pm.setDevicePixelRatio(2)
-    return QIcon(pm)
-
-
-ADD_ACCOUNT = -1                                   # dernière ligne du menu des comptes : « Ajouter un compte »
-CONNECT_ACCOUNT = -2                               # « Connecter ce compte… » (réglages et connexion)
-
-
 class NetworkCard(QFrame):
-    """Un réseau : son icône et son nom, le compte, puis l'Atelier de publication — la page d'envoi dans le
-    navigateur dédié du compte, et le lien de la vidéo une fois publiée."""
+    """Un réseau, sur une ligne : son logo et la chaîne du concept choisi à gauche, « Ouvrir la page d'envoi » à
+    droite ; dessous, le lien de la vidéo une fois publiée."""
 
     def __init__(self, view: "ExportView", key: str, name: str):
         super().__init__()
         self.view, self.key, self.name = view, key, name
+        self.acc_id: int | None = None
         self.setProperty("role", "card")
         v = QVBoxLayout(self)
-        v.setContentsMargins(14, 10, 14, 12)
-        v.setSpacing(7)
+        v.setContentsMargins(14, 8, 10, 8)
+        v.setSpacing(6)
         head = QHBoxLayout()
         head.setSpacing(8)
-        ic = QLabel()
-        ic.setPixmap(theme.platform_icon(key, 20).pixmap(QSize(20, 20)))
-        head.addWidget(ic)
-        title = label(name, None, hint=False)
-        title.setStyleSheet("font-weight: 700;")
-        head.addWidget(title)
-        head.addStretch(1)
+        self.icon = QLabel()
+        self.icon.setPixmap(theme.platform_icon(key, 20).pixmap(QSize(20, 20)))
+        self.icon.setToolTip(name)
+        head.addWidget(self.icon)
+        self.channel = label("", None, hint=False)
+        self.channel.setStyleSheet("font-weight: 700;")
+        head.addWidget(self.channel, 1)
         self.state = label("", "muted", hint=False)
         head.addWidget(self.state)
-        v.addLayout(head)
-        self.account = QComboBox()
-        self.account.setIconSize(QSize(22, 22))
-        self.account.currentIndexChanged.connect(self._account_changed)
-        v.addWidget(self.account)
-        add_for = NET_PLATFORMS[key][0]
-        self.no_account = button("Ajouter un compte", "ghost", icon="user-plus",
-                                 tooltip=f"Ajouter un compte {name}",
-                                 on_click=lambda: self.view.add_account(add_for))
-        self.no_account.setStyleSheet("font-size: 12px; padding: 3px 8px;")
-        v.addWidget(self.no_account, 0, Qt.AlignLeft)
-        self._last_account: int | None = None
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self.open_btn = button(f"Ouvrir la page d'envoi {name}", "soft", icon="upload",
+        self.open_btn = button("Ouvrir la page d'envoi", "soft", icon="upload",
                                tooltip="Ouvre la page d'envoi dans un nouvel onglet de ton navigateur et copie le "
-                               "texte du réseau : glisse la vidéo, colle le texte, clique toi-même sur « Publier »", on_click=lambda: self.view.open_upload(self.key))
-        row.addWidget(self.open_btn)
-        row.addStretch(1)
-        v.addLayout(row)
+                               "texte du réseau : glisse la vidéo, colle le texte, clique toi-même sur « Publier »",
+                               on_click=lambda: self.view.open_upload(self.key))
+        head.addWidget(self.open_btn)
+        v.addLayout(head)
         self.note = label("", "faint", wrap=True, hint=False)
+        self.note.hide()
         v.addWidget(self.note)
         self.link = LinkBox(view.app, view.open_url)
         self.link.changed.connect(self.view.refresh_cards)
         v.addWidget(self.link)
 
     def account_id(self) -> int | None:
-        a = self.account.currentData()
-        return a if a not in (None, ADD_ACCOUNT, CONNECT_ACCOUNT) else None
+        return self.acc_id
 
-    def _account_changed(self) -> None:
-        pick = self.account.currentData()
-        if pick in (ADD_ACCOUNT, CONNECT_ACCOUNT):         # actions du menu : le compte d'avant reste choisi
-            self.account.blockSignals(True)
-            self.account.setCurrentIndex(max(0, self.account.findData(self._last_account)))
-            self.account.blockSignals(False)
-            if pick == ADD_ACCOUNT:
-                self.view.add_account(NET_PLATFORMS[self.key][0])
-            elif self._last_account:
-                acc = self.view.app.concepts.get_account(self._last_account)
-                self.view.add_account(acc.platform.value, self._last_account)
-            return
-        self._last_account = self.account.currentData()
-        self.view._changed()
-        self.view.refresh_cards()
-
-    def fill_accounts(self, accounts, chosen: int | None) -> None:
-        self.account.blockSignals(True)
-        self.account.clear()
-        for a in accounts:
-            net = f" · {rules.RULES[a.platform.value].label}" if len(NET_PLATFORMS[self.key]) > 1 else ""
-            st = " · API" if a.connection_status == "connected" else ""
-            self.account.addItem(account_icon(a), a.name + net + st, a.id)
-        if accounts:
-            self.account.insertSeparator(self.account.count())
-            self.account.addItem(theme.icon("plug-zap", theme.color("muted"), 18), "Connecter ce compte…",
-                                 CONNECT_ACCOUNT)
-            self.account.addItem(theme.icon("user-plus", theme.color("muted"), 18), "Ajouter un compte", ADD_ACCOUNT)
-        if chosen is not None:
-            self.account.setCurrentIndex(max(0, self.account.findData(chosen)))
-        self._last_account = self.account.currentData()
-        self.account.blockSignals(False)
-        has = bool(accounts)
-        self.account.setVisible(has)
-        self.no_account.setVisible(not has)
+    def set_account(self, acc) -> None:
+        """La chaîne du concept sur ce réseau (None : le concept n'en a pas)."""
+        self.acc_id = acc.id if acc else None
+        if acc:
+            net = f"  ·  {rules.RULES[acc.platform.value].label}" if self.key == "meta" else ""
+            self.channel.setText(acc.name + net)
+            self.channel.setProperty("hint", "")
+            self.channel.setStyleSheet("font-weight: 700;")
+            self.channel.setToolTip(acc.public_url or acc.name)
+        else:
+            self.channel.setText(f"Pas de chaîne {self.name} dans ce concept")
+            self.channel.setStyleSheet(f"color: {theme.color('faint')};")
+            self.channel.setToolTip("Ajoute-la dans « Concepts », en bas")
 
     def show_state(self, exported: bool, pub_id: int | None) -> None:
-        """Page d'envoi possible une fois la vidéo exportée et un compte choisi ; état de la publication."""
-        acc = self.account_id()
+        """Page d'envoi possible une fois la vidéo exportée et la chaîne connue ; état de la publication."""
         r = self.view.app.publications.get(pub_id) if pub_id else None
         done = bool(r and r["status"] == "published")
         self.state.setText("✓ Publiée" if done else "À publier" if r else "")
-        self.open_btn.setEnabled(bool(acc) and exported and not done)
-        if acc and not exported:
-            self.note.setText("Exporte d'abord la vidéo (à gauche), puis ouvre la page d'envoi.")
-        elif self.note.text().startswith("Exporte d'abord"):
+        self.open_btn.setEnabled(bool(self.acc_id) and exported and not done)
+        self.open_btn.setToolTip("" if exported or not self.acc_id else "Exporte d'abord la vidéo (à gauche)")
+        if self.note.text().startswith("Exporte d'abord") or not self.acc_id:
             self.note.setText("")
         self.note.setVisible(bool(self.note.text()))
         self.link.set_publication(pub_id)
@@ -415,9 +345,12 @@ class ExportView(_View):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         content = QWidget()
-        root = QHBoxLayout(content)
-        root.setContentsMargins(26, 12, 26, 10)
+        page = QVBoxLayout(content)
+        page.setContentsMargins(26, 12, 26, 10)
+        page.setSpacing(18)
+        root = QHBoxLayout()
         root.setSpacing(18)
+        page.addLayout(root)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.NoFrame)
@@ -506,7 +439,12 @@ class ExportView(_View):
         # -- colonne de droite : l'Atelier de publication
         right = QVBoxLayout()
         right.setSpacing(12)
-        right.addWidget(label("Atelier de publication", "h2"))
+        self.concept = QComboBox()
+        self.concept.setToolTip("Le concept de la vidéo : ses chaînes YouTube, TikTok et Meta reçoivent les pages "
+                                "d'envoi")
+        self.concept.currentIndexChanged.connect(self._concept_changed)
+        right.addLayout(_row(label("Atelier de publication", "h2"), "stretch", label("Concept", "muted", hint=False),
+                             self.concept, spacing=8))
         vr = QHBoxLayout()
         vr.setSpacing(8)
         self.tile = VideoTile("")
@@ -525,10 +463,15 @@ class ExportView(_View):
         rw = QWidget()
         rw.setLayout(right)
         root.addWidget(rw, 4)
+        # -- en dessous : les concepts et leurs chaînes
+        self.concepts = ConceptsBox(app)
+        self.concepts.changed.connect(self._concepts_edited)
+        page.addWidget(self.concepts)
+        page.addStretch(1)
 
     # -- état enregistré dans le projet ---------------------------------------------------
     def _state(self) -> dict:
-        st = {"title": "", "description": "", "action": "local", "nets": {}, "file_name": "", "folder": ""}
+        st = {"title": "", "description": "", "action": "local", "concept": None, "file_name": "", "folder": ""}
         if self.pid:
             st.update(self.app.projects.load_data(self.pid).get("export_ui") or {})
         if st["action"] not in ACTIONS:                   # anciens choix (publier, programmer) : sur le PC
@@ -556,7 +499,7 @@ class ExportView(_View):
         st = {"title": self.title.text(), "description": self.desc.toPlainText(),
               "action": ACTIONS[a] if 0 <= a < len(ACTIONS) else "local",
               "file_name": self.file_name.text().strip(), "folder": self.folder,
-              "nets": {k: {"account": c.account_id()} for k, c in self.nets.items()}}
+              "concept": self.concept.currentData()}
         data = self.app.projects.load_data(self.pid)
         data["export_ui"] = st
         self.app.projects.save_data(self.pid, data)
@@ -586,21 +529,31 @@ class ExportView(_View):
         fm = self.folder_lbl.fontMetrics()
         self.folder_lbl.setText(fm.elidedText(self.folder, Qt.ElideMiddle, 320))
 
-    def add_account(self, platform: str, account_id: int | None = None) -> None:
-        """« Ajouter un compte » (ou « Connecter ce compte… ») : le compte, son navigateur dédié et, replié, la
-        connexion par API (`account_setup.py`)."""
-        from .account_setup import AccountSetupDialog
-        dlg = AccountSetupDialog(self.app, platform, account_id, self)
-        if not dlg.exec():
-            return
-        key = next(k for k, pfs in NET_PLATFORMS.items() if platform in pfs)
-        data = self.app.projects.load_data(self.pid)
-        st = data.setdefault("export_ui", {})
-        st.setdefault("nets", {}).setdefault(key, {}).update({"account": dlg.account_id})
-        self.app.projects.save_data(self.pid, data)
-        self.refresh()
-        if dlg.connect_job:
-            self.status.setText("Autorisez l'accès dans la page de connexion ouverte dans votre navigateur…")
+    def _fill_concepts(self, chosen: int | None) -> None:
+        self.concept.blockSignals(True)
+        self.concept.clear()
+        for c in self.app.concepts.list_concepts():
+            self.concept.addItem(theme.icon("circle", c.color, 12), c.name, c.id)
+        self.concept.setCurrentIndex(max(0, self.concept.findData(chosen)))
+        self.concept.blockSignals(False)
+        self._show_channels()
+
+    def _show_channels(self) -> None:
+        """Chaque réseau reçoit la chaîne du concept choisi."""
+        cid = self.concept.currentData()
+        for k, c in self.nets.items():
+            c.set_account(concept_account(self.app, cid, k) if cid else None)
+
+    def _concept_changed(self) -> None:
+        self._show_channels()
+        self._changed()
+        self.refresh_cards()
+
+    def _concepts_edited(self) -> None:
+        """Un concept ou une chaîne modifiés (en bas) : menu des concepts et cartes à jour."""
+        self._fill_concepts(self.concept.currentData())
+        self.refresh_cards()
+        self._update_go()
 
     # -- affichage ----------------------------------------------------------------------
     def refresh(self) -> None:
@@ -620,12 +573,8 @@ class ExportView(_View):
             if self.desc.toPlainText() != st["description"]:
                 self.desc.setPlainText(st["description"])
             p = self.app.projects.get(self.pid)
-            accounts = self.app.concepts.list_accounts()
-            linked = {a.id for a, _d in self.app.concepts.concept_accounts(p["concept_id"])} if p else set()
-            for k, c in self.nets.items():
-                acc = [a for a in accounts if a.platform.value in NET_PLATFORMS[k]]
-                acc.sort(key=lambda a: (a.id not in linked, a.name.lower()))
-                c.fill_accounts(acc, (st["nets"].get(k) or {}).get("account"))
+            self._fill_concepts(st["concept"] or (p["concept_id"] if p else None))
+            self.concepts.refresh()
             (self.act_draft if st["action"] == "draft" else self.act_local).setChecked(True)
         finally:
             self._loading = False
@@ -737,11 +686,30 @@ class ExportView(_View):
             self.app.publications.mark_manual(pid, "Envoyée depuis l'Atelier de publication : lien à confirmer.")
         t = compose_for(r["platform"], self.title.text(), self.desc.toPlainText())
         QApplication.clipboard().setText(t["title"] or t["text"])
-        note = browser_login.open_page(self.app, r["account_id"], upload_url(key), self.open_url)
+        url, where = upload_url(key), ""
+        if key == "youtube":                              # YouTube Studio directement sur la chaîne du concept
+            ch = self.youtube_channel(r["account_id"])
+            if ch:
+                url, where = reconcile.youtube_upload_url(ch), " sur la chaîne " + r["account"]
+        note = browser_login.open_page(self.app, r["account_id"], url, self.open_url)
         self.refresh_cards()
-        c.note.setText(note or f"Page d'envoi ouverte ; {'titre' if t['title'] else 'texte'} copié dans le "
-                       "presse-papiers. Glisse la vidéo (en haut) dans la page.")
+        c.note.setText(note or f"Page d'envoi ouverte dans un nouvel onglet{where} ; "
+                       f"{'titre' if t['title'] else 'texte'} copié. Glisse la vidéo (en haut) dans la page.")
         c.note.show()
+
+    def youtube_channel(self, account_id: int) -> str:
+        """Identifiant de la chaîne YouTube du compte (lu une fois sur sa page publique, puis gardé)."""
+        acc = self.app.concepts.get_account(account_id)
+        saved = self.app.concepts.account_settings(account_id).get("channel") or {}
+        if saved.get("url") == acc.public_url:
+            return saved.get("id") or ""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            ch = reconcile.youtube_channel_id(acc.public_url)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.app.concepts.update_account_settings(account_id, channel={"url": acc.public_url, "id": ch})
+        return ch
 
     # -- action -------------------------------------------------------------------------
     def _destination(self, st: dict) -> Path | None:

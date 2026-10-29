@@ -23,7 +23,7 @@ class ProjectService:
 
     def create(self, concept_id: int, name: str, mode: ProjectMode | str = ProjectMode.FREE_EDIT) -> int:
         if not name.strip():
-            raise ValueError("Le nom du projet est obligatoire.")
+            raise ValueError("Le nom de la vidéo est obligatoire.")
         with self.db.transaction() as c:
             pid = c.execute("INSERT INTO project(concept_id, name, mode) VALUES (?,?,?)",
                             (concept_id, name.strip(), ProjectMode(mode).value)).lastrowid
@@ -124,7 +124,7 @@ class ProjectService:
     def rename(self, project_id: int, name: str) -> str:
         name = name.strip()
         if not name:
-            raise ValueError("Le nom du projet est obligatoire.")
+            raise ValueError("Le nom de la vidéo est obligatoire.")
         name = self._unique_name(name, project_id)
         with self.db.transaction() as c:
             c.execute("UPDATE project SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
@@ -171,7 +171,7 @@ class ProjectService:
         """Copie du montage et des clips (les médias sont partagés, rien n'est copié sur le disque)."""
         p = self.get(project_id)
         if p is None:
-            raise ValueError("Projet introuvable.")
+            raise ValueError("Vidéo introuvable.")
         new_name = self._unique_name((name or f"{p['name']} (copie)").strip())
         with self.db.transaction() as c:
             pid = c.execute("INSERT INTO project(concept_id, name, mode, data_json) VALUES (?,?,?,?)",
@@ -202,7 +202,7 @@ class ProjectService:
         (sous-titres et voix de la langue). Préparer de nouveau la langue refait ce montage."""
         p = self.get(parent_id)
         if p is None:
-            raise ValueError("Projet introuvable.")
+            raise ValueError("Vidéo introuvable.")
         cur = next((r["id"] for r in self.versions(parent_id) if r["lang"] == lang), None)
         if cur is None:
             pid = self.create(p["concept_id"], self._unique_name(f"{p['name']} · V-{lang.upper()}"), "translation")
@@ -224,7 +224,7 @@ class ProjectService:
         les médias restent dans la bibliothèque. Refusé si des publications en dépendent : archivez-le."""
         ids = [project_id] + [r["id"] for r in self.versions(project_id)]      # ses versions traduites aussi
         if any(self.published_count(i) for i in ids):
-            raise ValueError("Des publications utilisent les vidéos de ce projet : archivez-le plutôt que de le "
+            raise ValueError("Des publications utilisent cette vidéo : archivez-la plutôt que de la "
                              "supprimer, pour garder leur historique.")
         data = self.load_data(project_id)
         par = data.get("parent")

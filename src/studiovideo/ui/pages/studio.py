@@ -136,10 +136,10 @@ class StudioPage(QWidget):
         self.project_combo = QComboBox()
         self.project_combo.setMinimumWidth(240)
         self.project_combo.setMaximumWidth(380)
-        self.project_combo.setToolTip("Tous les projets")
+        self.project_combo.setToolTip("Toutes les vidéos")
         self.project_combo.currentIndexChanged.connect(self._on_project_combo)
         top.addWidget(self.project_combo)
-        self.new_btn = tool("plus", "Nouveau projet", lambda: self.new_blank.emit(self._mode() or "free_edit"))
+        self.new_btn = tool("plus", "Nouvelle vidéo", lambda: self.new_blank.emit(self._mode() or "free_edit"))
         top.addWidget(self.new_btn)
         top.addStretch(1)
         self.undo_btn = tool("undo-2", "Annuler (Ctrl+Z)", self.undo)
@@ -163,7 +163,7 @@ class StudioPage(QWidget):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
         self.stack.addWidget(EmptyState("Choisissez un parcours en bas",
-                                        "Ou glissez une vidéo n'importe où dans la fenêtre : un projet brouillon "
+                                        "Ou glissez une vidéo n'importe où dans la fenêtre  : une nouvelle vidéo "
                                         "est créé et ses extraits sont recherchés automatiquement."))
 
         vsplit = QSplitter(Qt.Vertical)
@@ -905,24 +905,55 @@ class StudioPage(QWidget):
             self.open_project(pid, mode)
 
     def project_menu(self, pid: int, mode: str, parent: QWidget, pos) -> None:
-        """Clic droit sur un projet (listes des écrans Clipping et Traduction) : renommer, supprimer."""
+        """Clic droit sur une vidéo de la barre de gauche : renommer, archiver, supprimer."""
+        if self.app.projects.get(pid) is None:
+            return
+        m = QMenu(parent)
+        acts = {m.addAction(theme.icon(ic, theme.color("muted"), 16), txt): kind
+                for kind, ic, txt in (("rename", "pencil", "Renommer…"), ("archive", "archive", "Archiver"),
+                                      ("delete", "trash-2", "Supprimer…"))}
+        a = m.exec(pos)
+        if a in acts:
+            self.project_action(pid, acts[a], mode, parent)
+
+    def project_action(self, pid: int, kind: str, mode: str, parent: QWidget | None = None) -> None:
+        """Boutons d'une vidéo de la barre (au survol) : « rename », « archive » ou « delete »."""
         p = self.app.projects.get(pid)
         if p is None:
             return
-        m = QMenu(parent)
-        ren = m.addAction(theme.icon("pencil", theme.color("muted"), 16), "Renommer…")
-        dele = m.addAction(theme.icon("trash-2", theme.color("muted"), 16), "Supprimer…")
-        a = m.exec(pos)
-        if a is ren:
-            name, ok = QInputDialog.getText(parent, "Renommer", "Nom du projet :", text=p["name"])
+        if kind == "rename":
+            name, ok = QInputDialog.getText(parent or self, "Renommer", "Nom de la vidéo :", text=p["name"])
             if ok and name.strip():
                 try:
                     self.app.projects.rename(pid, name.strip())
                 except ValueError as exc:
-                    QMessageBox.information(parent, "Renommer", str(exc))
+                    QMessageBox.information(parent or self, "Renommer", str(exc))
                 self.refresh()
-        elif a is dele:
+        elif kind == "archive":
+            self.archive_project(pid, mode)
+        elif kind == "delete":
             self.delete_project(pid, mode, parent)
+
+    def archive_project(self, pid: int, mode: str) -> None:
+        """Archive la vidéo (et ses versions traduites) : elle quitte la barre, on la retrouve dans Archives (menu
+        des trois barres). Ouverte, la suivante prend sa place."""
+        current = pid == self.project_id or self.app.projects.parent_of(self.project_id or 0) == pid
+        if current:
+            self.flush()
+            self.player.unload()
+            self.mplayer.stop()
+        for v in self.app.projects.versions(pid):
+            self.app.projects.set_archived(v["id"], True)
+        self.app.projects.set_archived(pid, True)
+        if not current:
+            self.refresh()
+            return
+        self.project_id = None
+        nxt = self.app.projects.recent(1)
+        if nxt:
+            self.open_from_list(nxt[0]["id"], mode)
+        else:
+            self.new_blank.emit("free_edit" if mode == "export" else mode)
 
     def delete_project(self, pid: int, mode: str, parent: QWidget | None = None) -> bool:
         """Supprime un projet (après confirmation) ; s'il était ouvert, le suivant prend sa place."""
@@ -931,7 +962,7 @@ class StudioPage(QWidget):
             return False
         n = len(self.app.projects.versions(pid))
         more = f" Ses {n} version(s) traduite(s) aussi." if n else ""
-        if QMessageBox.question(parent or self, "Supprimer", f"Supprimer le projet « {p['name']} » ?\n\nSon montage, "
+        if QMessageBox.question(parent or self, "Supprimer", f"Supprimer la vidéo « {p['name']} » ?\n\nSon montage, "
                                 "ses extraits et l'historique de ses exports sont retirés." + more + " Les fichiers "
                                 "vidéo (sources et exports) restent sur le disque.") != QMessageBox.Yes:
             return False
@@ -1426,12 +1457,12 @@ class StudioPage(QWidget):
             return
         self.flush()
         p = self.app.projects.get(self.project_id)
-        path, _ = QFileDialog.getSaveFileName(self, "Exporter le projet",
+        path, _ = QFileDialog.getSaveFileName(self, "Enregistrer la vidéo (archive)",
                                               str(default_export_dir() / f"{p['name']}.studioproj"),
-                                              "Projet Studio Vidéo (*.studioproj)")
+                                              "Vidéo Studio Vidéo (*.studioproj)")
         if not path:
             return
-        media = QMessageBox.question(self, "Exporter le projet", "Inclure les fichiers vidéo et audio dans l'archive ?"
+        media = QMessageBox.question(self, "Enregistrer la vidéo (archive)", "Inclure les fichiers vidéo et audio dans l'archive ?"
                                      "\n\nOui : archive complète, utilisable sur un autre ordinateur.\nNon : archive "
                                      "légère, les médias devront être présents sur l'autre ordinateur.") == QMessageBox.Yes
         jid = self.app.jobs.submit("export_project", f"Archive · {p['name']}", {
