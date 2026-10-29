@@ -1637,7 +1637,9 @@ def test_refresh_keeps_playing_and_sidebar_stable(window, monkeypatch):
         QApplication.processEvents()
     item = next(it for it in items if it.pid == st.project_id)
     assert item.sub.text() == "Transcription à venir"           # puis les mots-clés de la transcription
-    assert QLabel.text(item.name).endswith("…") and item.name.text().endswith("pour la barre")   # nom du média
+    assert item.name.text().endswith("pour la barre")                     # nom du média
+    if item.name.fontMetrics().horizontalAdvance(item.name.text()) > item.name.width():
+        assert QLabel.text(item.name).endswith("…")                     # trop long : « … » (selon la police)
     assert item.minimumSizeHint().width() < st.sidebar.width() - 20   # ne déborde pas : arrondie des deux côtés
     w.start_parcours("translation")                             # autre écran : là, la lecture s'arrête
     assert "clipping" in paused

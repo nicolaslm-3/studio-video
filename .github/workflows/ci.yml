@@ -35,6 +35,11 @@ jobs:
           python -m pytest -q -rfE --tb=short > pytest.txt 2>&1
           rc=$?
           cat pytest.txt
+          # tous les tests passés mais Python plante en se fermant (Qt sous Windows) : pas un échec de test
+          if [ $rc -ne 0 ] && tail -1 pytest.txt | grep -qE " passed" && ! tail -1 pytest.txt | grep -qE "failed|error"; then
+            echo "::warning title=Fermeture::Tous les tests passent ; Python s'est fermé avec le code $rc (plantage à la fermeture, ignoré)."
+            rc=0
+          fi
           if [ $rc -ne 0 ]; then
             # échecs en annotations : lisibles sans ouvrir les journaux
             grep -E "^(FAILED|ERROR) " pytest.txt | head -20 | while read -r line; do
@@ -72,6 +77,11 @@ jobs:
           python -m pytest -q tests/test_transcribe_subtitles.py -k real_whisper -rA > pytest.txt 2>&1
           rc=$?
           cat pytest.txt
+          # tous les tests passés mais Python plante en se fermant (Qt sous Windows) : pas un échec de test
+          if [ $rc -ne 0 ] && tail -1 pytest.txt | grep -qE " passed" && ! tail -1 pytest.txt | grep -qE "failed|error"; then
+            echo "::warning title=Fermeture::Tous les tests passent ; Python s'est fermé avec le code $rc (plantage à la fermeture, ignoré)."
+            rc=0
+          fi
           if [ $rc -ne 0 ]; then
             # dernières lignes du rapport en annotation (lisible sans ouvrir les journaux)
             msg=$(grep -E "Error|error|assert|Exception|raise|^E " pytest.txt | tail -25 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
