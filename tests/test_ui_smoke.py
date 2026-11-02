@@ -1782,6 +1782,14 @@ def test_transcript_button_translate_and_voices(window, monkeypatch):
     assert titles[1] == ("Whisper small · sur ce PC", "Bonsoir à tous")
     dlg.pop.entries[1].clicked.emit()                            # revenir à l'ancienne
     assert ctx.transcripts.get(aid).segments[0].text == "Bonsoir à tous" and dlg.table.rowCount() == 2
+    from studiovideo.ui.widgets import Popover
+    assert isinstance(dlg, Popover)                              # rectangle volant, sans titre ni « Fermer »
+    dlg.search.setText("BONSOIR")                                # recherche : majuscules et accents ignorés
+    assert not dlg.table.isRowHidden(0) and dlg.table.isRowHidden(1) and dlg.found.text() == "1 phrase(s)"
+    dlg.search.setText("xyz")
+    assert dlg.found.text() == "aucun résultat"
+    dlg.search.clear()
+    assert not dlg.table.isRowHidden(1) and dlg.found.text() == ""
     assert "Bonsoir" in " ".join(c.text for c in st.tl.subtitles.cues)
     tv = st.tr_view
     lay = tv.subs_row.parentWidget().layout()

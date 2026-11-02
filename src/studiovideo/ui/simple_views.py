@@ -1599,7 +1599,7 @@ class TranslationView(_View):
             b.setProperty("role", "flag")
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip(LANG_NAMES.get(lg, lg).capitalize())
-            b.clicked.connect(lambda _c=False, lg=lg: self._edit_translation(lg))
+            b.clicked.connect(lambda _c=False, lg=lg, b=b: self._edit_translation(lg, b))
             b.setProperty("lang", lg)
             self.tr_edit.addWidget(b)
         self.tr_edit.addStretch(1)
@@ -1638,11 +1638,12 @@ class TranslationView(_View):
         self.host.refresh()
         self.schedule_refresh()
 
-    def _edit_translation(self, lang: str) -> None:
+    def _edit_translation(self, lang: str, anchor=None) -> None:
         from .transcript_dialog import TranscriptDialog
         dlg = TranscriptDialog(self.app, self.video(), lang, self)
         dlg.saved.connect(self.host.transcript_saved)
-        dlg.exec()
+        self._transcript_pop = dlg                         # rectangle volant, près du drapeau
+        dlg.show_at(anchor or self)
 
     def _translate_now(self) -> None:
         """Traduire le texte (sans voix ni version) dans les langues cochées, pour le relire avant « Préparer »."""

@@ -45,7 +45,8 @@ archiver, supprimer (`StudioPage.project_action` ; une vidéo supprimée ou arch
 archivées sont dans **Archives** (menu des trois barres, `ui/pages/archives.py`, restaurer ou supprimer). Il n'y a
 plus de page « Concepts et projets ». L'en-tête du Studio est commun à tous les onglets :
 Médias (rectangle volant : la liste des vidéos, moitié de la hauteur de l'écran), Importer, lien (icônes grises, à
-gauche), **Transcription** (`ui/transcript_dialog.py` : relire et corriger la transcription, enregistré de lui-même ;
+gauche), **Transcription** (`ui/transcript_dialog.py`, rectangle volant sans titre ni « Fermer » — en haut : recherche d'un
+mot, « Transcrire à nouveau », horloge, roue crantée — : relire et corriger la transcription, enregistré de lui-même ;
 la version corrigée sert partout, `TranscriptService.save_edit`, et les sous-titres déjà faits de cette vidéo sont
 refaits dans tous les projets, `StudioPage.transcript_saved` ; horloge : historique des transcriptions ; roue crantée
 dans la fenêtre : Whisper sur ce PC ou ElevenLabs Scribe v2, `core.asr_params`, réglage `transcribe_engine`), tâches

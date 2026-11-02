@@ -627,8 +627,9 @@ class StudioPage(QWidget):
         from ..transcript_dialog import TranscriptDialog
         dlg = TranscriptDialog(self.app, self.project_video() if self.project_id else None, "", self)
         dlg.saved.connect(self.transcript_saved)
-        dlg.open_settings.connect(lambda: (dlg.reject(), self.open_asr_settings()))
-        dlg.exec()
+        dlg.open_settings.connect(self.open_asr_settings)
+        self._transcript_pop = dlg                         # rectangle volant, sous le bouton
+        dlg.show_at(self.transcript_btn)
 
     def open_asr_settings(self) -> None:
         from ..engines import TranscriptionEnginesDialog
