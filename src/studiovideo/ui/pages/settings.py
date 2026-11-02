@@ -21,7 +21,7 @@ from ...transcribe import engines as asr
 from ...update import rollback
 from .. import theme
 from ..widgets import Card, PageHeader, button, label
-from ..widgets import ask
+from ..widgets import ask, local_time
 
 CONNECTION_LABELS = {"disconnected": "Non connecté", "connected": "Connecté", "expired": "Expiré",
                      "revoked": "Révoqué", "error": "Erreur"}
@@ -175,6 +175,29 @@ class SettingsPage(QWidget):
         lay.addWidget(wf)
         self._show_watch()
 
+        sh = Card()
+        sh.lay.addWidget(label("Calendrier et concepts partagés", "h2"))
+        sh.lay.addWidget(label("Pour retrouver le même calendrier et les mêmes concepts (avec leurs chaînes) sur "
+                               "plusieurs ordinateurs : créez un dossier dans OneDrive, Google Drive ou Dropbox, puis "
+                               "choisissez ce même dossier sur chaque ordinateur. Tout est relu et écrit toutes les "
+                               "2 minutes. Les vidéos, les médias et les connexions par API restent sur chaque PC.",
+                               "muted", wrap=True))
+        self.shared_lbl = label("", wrap=True)
+        self.shared_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        sh.lay.addWidget(self.shared_lbl)
+        self.shared_note = label("", "faint", wrap=True, hint=False)
+        sh.lay.addWidget(self.shared_note)
+        hs = QHBoxLayout()
+        hs.addWidget(button("Choisir le dossier…", on_click=self._pick_shared))
+        self.shared_now = button("Synchroniser maintenant", "ghost", icon="refresh-cw", on_click=self.sync_shared)
+        hs.addWidget(self.shared_now)
+        self.shared_off = button("Arrêter le partage", "ghost", on_click=lambda: self._set_shared(""))
+        hs.addWidget(self.shared_off)
+        hs.addStretch(1)
+        sh.lay.addLayout(hs)
+        lay.addWidget(sh)
+        self._show_shared()
+
         bk = Card()
         bk.lay.addWidget(label("Sauvegardes de la base", "h2"))
         bk.lay.addWidget(label("Une sauvegarde est créée automatiquement chaque jour au démarrage (les 7 dernières "
@@ -206,6 +229,44 @@ class SettingsPage(QWidget):
     def _set_watch(self, folder: str) -> None:
         self.app.settings.set("watch_folder", folder)
         self._show_watch()
+
+    def _show_shared(self) -> None:
+        f = self.app.settings.get("shared_folder", "") or ""
+        self.shared_lbl.setText(f"Dossier partagé : {f}" if f else "Pas de partage : calendrier et concepts restent "
+                                                                    "sur cet ordinateur.")
+        self.shared_now.setEnabled(bool(f))
+        self.shared_off.setEnabled(bool(f))
+        st = self.app.settings.get("shared_sync", None) or {}
+        if not f or not st.get("at"):
+            self.shared_note.setText("")
+        elif st.get("error") and "sent" not in st:
+            self.shared_note.setText(f"⚠ {local_time(st['at'])} : {st['error']}")
+        else:
+            self.shared_note.setText(f"Dernière synchronisation : {local_time(st['at'])} · {st.get('received', 0)} "
+                                     f"reçu(s), {st.get('sent', 0)} envoyé(s)"
+                                     + (f" · ⚠ {st['error']}" if st.get("error") else ""))
+
+    def _pick_shared(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        f = QFileDialog.getExistingDirectory(self, "Dossier partagé (OneDrive, Google Drive, Dropbox…)",
+                                             self.app.settings.get("shared_folder", "") or str(Path.home()))
+        if f:
+            self._set_shared(f)
+
+    def _set_shared(self, folder: str) -> None:
+        self.app.settings.set("shared_folder", folder)
+        if not folder:
+            self.app.settings.set("shared_sync", {})
+        self._show_shared()
+        if folder:
+            self.sync_shared()
+
+    def sync_shared(self) -> int | None:
+        if not self.app.settings.get("shared_folder", "") or self.app.db.query_one(
+                "SELECT 1 FROM job WHERE kind = 'sync_shared' AND status IN ('pending','running')"):
+            return None
+        self.shared_note.setText("Synchronisation…")
+        return self.app.jobs.submit("sync_shared", "Calendrier et concepts partagés", {})
 
     def _refresh_backups(self) -> None:
         self.backup_list.clear()
@@ -384,6 +445,8 @@ class SettingsPage(QWidget):
         self.show_tab("Matériel et moteurs")
 
     def on_job(self, job) -> None:
+        if job.kind == "sync_shared" and job.status not in ("pending", "running"):
+            self._show_shared()
         if job.kind == "connect_account" and job.status in ("succeeded", "failed", "cancelled"):
             win = self.window()
             if hasattr(win, "notify"):

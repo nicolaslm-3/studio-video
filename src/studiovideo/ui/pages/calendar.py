@@ -179,6 +179,8 @@ class PlanPopover(Popover):
             self.video.addItem(p["name"], p["id"])
         want = row["project_id"] if row else project_id
         self.video.setCurrentIndex(self.video.findData(want) if want else -1)
+        if row and self.video.currentIndex() < 0 and row["video"]:     # vidéo d'un autre PC (calendrier partagé)
+            self.video.setPlaceholderText(f"{row['video']} (sur un autre ordinateur)")
         self.body.addWidget(self.video)
         # la vidéo exportée : à glisser dans la page d'envoi, ou à montrer dans l'Explorateur
         vr = QHBoxLayout()

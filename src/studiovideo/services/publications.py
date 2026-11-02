@@ -271,7 +271,9 @@ class PublicationService:
                              " networks_json) VALUES (?,?,?,?,?,?)",
                              (concept_id, project_id, title, text, when, nets)).lastrowid
 
-    _PLAN = ("SELECT m.id, m.concept_id, c.name concept, c.color, m.project_id, pr.name video, m.title,"
+    # vidéo pas sur ce PC (calendrier partagé) : son nom seulement (`video_name`)
+    _PLAN = ("SELECT m.id, m.concept_id, c.name concept, c.color, m.project_id,"
+             " COALESCE(pr.name, NULLIF(m.video_name, '')) video, m.title,"
              " m.description, m.hashtags, m.planned_at, m.networks_json FROM master_publication m"
              " JOIN concept c ON c.id = m.concept_id LEFT JOIN project pr ON pr.id = m.project_id ")
 

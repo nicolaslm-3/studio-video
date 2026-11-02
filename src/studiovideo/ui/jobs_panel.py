@@ -164,7 +164,8 @@ class JobsPanel(QWidget):
 
     def refresh(self, *_):
         sel = self._selected()
-        jobs = [j for j in self.app.jobs.list(self.filter.currentData(), limit=300) if j.kind != "preview_frame"]
+        jobs = [j for j in self.app.jobs.list(self.filter.currentData(), limit=300) if j.kind != "preview_frame"
+                and not (j.kind == "sync_shared" and j.status == "succeeded")]   # partage : toutes les 2 min
         self.table.setRowCount(len(jobs))
         for i, j in enumerate(jobs):
             media, step, model = describe_parts(self.app, j)

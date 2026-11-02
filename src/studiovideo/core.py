@@ -1539,6 +1539,26 @@ def _register_handlers(app: AppContext) -> None:
                                                                  "videos": len(entries)})
         return {"confirmed": confirmed, "proposed": proposed, "errors": errors, "skipped": skipped}
 
+    def sync_shared(ctx: JobContext, params: dict) -> dict:
+        """Calendrier et concepts (avec leurs chaînes) partagés par le dossier choisi dans Paramètres
+        (`services/shared_sync.py`). Passe toutes les 2 minutes : seul le dernier passage reste dans les tâches."""
+        from .services.shared_sync import SharedSync
+        folder = app.settings.get("shared_folder", "") or ""
+        if not folder:
+            return {"sent": 0, "received": 0, "deleted": 0, "errors": [], "skipped": True}
+        with app.db.transaction() as c:
+            c.execute("DELETE FROM job WHERE kind = 'sync_shared' AND status IN ('succeeded', 'failed') AND id != ?",
+                      (ctx.job_id,))
+        try:
+            out = SharedSync(app.db, app.concepts, app.publications, folder).run()
+        except Exception as exc:
+            app.settings.set("shared_sync", {"at": _utc_now(), "error": str(exc)[:300]})
+            raise
+        app.settings.set("shared_sync", {"at": _utc_now(), "error": (out["errors"] or [""])[0],
+                                         **{k: out[k] for k in ("sent", "received", "deleted")}})
+        return out
+
+    app.jobs.register("sync_shared", sync_shared)
     app.jobs.register("refresh_stats", refresh_stats)
     app.jobs.register("match_published", match_published)
     app.jobs.register("sync_calendar", sync_calendar)

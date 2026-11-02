@@ -130,6 +130,10 @@ leur date (concept, nom de la
 vidéo, trois logos qu'on met en couleur ou grise d'un clic, pour s'organiser : rien n'est publié) ; « Nouvelle
 publication » (ou double-clic sur un jour, clic sur une vidéo pour la modifier) : rectangle volant concept → vidéo,
 un seul bloc de texte, date et heure (`ui/when_picker.py`), logos (`PublicationService.plan`).
+**Partage entre ordinateurs** (migration 0011, `services/shared_sync.py`, tâche `sync_shared` toutes les 2 min) :
+Paramètres → Général → dossier OneDrive / Google Drive / Dropbox ; un fichier JSON par concept (avec ses chaînes) et
+par vidéo du calendrier, identifiant commun `uid`, `sync_state` = empreintes locale / dossier à la dernière synchro
+(changé des deux côtés : ce PC gagne) ; ni vidéos, ni médias, ni jetons API, ni « Brouillons ».
 « Ajouter un compte » / « Connecter ce compte… » (`ui/account_setup.py`) : compte et adresse publique ; les pages
 des réseaux s'ouvrent dans un **nouvel onglet du navigateur par défaut déjà ouvert**, avec les comptes où
 l'utilisateur est connecté (`browser_login.open_page`) — pas de profil séparé ni de « Se connecter à ce compte » (le

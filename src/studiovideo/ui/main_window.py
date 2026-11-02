@@ -148,6 +148,11 @@ class MainWindow(QMainWindow):
         self._links = QTimer(self)
         self._links.timeout.connect(self.check_links)
         self._links.start(30_000)                          # premier passage 30 s après l'ouverture, puis toutes les heures
+        # calendrier et concepts partagés entre plusieurs PC (Paramètres → Général) : toutes les 2 minutes
+        self._shared_error = ""
+        self._shared = QTimer(self, interval=120_000, timeout=self.settings_page.sync_shared)
+        self._shared.start()
+        QTimer.singleShot(5000, self.settings_page.sync_shared)
 
     # -- navigation ---------------------------------------------------------
     def go(self, index: int) -> None:
@@ -428,6 +433,15 @@ class MainWindow(QMainWindow):
                 self._import_refresh = QTimer(self, singleShot=True, interval=300)
                 self._import_refresh.timeout.connect(self._refresh_after_import)
             self._import_refresh.start()
+        if j and j.kind == "sync_shared" and j.status not in ("pending", "running"):
+            r = j.result or {}
+            if (r.get("received") or r.get("deleted")) and self.pages.currentWidget() is self.calendar:
+                self.calendar.refresh()
+            error = j.error if j.status == "failed" else ""
+            if error and error != self._shared_error:      # dit une fois, pas toutes les 2 minutes
+                self.notify(f"Calendrier partagé : {error.splitlines()[0][:200]}", 10000)
+            self._shared_error = error
+            return
         if j and j.kind == "match_published" and j.status == "succeeded":
             r = j.result or {}
             if r.get("confirmed"):
