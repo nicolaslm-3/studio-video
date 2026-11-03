@@ -4,6 +4,58 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.33.0</title>
+      <pubDate>Tue, 03 Nov 2026 09:44:29 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.33.0 — Calendrier et concepts partagés entre ordinateurs, transcription plus pratique&lt;/h2&gt;
+&lt;h3&gt;Le même calendrier sur plusieurs ordinateurs&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Dans **Paramètres → Général**, une nouvelle carte : **Calendrier et concepts partagés**.&lt;/li&gt;
+&lt;li&gt;Créez un dossier dans OneDrive, Google Drive (avec l&amp;#x27;application « Google Drive pour ordinateur ») ou Dropbox, puis&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;choisissez **ce même dossier** sur chaque ordinateur avec « Choisir le dossier… ».&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Sont partagés :&lt;/li&gt;
+&lt;li&gt;le calendrier : date et heure, texte, logos cochés, liens des vidéos publiées ;&lt;/li&gt;
+&lt;li&gt;les concepts : nom, thématique, couleur, langue ;&lt;/li&gt;
+&lt;li&gt;les chaînes des concepts (YouTube, TikTok, Facebook ou Instagram) et leur adresse publique.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Un ajout, une modification ou une suppression sur un ordinateur arrive sur les autres.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Le dossier est relu toutes les 2 minutes. **Synchroniser maintenant** le fait tout de suite, et la date de la&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;dernière synchronisation s&amp;#x27;affiche dessous.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Restent sur chaque ordinateur : les vidéos, les médias, les connexions par API et les brouillons. Une publication&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;prévue sur un autre ordinateur affiche le nom de sa vidéo, suivi de « (sur un autre ordinateur) ».&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;La première fois, un concept qui porte le même nom sur deux ordinateurs devient un seul concept.&lt;/li&gt;
+&lt;li&gt;Une vidéo publiée que deux ordinateurs retrouvent chacun de leur côté n&amp;#x27;apparaît qu&amp;#x27;une fois au calendrier.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Transcription&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;La transcription s&amp;#x27;ouvre dans un **rectangle volant**, sous le bouton « Transcription », et non plus dans une&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;fenêtre.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Plus de titre ni de bouton « Fermer » : un clic à côté ou la touche Échap la referme, et les corrections sont&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;enregistrées.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;En haut, de gauche à droite :&lt;/li&gt;
+&lt;li&gt;une **barre de recherche** : seules les phrases qui contiennent le mot restent affichées, avec leur nombre à côté&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;(majuscules et accents ignorés) ;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;**Transcrire à nouveau** ;&lt;/li&gt;
+&lt;li&gt;l&amp;#x27;historique ;&lt;/li&gt;
+&lt;li&gt;la roue crantée.&lt;/li&gt;
+&lt;li&gt;La correction d&amp;#x27;une traduction (drapeau dans l&amp;#x27;onglet Traduction) s&amp;#x27;ouvre de la même façon, près du drapeau.&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.33.0/StudioVideo-0.33.0-Setup.exe" sparkle:version="0.33.0" sparkle:shortVersionString="0.33.0" sparkle:os="windows-x64" length="208258319" type="application/octet-stream" sparkle:edSignature="SefN8HbSDAH4KMKoskKe3r90dsYMmRRsstoXgS98KEeBS7yWsPRPngCKPxrD/eqcA5TpQ/Au4mGi6I8VS2jbAg==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.32.0</title>
       <pubDate>Thu, 29 Oct 2026 16:07:00 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.32.0 — Chaque vidéo a son concept, Export simplifié&lt;/h2&gt;
@@ -465,25 +517,6 @@
 &lt;/ul&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.13.0/StudioVideo-0.13.0-Setup.exe" sparkle:version="0.13.0" sparkle:shortVersionString="0.13.0" sparkle:os="windows-x64" length="193686036" type="application/octet-stream" sparkle:edSignature="C77aVjayS2S30bMresn5ermTb5Sdeg4FA0Hd01svGm3USY/ctayyp57IiXb6P/8NWMcI1NT1i+LYYDvyOO+bAA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.12.0</title>
-      <pubDate>Wed, 21 Oct 2026 22:56:32 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.12.0 — Analytiques (début de la V4)&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Nouvel espace **Analytiques** : vidéos publiées comparées par concept, par plateforme, par compte et par vidéo&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;(vues avec barres de comparaison, j&amp;#x27;aime, commentaires, partages, taux d&amp;#x27;engagement)&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;**Relever les statistiques YouTube** : chiffres publics lus par l&amp;#x27;API, y compris pour les vidéos publiées à la main&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;(le lien suffit) — il faut un compte YouTube connecté&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;**Saisir des chiffres** pour TikTok, Instagram, Facebook, X : recopiés depuis la plateforme, marqués « saisi »&lt;/li&gt;
-&lt;li&gt;Un chiffre non fourni s&amp;#x27;affiche « — », jamais 0 ; chaque relevé est daté et conservé (historique)&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.12.0/StudioVideo-0.12.0-Setup.exe" sparkle:version="0.12.0" sparkle:shortVersionString="0.12.0" sparkle:os="windows-x64" length="193612336" type="application/octet-stream" sparkle:edSignature="RPBgS/uCVatsoBrfgSzFZE1oL0JT4U30Zh8+lgvJVEPHcKs9/fiGO0Bf4Zky44TIEor9jDkMl06D4RKnVqg2Bw==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
