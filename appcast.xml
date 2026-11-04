@@ -4,6 +4,59 @@
     <title>Studio Vidéo — mises à jour</title>
     <language>fr</language>
     <item>
+      <title>Version 0.34.0</title>
+      <pubDate>Wed, 04 Nov 2026 15:35:45 +0000</pubDate>
+      <description>&lt;h2&gt;Studio Vidéo 0.34.0 — Plusieurs vidéos en une, flou et zoom arrière, analytiques retrouvées sur vos chaînes&lt;/h2&gt;
+&lt;h3&gt;Analytiques et calendrier&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Le calendrier cherche les vidéos publiées **depuis un an** sur les chaînes de vos concepts (jusqu&amp;#x27;à 100 par&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;chaîne), et non plus seulement celles des 20 derniers jours.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Les vues de TikTok sont gardées dès ce passage ; celles de YouTube sont relevées juste après, sans attendre.&lt;/li&gt;
+&lt;li&gt;Une vidéo déjà au calendrier n&amp;#x27;est plus relue à chaque passage : c&amp;#x27;est plus rapide.&lt;/li&gt;
+&lt;li&gt;La page Analytiques se met à jour toute seule après chaque relevé.&lt;/li&gt;
+&lt;li&gt;Les vidéos retrouvées sur vos chaînes ont leurs vues relevées comme les autres.&lt;/li&gt;
+&lt;li&gt;Limite : Facebook et Instagram ne laissent pas lire la liste des vidéos d&amp;#x27;une page sans être connecté. Leurs Reels&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;ne sont donc pas retrouvés tout seuls. Une vidéo dont le lien est connu a quand même ses vues relevées.&lt;/p&gt;
+&lt;h3&gt;Montage libre : plusieurs vidéos en une&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;La timeline a **4 pistes vidéo**, puis Musique et Voix. Les pistes Textes et Sous-titres ont disparu de cet&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;onglet (les textes se font dans l&amp;#x27;onglet Textes).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Une vidéo importée, par n&amp;#x27;importe quel moyen, va sur la première piste libre : la piste 1, puis la 2, la 3 et la 4.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Elle apparaît tout de suite à l&amp;#x27;écran.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;On glisse une vidéo des pistes 2 à 4 pour choisir à quel moment elle commence. Clic droit : la retirer.&lt;/li&gt;
+&lt;li&gt;Dans Cadrage, nouvelle disposition **« Côte à côte »** : 2 vidéos l&amp;#x27;une à côté de l&amp;#x27;autre, 3 (deux en haut, une&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;en bas) ou 4 (deux en haut, deux en bas). Les vues empilées restent possibles.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Le zoom de chaque vue descend sous 100 % : la vidéo devient plus petite que sa case, avec du noir autour.&lt;/li&gt;
+&lt;li&gt;Barre des vidéos à gauche, comme dans les autres onglets ; outils plus compacts.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Bouton robot (sous chaque aperçu)&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;Nouvel outil **Flou**, avec sa force. Il floute la vidéo, jamais les textes ni les sous-titres.&lt;/li&gt;
+&lt;li&gt;**Zoom de 20 à 250 %** : sous 100 %, la vidéo est réduite à l&amp;#x27;écran, avec du noir autour.&lt;/li&gt;
+&lt;li&gt;Les filtres de couleur (dont **Vif** et **Doux**) se voient maintenant dans l&amp;#x27;aperçu ; « Vif » est plus marqué.&lt;/li&gt;
+&lt;li&gt;La phrase « Filtres : couleurs approchées… » a disparu.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Autres changements&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;L&amp;#x27;onglet Création originale a quitté le dock ; les anciennes vidéos de ce type s&amp;#x27;ouvrent encore.&lt;/li&gt;
+&lt;li&gt;Les **Archives** sont en bas de la page Médias.&lt;/li&gt;
+&lt;li&gt;Textes : boutons plus étroits, taille suivie en direct pendant le réglage, couleur, contour et fond sur une ligne.&lt;/li&gt;
+&lt;li&gt;Clipping : un seul critère à la fois ; « Proposer d&amp;#x27;autres extraits » juste à côté du « + ».&lt;/li&gt;
+&lt;li&gt;Traduction : les drapeaux des langues sur une seule ligne.&lt;/li&gt;
+&lt;/ul&gt;</description>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.34.0/StudioVideo-0.34.0-Setup.exe" sparkle:version="0.34.0" sparkle:shortVersionString="0.34.0" sparkle:os="windows-x64" length="208280419" type="application/octet-stream" sparkle:edSignature="5//MbOJNTs28/qy5IgTJ1HbpJbFEMDf0rrjcUh12scda+7yp7p+F95m9luNiimo6RRQWOkuSFMhotdY8sJAwAA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
+    </item>
+    <item>
       <title>Version 0.33.0</title>
       <pubDate>Tue, 03 Nov 2026 09:44:29 +0000</pubDate>
       <description>&lt;h2&gt;Studio Vidéo 0.33.0 — Calendrier et concepts partagés entre ordinateurs, transcription plus pratique&lt;/h2&gt;
@@ -499,24 +552,6 @@
 &lt;p&gt;avec la raison, au lieu de rester « en cours d&amp;#x27;envoi »&lt;/p&gt;</description>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.13.1/StudioVideo-0.13.1-Setup.exe" sparkle:version="0.13.1" sparkle:shortVersionString="0.13.1" sparkle:os="windows-x64" length="193618114" type="application/octet-stream" sparkle:edSignature="gGgkcgaydeuoXYLIcVU2zdS5GU25NG35TwVzg9u7KURrRiZC5BK8yJqjxVgKbV1yQQuO+4aF5m/b9z22nW5MBQ==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
-    </item>
-    <item>
-      <title>Version 0.13.0</title>
-      <pubDate>Wed, 21 Oct 2026 23:04:18 +0000</pubDate>
-      <description>&lt;h2&gt;Studio Vidéo 0.13.0 — Détection du texte incrusté&lt;/h2&gt;
-&lt;ul&gt;
-&lt;li&gt;Cadrage → Masquer une zone → **Détecter le texte incrusté et les logos** : l&amp;#x27;extrait est analysé (≈ 30 images)&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;et des zones sont proposées — logo ou filigrane fixe près d&amp;#x27;un bord, sous-titres incrustés en bas de l&amp;#x27;image&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;Les zones sont ajoutées en flou ; changez la méthode (effacement, bande noire) ou ajustez-les, puis&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;vérifiez avec « Aperçu fidèle » avant d&amp;#x27;exporter&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;La détection repère la présence de texte, elle ne le lit pas&lt;/li&gt;
-&lt;/ul&gt;</description>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/nicolaslm-3/studio-video/releases/download/v0.13.0/StudioVideo-0.13.0-Setup.exe" sparkle:version="0.13.0" sparkle:shortVersionString="0.13.0" sparkle:os="windows-x64" length="193686036" type="application/octet-stream" sparkle:edSignature="C77aVjayS2S30bMresn5ermTb5Sdeg4FA0Hd01svGm3USY/ctayyp57IiXb6P/8NWMcI1NT1i+LYYDvyOO+bAA==" sparkle:installerArguments="/SILENT /SP- /SUPPRESSMSGBOXES /NOCANCEL" />
     </item>
   </channel>
 </rss>
