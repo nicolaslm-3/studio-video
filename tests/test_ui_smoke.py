@@ -536,9 +536,9 @@ def test_reframe_flow(window, monkeypatch):
         time.sleep(0.05)
     st.on_job(ctx.jobs.get(jid))
     assert st.tl.segments[0].reframe == [[0.0, 0.3], [8.0, 0.7]]
-    assert "1/1" in st.panel.reframe_note.text()
-    st._reframe(False)
-    assert st.tl.segments[0].reframe == []
+    assert st.follow.isChecked() and not hasattr(st.panel, "reframe_note")   # sous l'aperçu, plus dans Cadrage
+    st.follow.click()                                    # le bouton relâché : cadre fixe
+    assert st.tl.segments[0].reframe == [] and not st.follow.isChecked()
 
 
 def test_opens_in_free_edit_without_home(window):
@@ -652,7 +652,8 @@ def test_timeline_drag_trims_and_moves(window):
     st.tl.segments = []                                  # vidéo placée d'office : on repart à vide
     st.tl.add_segment(aid, 2, 6)
     st.tl.add_segment(aid, 10, 14)
-    txt = st.tl.add_text("Titre", 1.0, 3.0)
+    from studiovideo.edit import compose
+    st.tl.video.layout = compose.place_track(None, aid, 1080, 1920, start=1.0)[0]   # piste vidéo 2
     st._changed(panel=True)
     c = st.timeline.canvas
     c.resize(1200, c.minimumHeight())
@@ -672,11 +673,11 @@ def test_timeline_drag_trims_and_moves(window):
     drag(c.x_of(0) + 1, c.x_of(1.0), y0)                         # bord gauche : début de source avancé
     assert st.tl.segments[0].src_in == pytest.approx(3.0, abs=0.05)
     y1 = c.track_rect(1).center().y()
-    drag(c.x_of(2.0), c.x_of(4.0), y1)                           # texte déplacé
-    assert (txt.start, txt.end) == (pytest.approx(3.0, abs=0.05), pytest.approx(5.0, abs=0.05))
+    drag(c.x_of(2.0), c.x_of(4.0), y1)                           # vidéo de la piste 2 : commence 2 s plus tard
+    assert compose.track_start(st.tl.video.layout, aid) == pytest.approx(3.0, abs=0.05)
     n = len(st._history)
     st.undo()
-    assert st.tl.texts[0].start == pytest.approx(1.0, abs=0.05) and len(st._history) == n - 1
+    assert compose.track_start(st.tl.video.layout, aid) == pytest.approx(1.0, abs=0.05) and len(st._history) == n - 1
 
 
 def test_watch_folder_imports(window, tmp_path):
@@ -791,7 +792,7 @@ def test_projects_dialog(window, monkeypatch):
 def test_dock_parcours_and_drafts(window):
     from studiovideo.ui import theme
     w, ctx = window
-    assert set(w.dock.buttons) == set(theme.PARCOURS) | {"export"}
+    assert set(w.dock.buttons) == set(theme.PARCOURS) - theme.DOCK_HIDDEN | {"export"}
     w.go(2)
     w.start_parcours("translation")                             # aucun projet du parcours : projet vierge ouvert
     pid = w.studio.project_id
@@ -810,7 +811,7 @@ def test_dock_parcours_and_drafts(window):
     assert fp.value() == "1:1" and "Carré" in fp.toolTip()
     w.start_parcours("original")                                # un projet traverse tous les parcours
     assert w.studio.project_id == pid and ctx.projects.get(pid)["mode"] == "original"
-    assert w.dock.buttons["original"].isChecked() and w.studio.tl.format.aspect == "1:1"
+    assert "original" not in w.dock.buttons and w.studio.tl.format.aspect == "1:1"   # retirée du dock
     bid = pid
     ctx.db.connect().execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, "
                              "audio_tracks, duration_s, width, height) VALUES (1,?,'video','d.mp4','d.mp4','fd',1,9,"
@@ -830,21 +831,27 @@ def test_dock_parcours_and_drafts(window):
     assert ctx.projects.get(nid) is None and ctx.projects.get(bid) is not None
     w.show()
     w.go(2)                                                     # hors Studio : plus de parcours actif
-    assert not w.dock.buttons["original"].isChecked()
-    w.drawer.navigate.emit(6)
-    assert w.pages.currentWidget() is w.archives                # menu ☰ : Archives (plus de Concepts et projets)
+    assert not any(b.isChecked() for b in w.dock.buttons.values())
+    assert w.pages.currentWidget() is w.library and w.archives.isVisibleTo(w.library)   # Archives : sous Médias
 
 
 def test_workspaces_show_only_their_tools(window):
     from studiovideo.ui.pages.studio import LAYOUTS
     w, ctx = window
     st = w.studio
-    w.start_parcours("free_edit")                               # tous les outils
+    w.start_parcours("free_edit")                               # montage, barre des projets à gauche
     assert st.timeline_box.isVisibleTo(st) and st.panel.isVisibleTo(st) and not st.export_card.isVisibleTo(st)
-    assert all(st.panel.isTabVisible(i) for i in range(st.panel.count()))
-    assert not st.full_btn.isVisibleTo(st) and st.guide.isHidden()
-    assert list(w.dock.buttons) == ["free_edit", "smart_clipping", "translation", "original", "texts", "export"]
-    assert w.dock.buttons["original"].dimmed and not w.dock.buttons["texts"].dimmed   # Création originale grisée
+    assert [st.panel.tab_name(i) for i in range(st.panel.count()) if st.panel.isTabVisible(i)] == \
+        ["Extrait", "Cadrage", "Audio"]                         # Textes, Sous-titres, Export : onglets principaux
+    assert not st.left_tabs.isVisibleTo(st) and st.sidebar.isVisibleTo(st)
+    st.viewer_tabs.setCurrentIndex(0)
+    assert st.follow.isVisibleTo(st)                            # suivre la personne qui parle : sous l'aperçu
+    st.viewer_tabs.setCurrentIndex(1)
+    assert not st.player.clip_btn.isVisibleTo(st)               # plus d'outil « Clip » (ni de liste des clips)
+    st.viewer_tabs.setCurrentIndex(0)
+    assert not any(b.isVisibleTo(st) for b in (st.full_btn, st.undo_btn, st.redo_btn, st.project_combo))
+    assert st.guide.isHidden()
+    assert list(w.dock.buttons) == ["free_edit", "smart_clipping", "translation", "texts", "export"]
     w.start_parcours("smart_clipping")                          # Clipping : découpage seulement
     assert st.stack.currentWidget() is st.clip_view and not st.full_btn.isVisibleTo(st)
     w.start_parcours("translation")
@@ -1078,17 +1085,18 @@ def test_double_framing_panel_and_live_preview(window):
     st._changed(panel=True)
     p = st.panel
     assert not (not p.lay_box.isHidden())
-    p.lay_kind.setCurrentIndex(p.lay_kind.findData("split"))
+    assert p.lay_kind.findData("split") < 0 and p.lay_kind.findData("split2") < 0
+    p.lay_kind.setCurrentIndex(p.lay_kind.findData("stack"))
     lay = compose.norm(st.tl.video.layout)
-    assert lay["kind"] == "split" and (not p.lay_box.isHidden())
-    assert not (not p.lay_second.isHidden()) and (not p.lay_swap.isHidden())      # même vidéo : pas de 2e source
+    assert lay["kind"] == "stack" and lay["count"] == 2 and (not p.lay_box.isHidden())
+    assert p.lay_asset.currentData() is None and p.lay_audio.isHidden()        # la même vidéo : un seul son
     p.lay_ratio.setValue(60)
     p.lay_view.setCurrentIndex(1)
     p.lay_sl["zoom"].setValue(200)
     lay = compose.norm(st.tl.video.layout)
     assert lay["ratio"] == 0.6 and lay["views"][1]["zoom"] == 2.0 and lay["views"][0]["zoom"] == 1.3
     view = st.mplayer.view
-    assert view.composite and all(v.outer.isVisible() for v in view.views)
+    assert view.composite and [v.outer.isVisible() for v in view.views] == [True, True, False, False]
     img = QImage(192, 108, QImage.Format_RGB32)
     img.fill(QColor("red"))
     view.set_frame(0, QVideoFrame(img))                                         # une image décodée, deux vues
@@ -1116,10 +1124,16 @@ def test_double_framing_panel_and_live_preview(window):
     assert after > before                                                       # le cadre part vers la droite
     assert abs(p.lay_sl["cx"].value() / 100 - compose.norm(st.tl.video.layout)["views"][
         p.lay_view.currentIndex()]["cx"]) < 0.011                               # panneau à jour
-    p.lay_kind.setCurrentIndex(p.lay_kind.findData("split2"))
+    p.lay_count.setCurrentIndex(p.lay_count.findData(4))                        # jusqu'à 4 vues
+    assert [p.lay_view.itemText(i) for i in range(p.lay_view.count())][::3] == ["Vue 1 (en haut)", "Vue 4 (en bas)"]
+    assert all(v.outer.isVisible() for v in view.views)
+    p.lay_view.setCurrentIndex(3)
+    p.lay_asset.setCurrentIndex(p.lay_asset.findData(a2))                       # une autre vidéo dans la vue 4
+    p.lay_crop["crop_l"].setValue(30)                                           # rognée à gauche
     lay = compose.norm(st.tl.video.layout)
-    assert lay["asset2"] == a2 and (not p.lay_second.isHidden()) and (not p.lay_audio.isHidden())
-    assert view.second_size == (1920, 1080)
+    assert lay["count"] == 4 and lay["views"][3]["asset"] == a2 and lay["views"][3]["crop_l"] == 0.3
+    assert compose.others(lay) == [a2] and not p.lay_audio.isHidden()
+    assert view.other_sizes[0] == (1920, 1080) and view.views[3].src == (1344, 1080)
     p.lay_kind.setCurrentIndex(p.lay_kind.findData("single"))
     assert not view.composite and not (not p.lay_box.isHidden())
     st._autosave()
@@ -1157,8 +1171,11 @@ def test_clipping_screen_moments_and_generation(window, monkeypatch):
     assert "mort de rire" in cv.ask_crit.cats["rire"].toolTip() and "sature" in cv.ask_crit.cats["rire"].toolTip()
     assert "je pense que" in cv.ask_crit.cats["polarisant"].toolTip()
     assert "voix qui monte" in cv.ask_crit.cats["emotion"].toolTip()
+    assert cv.ask_crit.cats["politique"].isChecked()            # politique par défaut
     cv.ask_crit.cats["rire"].setChecked(True)                   # choisi pendant la transcription
+    assert not cv.ask_crit.cats["politique"].isChecked()        # un seul critère à la fois
     assert ctx.projects.load_data(pid)["clip_criteria"]["categories"] == ["rire"]
+    assert cv.more_btn.parentWidget() is cv.add_btn.parentWidget()   # « Proposer… » à droite du « + »
     assert cv.crit.cats["rire"].isChecked()                     # même choix dans la bulle des critères
     assert cv.crit.window() is cv.popup and not cv.popup.isVisible()   # pas dans la colonne de droite
     ctx.transcripts.store_original(aid, Transcript([TSegment(0, 5, "Bonjour", [])], "fr", "t"))
@@ -1581,6 +1598,17 @@ def test_texts_tools_voice_track_and_preview(window, tmp_path):
     size = next(w_ for k, p_, w_ in pn.bt.items if p_ == "size")
     size._commit(100)                                                    # taille réglée à la souris
     assert t.size == 100 and size.val.text() == "100 px"
+    size.valueChanged.emit(130)                                          # pendant le glissement : en direct
+    assert t.size == 130
+    from PySide6.QtWidgets import QHBoxLayout, QToolButton
+    assert not [b for b in font.parentWidget().findChildren(QToolButton) if "police" in b.toolTip()]   # plus de « + »
+
+    def row_of(w_):
+        return next(lo for lo in pn.findChildren(QHBoxLayout) if lo.indexOf(w_) >= 0)
+    assert len({id(row_of(b)) for b in pn.add_btns.values()}) == 1      # Titre, Accroche… sur une ligne
+    assert all(row_of(b) is row_of(pn.text_x) for b in pn.pos_btns.values())        # X, Y puis Haut, Centre, Bas
+    colors = [w_ for k, p_, w_ in pn.bt.items if p_ in ("color", "outline_color", "box_color")]
+    assert len({id(row_of(c)) for c in colors}) == 1                     # couleur, contour, fond : une ligne
     bold = next(w_ for k, p_, w_ in pn.bt.items if p_ == "bold")
     assert bold.text() == "B" and bold.isCheckable() and bold.isChecked()
     bold.click()
@@ -1799,6 +1827,9 @@ def test_transcript_button_translate_and_voices(window, monkeypatch):
     assert tv.erase_row.name.text() == "Effacer les textes d'origine"
     assert not any(b.isVisibleTo(tv) for b in tv.presets.buttons())   # un seul style ; le changer : Textes
     assert tv.chips["de"].iconSize().width() == 20 and tv.subs_hist.toolTip() == "Historique des traductions"
+    from PySide6.QtWidgets import QHBoxLayout
+    flags_row = next(lo for lo in tv.findChildren(QHBoxLayout) if lo.indexOf(tv.chips["fr"]) >= 0)
+    assert all(flags_row.indexOf(b) >= 0 for b in tv.chips.values())           # les drapeaux sur une ligne
     assert tv.voice_hist.toolTip() == "Historique des voix générées"
     sent = []
     monkeypatch.setattr(ctx.jobs, "submit", lambda kind, label_, params=None, **k: sent.append((kind, params))
@@ -1867,9 +1898,9 @@ def test_sidebar_hover_actions_and_archives(window, monkeypatch):
     st.project_action(gone, "archive", "smart_clipping")              # vidéo ouverte archivée : une autre s'ouvre
     assert ctx.projects.get(gone)["status"] == "archived" and st.project_id != gone
     assert gone not in [e[0] for e in st.sidebar.entries()]
-    w.drawer.navigate.emit(6)
+    w.go(2)                                                           # Archives : en bas de Médias
     ar = w.archives
-    assert w.pages.currentWidget() is ar and ar.list.count() == 1
+    assert w.pages.currentWidget() is w.library and ar.list.count() == 1
     ar.list.setCurrentRow(0)
     ar.restore()
     assert ctx.projects.get(gone)["status"] == "active" and ar.list.count() == 0
@@ -1959,7 +1990,7 @@ def test_concept_of_video_calendar_sync_and_archives(window, monkeypatch):
     # archives : par concept
     monkeypatch.setattr(st, "open_from_list", lambda *a: None)
     st.project_action(pid, "archive", "translation")
-    w.drawer.navigate.emit(6)
+    w.go(2)
     ar = w.archives
     ar.concept.setCurrentIndex(ar.concept.findData(c.id))
     assert ar.list.count() == 1 and ar.list.item(0).text().startswith("Mas.tair")
@@ -1967,3 +1998,50 @@ def test_concept_of_video_calendar_sync_and_archives(window, monkeypatch):
     ar.refresh()
     ar.concept.setCurrentIndex(ar.concept.findData(other.id))
     assert ar.list.count() == 0
+
+
+def test_free_edit_video_tracks_blur_and_zoom_out(window):
+    """Montage libre : 4 pistes vidéo (plus de pistes Textes / Sous-titres) ; une vidéo importée ensuite va sur la
+    piste 2 et prend sa vue (côte à côte en 16:9) ; clic droit : retirée. Robot : flou, zoom sous 100 %, plus de
+    phrase sur les filtres."""
+    from studiovideo.edit import compose
+    from studiovideo.ui import timeline_view
+    w, ctx = window
+    st = w.studio
+    w.start_parcours("free_edit")
+    pid = st.project_id
+    con = ctx.db.connect()
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','a.mp4','a.mp4','ftr1',1,20,1920,1080)", (pid,))
+    st.refresh()
+    assert len(st.tl.segments) == 1                               # la première : piste 1
+    assert timeline_view.TRACKS == ("Vidéo 1", "Vidéo 2", "Vidéo 3", "Vidéo 4", "Musique", "Voix")
+    st.tl.set_aspect("16:9", 1080)
+    con.execute("INSERT INTO source_asset(workspace_id, project_id, kind, path, file_name, fingerprint, audio_tracks, "
+                "duration_s, width, height) VALUES (1,?,'video','b.mp4','b.mp4','ftr2',1,8,1920,1080)", (pid,))
+    bid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    st.refresh()
+    lay = compose.norm(st.tl.video.layout)
+    assert len(st.tl.segments) == 1 and lay["tracks"][0]["asset"] == bid      # la suivante : piste 2
+    assert lay["kind"] == "grid" and compose.others(lay) == [bid]
+    st.refresh()
+    assert len(compose.norm(st.tl.video.layout)["tracks"]) == 1                 # pas posée deux fois
+    from PySide6.QtCore import QPointF
+    canvas = st.timeline.canvas
+    y1, y2 = canvas.track_rect(1).center().y(), canvas.track_rect(2).center().y()
+    x = timeline_view.LABEL_W + 5
+    assert canvas.video_track_at(QPointF(x, y1)) == 1 and canvas.video_track_at(QPointF(x, y2)) is None
+    assert canvas.handle_at(QPointF(x, y1)) == {"kind": "track", "id": 1, "edge": "move"}
+    st._remove_track(1)
+    assert compose.norm(st.tl.video.layout)["kind"] == "single"
+    st.refresh()
+    assert not compose.norm(st.tl.video.layout)["tracks"]                       # retirée : elle le reste
+    # robot : flou et zoom sous 100 %, sans la phrase sur les filtres
+    st.mplayer.fx_btn.click()
+    pop = st.mplayer.fx_pop
+    assert not hasattr(pop, "note")
+    pop.blur.setChecked(True)
+    pop.blur_amount.setValue(50)
+    pop.zoom.setValue(60)
+    assert st.tl.video.blur == 0.5 and st.tl.video.zoom == 0.6
+    pop.hide()

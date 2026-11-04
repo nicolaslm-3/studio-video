@@ -19,7 +19,6 @@ from .jobs_panel import JobsPanel
 from .shell import Dock, Drawer, Popover, TipFilter, Toast
 from .pages.analytics import AnalyticsPage
 from .pages.calendar import CalendarPage, now_local
-from .pages.archives import ArchivesPage
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.studio import StudioPage
@@ -30,9 +29,10 @@ log = logging.getLogger(__name__)
 
 # (index de page, nom, icône, raccourci)
 # pas de page d'accueil : le logiciel s'ouvre dans Montage libre (la page 0 reste vide, les numéros ne changent pas)
+# (les Archives sont en bas de Médias)
 NAV = [(1, "Studio", "clapperboard", "Ctrl+1"), (2, "Médias", "film", "Ctrl+2"),
        (3, "Calendrier", "calendar-days", "Ctrl+3"), (4, "Analytics", "chart-no-axes-column", "Ctrl+4"),
-       (6, "Archives", "archive", "Ctrl+5"), (5, "Paramètres", "settings", "Ctrl+6")]
+       (5, "Paramètres", "settings", "Ctrl+5")]
 
 
 class MainWindow(QMainWindow):
@@ -66,9 +66,8 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage(app, lambda: (self.updater.available, self.updater.reason))
         self.calendar = CalendarPage(app)
         self.analytics = AnalyticsPage(app)
-        self.archives = ArchivesPage(app)
-        for p in (QWidget(), self.studio, self.library, self.calendar, self.analytics, self.settings_page,
-                  self.archives):
+        self.archives = self.library.archives             # en bas de la page Médias
+        for p in (QWidget(), self.studio, self.library, self.calendar, self.analytics, self.settings_page):
             self.pages.addWidget(p)
         root.addWidget(self.pages, 1)
 
@@ -442,6 +441,8 @@ class MainWindow(QMainWindow):
                 self.notify(f"Calendrier partagé : {error.splitlines()[0][:200]}", 10000)
             self._shared_error = error
             return
+        if j and j.kind == "sync_calendar" and j.status == "succeeded":
+            self.check_stats()              # vidéos retrouvées sur les chaînes : leurs vues relevées sans attendre
         if j and j.kind == "match_published" and j.status == "succeeded":
             r = j.result or {}
             if r.get("confirmed"):

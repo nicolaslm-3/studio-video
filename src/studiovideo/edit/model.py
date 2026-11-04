@@ -135,6 +135,7 @@ class VideoSettings:
     pan: float = 0.0            # mouvement subtil (panoramique lent) : 0 = aucun … 1 = marqué
     look: str = ""              # filtre colorimétrique (`render.LOOKS`)
     look_amount: float = 0.7    # intensité du filtre (0..1)
+    blur: float = 0.0           # flou de la vidéo : 0 = net … 1 = très flou
     speed: float = 1.0          # vitesse de la vidéo exportée (0,5 … 2)
     # zones masquées (texte incrusté, logo) en proportions de l'image source :
     # {"x", "y", "w", "h" (0..1), "mode": "blur" | "delogo" | "box"}

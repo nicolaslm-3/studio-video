@@ -317,19 +317,25 @@ class PublicationService:
             c.execute("UPDATE master_publication SET networks_json = ? WHERE id = ?",
                       (json.dumps({**d["networks"], "links": d["links"], "times": d["times"]}), master_id))
 
+    FOUND = "retrouvée sur la chaîne"            # publication créée par le calendrier (pas par le logiciel)
+
     def sync_published(self, concept_id: int, platform: str, url: str, title: str, description: str,
-                       when: str) -> str:
+                       when: str, account_id: int | None = None) -> str:
         """Une vidéo trouvée sur la page publique d'une chaîne du concept (heure locale `when`) :
         - déjà reliée à une publication du calendrier : « known » ;
         - une publication du même jour qui lui ressemble (texte) : reliée, son logo en couleur, et sa date et son
           heure deviennent celles de la mise en ligne (la plus tôt si les réseaux diffèrent) : « matched » ;
-        - sinon ajoutée au calendrier avec son titre et sa description : « added »."""
+        - sinon ajoutée au calendrier avec son titre et sa description : « added ».
+        Avec la chaîne (`account_id`), la vidéo devient aussi une publication publiée : ses vues sont relevées
+        (Analytiques) comme celles des vidéos publiées depuis l'Atelier."""
         from ..publish import reconcile
         net = "meta" if platform in ("facebook", "instagram") else platform
         key = reconcile.video_key(url)
         rows = [self._plan_row(r) for r in self.db.query(self._PLAN + "WHERE m.concept_id = ? AND m.planned_at IS "
                                                                       "NOT NULL", (concept_id,))]
-        if any(reconcile.video_key(u) == key for r in rows for u in r["links"].values()):
+        known = next((r for r in rows if any(reconcile.video_key(u) == key for u in r["links"].values())), None)
+        if known is not None:
+            self._found(known["id"], account_id, url, when)
             return "known"
         found = (title + "\n" + description).strip()
         day = [r for r in rows if (r["planned_at"] or "")[:10] == when[:10] and not r["links"].get(net)]
@@ -347,16 +353,81 @@ class PublicationService:
             first = min(best["times"].values())          # réseaux à des heures différentes : la plus tôt
             with self.db.transaction() as c:
                 c.execute("UPDATE master_publication SET planned_at = ? WHERE id = ?", (first, best["id"]))
+            self._found(best["id"], account_id, url, when)
             return "matched"
         mid = self.plan(concept_id, None, "\n".join(x for x in (title.strip(), description.strip()) if x), when,
                         {net: True})
         d = self.plan_of(mid)
         d["links"][net], d["times"][net] = url, when
         self._save_nets(mid, d)
+        self._found(mid, account_id, url, when)
         return "added"
 
+    def _found(self, master_id: int, account_id: int | None, url: str, when: str) -> None:
+        """Vidéo du calendrier retrouvée sur une chaîne : une publication publiée de ce compte, avec son lien et
+        l'heure de mise en ligne (temps universel) — les relevés de vues s'en servent. Rien n'est publié."""
+        if not account_id:
+            return
+        from datetime import datetime, timezone
+        try:
+            at = datetime.strptime(when[:16], "%Y-%m-%dT%H:%M").astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.db.transaction() as c:
+            row = c.execute("SELECT id, status FROM publication WHERE master_id = ? AND social_account_id = ?",
+                            (master_id, account_id)).fetchone()
+            if row is not None and row["status"] == "published":
+                return
+            if row is None:
+                pid = c.execute("INSERT INTO publication(master_id, social_account_id, status, remote_id, public_url,"
+                                " last_attempt_at) VALUES (?,?,'published',?,?,?)",
+                                (master_id, account_id, url, url, at)).lastrowid
+            else:
+                pid = row["id"]
+                c.execute("UPDATE publication SET status = 'published', remote_id = ?, public_url = ?, "
+                          "last_attempt_at = ? WHERE id = ?", (url, url, at, pid))
+            c.execute("INSERT INTO publication_attempt(publication_id, at, outcome, detail) VALUES (?,?,?,?)",
+                      (pid, at, "published", self.FOUND))
+
+    def known_keys(self, concept_id: int) -> set[str]:
+        """Identifiants des vidéos déjà reliées au calendrier du concept (`reconcile.video_key`)."""
+        from ..publish import reconcile
+        return {reconcile.video_key(u) for r in self.db.query(self._PLAN + "WHERE m.concept_id = ?", (concept_id,))
+                for u in self._plan_row(r)["links"].values() if u}
+
+    def _found_again(self, concept_id: int, account_id: int, url: str) -> None:
+        """Vidéo déjà au calendrier, revue sur la chaîne : sa publication publiée existe (vues relevées), à
+        l'heure enregistrée au calendrier."""
+        if self.found_publication(account_id, url):
+            return
+        from ..publish import reconcile
+        key = reconcile.video_key(url)
+        for r in self.db.query(self._PLAN + "WHERE m.concept_id = ?", (concept_id,)):
+            d = self._plan_row(r)
+            net = next((n for n, u in d["links"].items() if u and reconcile.video_key(u) == key), None)
+            if net:
+                self._found(d["id"], account_id, url, d["times"].get(net) or d["planned_at"] or "")
+                return
+
+    def found_publication(self, account_id: int, url: str) -> dict | None:
+        """Publication publiée de ce compte pour cette vidéo : {"id", "published_at", "last_at"} (UTC)."""
+        from ..publish import reconcile
+        key = reconcile.video_key(url)
+        for r in self.db.query(
+                "SELECT p.id, p.public_url, (SELECT MIN(t.at) FROM publication_attempt t WHERE t.publication_id = "
+                "p.id AND t.outcome = 'published') published_at, (SELECT s.captured_at FROM analytics_snapshot s "
+                "WHERE s.publication_id = p.id ORDER BY s.id DESC LIMIT 1) last_at FROM publication p WHERE "
+                "p.social_account_id = ? AND p.status = 'published'", (account_id,)):
+            if reconcile.video_key(r["public_url"] or "") == key:
+                return dict(r)
+        return None
+
     def delete_master(self, master_id: int) -> None:
-        if self.db.query_one("SELECT 1 FROM publication WHERE master_id = ? AND status = 'published'", (master_id,)):
+        """Retirée du calendrier ; refusé si le logiciel l'a lui-même publiée (une vidéo seulement retrouvée sur
+        la chaîne peut partir : elle reste en ligne)."""
+        if self.db.query_one("SELECT 1 FROM publication p WHERE p.master_id = ? AND p.status = 'published' AND NOT "
+                             "EXISTS (SELECT 1 FROM publication_attempt t WHERE t.publication_id = p.id AND "
+                             "t.detail = ?)", (master_id, self.FOUND)):
             raise PublicationError("Une destination est déjà publiée : annulez plutôt les autres.")
         with self.db.transaction() as c:
             c.execute("DELETE FROM master_publication WHERE id = ?", (master_id,))

@@ -1,20 +1,24 @@
-"""Timeline : pistes vidéo, textes, musique, sous-titres et voix (doublage), tête de lecture, zoom (§8.2)."""
+"""Timeline de Montage libre : 4 pistes vidéo (la 1 : le montage ; 2 à 4 : une autre vidéo chacune, montrée dans
+la mise en page, `edit/compose.py`), musique et voix (doublage), tête de lecture, zoom (§8.2). Les textes et les
+sous-titres se règlent dans l'onglet Textes."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QScrollArea, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMenu, QScrollArea, QSlider, QVBoxLayout, QWidget
 
+from ..edit import compose
 from ..edit.model import Timeline
 from ..media.ffmpeg import fmt_timecode
 from . import theme
 from .widgets import label, tc_html
 
 RULER_H = 20
-TRACK_H = 32
-TRACK_GAP = 4
+TRACK_H = 24
+TRACK_GAP = 3
 LABEL_W = 70
-TRACKS = ("Vidéo", "Textes", "Musique", "Sous-titres", "Voix")
+TRACKS = ("Vidéo 1", "Vidéo 2", "Vidéo 3", "Vidéo 4", "Musique", "Voix")
+MUSIC, VOICE = 4, 5                     # numéros des pistes musique et voix
 
 
 class TimelineCanvas(QWidget):
@@ -23,7 +27,8 @@ class TimelineCanvas(QWidget):
     text_selected = Signal(object)
     music_selected = Signal()
     cue_selected = Signal(str)
-    edited = Signal(str)                # "segment" | "text" : modification par glisser terminée
+    edited = Signal(str)                # "segment" | "track" : modification par glisser terminée
+    track_removed = Signal(int)         # piste vidéo 2 à 4 (1..3) vidée (clic droit)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +39,7 @@ class TimelineCanvas(QWidget):
         self.playhead = 0.0
         self.sel_segment: str | None = None
         self.sel_text: str | None = None
+        self.sel_track: int | None = None       # piste vidéo 2 à 4 sélectionnée (1..3)
         self.in_out: tuple[float | None, float | None] = (None, None)
         self._drag_head = False
         self.durations: dict = {}         # asset_id -> durée du média (limite des poignées)
@@ -154,22 +160,25 @@ class TimelineCanvas(QWidget):
             p.drawText(rect.adjusted(6, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft,
                        p.fontMetrics().elidedText(txt, Qt.ElideRight, int(rect.width() - 10)))
             acc += s.duration
-        # textes
-        r1 = self.track_rect(1)
-        for item in self.tl.texts:
-            rect = QRectF(self.x_of(item.start) + 1, r1.top() + 4, max(4.0, (item.end - item.start) * self.pps - 2),
-                          r1.height() - 8)
-            sel = item.id == self.sel_text
-            col = QColor(c["warn"])
-            col.setAlphaF(0.55 if sel else 0.3)
+        # pistes vidéo 2 à 4 : une autre vidéo chacune, à partir de l'instant choisi
+        for j, tr in enumerate(compose.norm(getattr(self.tl.video, "layout", None))["tracks"], start=1):
+            if tr["asset"] is None or j >= MUSIC:
+                continue
+            rj = self.track_rect(j)
+            rect = QRectF(self.x_of(tr["start"]) + 1, rj.top() + 2, max(4.0, self._track_len(tr) * self.pps - 2),
+                          rj.height() - 4)
+            sel = self.sel_track == j
+            col = QColor(c["accent"])
+            col.setAlphaF(0.5 if sel else 0.22)
             p.setBrush(col)
             p.setPen(QPen(QColor(c["text"] if sel else c["border"]), 1.5 if sel else 1))
-            p.drawRoundedRect(rect, 4, 4)
+            p.drawRoundedRect(rect, 5, 5)
             p.setPen(QColor(c["text"]))
-            p.drawText(rect.adjusted(5, 0, -3, 0), Qt.AlignVCenter,
-                       p.fontMetrics().elidedText(item.text.replace("\n", " "), Qt.ElideRight, int(rect.width() - 8)))
+            p.drawText(rect.adjusted(6, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       p.fontMetrics().elidedText(self.names.get(tr["asset"], "?"), Qt.ElideRight,
+                                                  int(rect.width() - 10)))
         # musique
-        r2 = self.track_rect(2)
+        r2 = self.track_rect(MUSIC)
         if self.tl.music.asset_id:
             rect = QRectF(self.x_of(self.tl.music.start) + 1, r2.top() + 4,
                           max(4.0, (self.tl.duration - self.tl.music.start) * self.pps - 2), r2.height() - 8)
@@ -182,26 +191,8 @@ class TimelineCanvas(QWidget):
             p.drawText(rect.adjusted(5, 0, -3, 0), Qt.AlignVCenter,
                        f"♪ {self.music_name}  {self.tl.music.volume_db:+.0f} dB" + ("  · atténuée sous la voix"
                                                                                    if self.tl.music.duck else ""))
-        # sous-titres
-        r3 = self.track_rect(3)
-        st = self.tl.subtitles
-        for cue in st.cues:
-            rect = QRectF(self.x_of(cue.start) + 0.5, r3.top() + 6, max(2.0, (cue.end - cue.start) * self.pps - 1),
-                          r3.height() - 12)
-            col = QColor(c["muted"])
-            col.setAlphaF(0.35 if st.enabled else 0.12)
-            p.setBrush(col)
-            p.setPen(Qt.NoPen)
-            p.drawRoundedRect(rect, 3, 3)
-            if rect.width() > 24:
-                p.setPen(QColor(c["text"] if st.enabled else c["faint"]))
-                p.drawText(rect.adjusted(3, 0, -2, 0), Qt.AlignVCenter,
-                           p.fontMetrics().elidedText(cue.text, Qt.ElideRight, int(rect.width() - 5)))
-        if not st.cues:
-            p.setPen(QColor(c["faint"]))
-            p.drawText(r3.adjusted(10, 0, 0, 0), Qt.AlignVCenter, "Onglet « Sous-titres » → Générer depuis la transcription")
         # voix : les phrases de la voix doublée (version traduite), sinon la voix d'origine de la vidéo
-        r4 = self.track_rect(4)
+        r4 = self.track_rect(VOICE)
         if self.voice_name:
             for a, b, txt in self.voice_lines:
                 rect = QRectF(self.x_of(a) + 0.5, r4.top() + 5, max(2.0, (b - a) * self.pps - 1), r4.height() - 10)
@@ -223,7 +214,7 @@ class TimelineCanvas(QWidget):
         if not self.tl.segments:
             p.setPen(QColor(c["faint"]))
             p.drawText(r0.adjusted(10, 0, 0, 0), Qt.AlignVCenter,
-                       "Ajoutez un extrait : bouton « Ajouter à la timeline » ou double-clic sur un clip.")
+                       "Importez une vidéo : elle se place ici, les suivantes sur les pistes 2 à 4.")
         # tête de lecture
         x = self.x_of(self.playhead)
         p.setPen(QPen(QColor(c["danger"]), 1.5))
@@ -247,12 +238,22 @@ class TimelineCanvas(QWidget):
                 if xb - hp <= x <= xb:
                     return {"kind": "segment", "id": s.id, "edge": "out"}
                 acc += s.duration
-        elif self.track_rect(1).contains(pos):
-            for item in reversed(self.tl.texts):
-                xa, xb = self.x_of(item.start), self.x_of(item.end)
-                if xa - 2 <= x <= xb + 2:
-                    edge = "in" if x <= xa + hp else "out" if x >= xb - hp else "move"
-                    return {"kind": "text", "id": item.id, "edge": edge}
+        j = self.video_track_at(pos)
+        if j:
+            tr = compose.norm(getattr(self.tl.video, "layout", None))["tracks"][j - 1]
+            if self.x_of(tr["start"]) <= x <= self.x_of(tr["start"] + self._track_len(tr)):
+                return {"kind": "track", "id": j, "edge": "move"}
+        return None
+
+    def _track_len(self, tr: dict) -> float:
+        return float(self.durations.get(tr["asset"]) or 0) or max(1.0, self.tl.duration - tr["start"])
+
+    def video_track_at(self, pos) -> int | None:
+        """Piste vidéo 2 à 4 (1..3) sous le pointeur, si elle porte une vidéo."""
+        tracks = compose.norm(getattr(self.tl.video, "layout", None))["tracks"]
+        for j in range(1, MUSIC):
+            if self.track_rect(j).contains(pos) and j <= len(tracks) and tracks[j - 1]["asset"] is not None:
+                return j
         return None
 
     def mousePressEvent(self, e) -> None:
@@ -264,16 +265,21 @@ class TimelineCanvas(QWidget):
             if h["kind"] == "segment":
                 s = self.tl.segments[self.tl.index_of(h["id"])]
                 h["orig"] = (s.src_in, s.src_out)
-                self.sel_segment, self.sel_text = s.id, None
+                self.sel_segment, self.sel_track = s.id, None
                 self.segment_selected.emit(s.id)
             else:
-                item = self.tl.text(h["id"])
-                h["orig"] = (item.start, item.end)
-                self.sel_text, self.sel_segment = item.id, None
-                self.text_selected.emit(item.id)
+                tr = compose.norm(self.tl.video.layout)["tracks"][h["id"] - 1]
+                h["orig"] = (tr["start"], tr["start"])
+                self.sel_track, self.sel_segment = h["id"], None
             h["changed"] = False
             self._drag = h
             self.update()
+            return
+        if e.button() == Qt.RightButton and self.video_track_at(pos):
+            j = self.video_track_at(pos)
+            m = QMenu(self)
+            m.addAction("Retirer cette vidéo de la piste", lambda: self.track_removed.emit(j))
+            m.exec(e.globalPosition().toPoint())
             return
         if pos.y() < RULER_H or e.button() != Qt.LeftButton:
             self._drag_head = True
@@ -282,19 +288,10 @@ class TimelineCanvas(QWidget):
         if self.track_rect(0).contains(pos):
             loc = self.tl.locate(t)
             seg = self.tl.segments[loc[0]].id if loc and t <= self.tl.duration else None
-            self.sel_segment, self.sel_text = seg, None
+            self.sel_segment, self.sel_track = seg, None
             self.segment_selected.emit(seg)
-        elif self.track_rect(1).contains(pos):
-            hit = next((x for x in reversed(self.tl.texts) if x.start <= t <= x.end), None)
-            self.sel_text = hit.id if hit else None
-            self.sel_segment = None
-            self.text_selected.emit(self.sel_text)
-        elif self.track_rect(2).contains(pos) and self.tl.music.asset_id:
+        elif self.track_rect(MUSIC).contains(pos) and self.tl.music.asset_id:
             self.music_selected.emit()
-        elif self.track_rect(3).contains(pos):
-            cue = self.tl.subtitles.cue_at(t)
-            if cue:
-                self.cue_selected.emit(cue.id)
         self._drag_head = True
         self.seek.emit(min(t, self.tl.duration))
         self.update()
@@ -322,15 +319,10 @@ class TimelineCanvas(QWidget):
                 self.tl.trim(d["id"], src_in=min(max(0.0, a + dt), seg.src_out - MIN_SEGMENT), source_duration=dur)
             else:
                 self.tl.trim(d["id"], src_out=max(b + dt, seg.src_in + MIN_SEGMENT), source_duration=dur)
-        else:
-            item = self.tl.text(d["id"])
-            if d["edge"] == "move":
-                dt = max(-a, dt)
-                item.start, item.end = round(a + dt, 3), round(b + dt, 3)
-            elif d["edge"] == "in":
-                item.start = round(min(max(0.0, a + dt), b - 0.2), 3)
-            else:
-                item.end = round(max(b + dt, a + 0.2), 3)
+        else:                               # vidéo d'une piste 2 à 4 : glissée dans le temps
+            lay = compose.norm(self.tl.video.layout)
+            lay["tracks"][d["id"] - 1]["start"] = round(max(0.0, a + dt), 2)
+            self.tl.video.layout = lay
         d["changed"] = True
         self._resize()
         self.update()

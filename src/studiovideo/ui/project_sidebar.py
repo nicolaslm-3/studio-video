@@ -1,7 +1,7 @@
-"""Barre des vidéos, à gauche des onglets Clipping, Traduction, Textes et Export : nom de l'onglet et « + » (nouvelle
-vidéo), puis les vidéos, chacune avec des mots-clés de sa transcription ; ses versions traduites juste en dessous, en
-retrait. Clic : ouvrir dans l'onglet affiché ; au survol, trois petits boutons : renommer, archiver (menu des trois
-barres → Archives), supprimer — aussi au clic droit."""
+"""Barre des vidéos, à gauche des onglets Montage libre, Clipping, Traduction, Textes et Export : nom de l'onglet et
+« + » (nouvelle vidéo), puis les vidéos, chacune avec des mots-clés de sa transcription ; ses versions traduites juste en dessous, en
+retrait. Clic : ouvrir dans l'onglet affiché ; au survol, trois petits boutons : renommer, archiver (Médias →
+Archives, en bas), supprimer — aussi au clic droit."""
 from __future__ import annotations
 
 import json
@@ -41,7 +41,7 @@ class ProjectItem(QFrame):
         al = QHBoxLayout(self.actions)
         al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(0)
-        for kind, ic, tip in (("rename", "pencil", "Renommer"), ("archive", "archive", "Archiver (menu ☰ → Archives)"),
+        for kind, ic, tip in (("rename", "pencil", "Renommer"), ("archive", "archive", "Archiver (Médias → Archives)"),
                               ("delete", "trash-2", "Supprimer")):
             b = tool(ic, tip, lambda _=False, k=kind: self.action.emit(self.pid, k), size=24, icon_px=14)
             al.addWidget(b)

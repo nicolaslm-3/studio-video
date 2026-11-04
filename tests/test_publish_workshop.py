@@ -280,7 +280,7 @@ def test_account_dialog_browser_first(qtbot, app):
 
 
 def test_calendar_sync_published_videos(app, monkeypatch):
-    """Vidéos mises en ligne ces 20 derniers jours sur les chaînes du concept : ajoutées au calendrier (titre,
+    """Vidéos mises en ligne cette année sur les chaînes du concept : ajoutées au calendrier (titre,
     description) ; une publication du même jour qui leur ressemble est reliée et prend l'heure réelle (la plus tôt
     si les réseaux diffèrent) ; une vidéo déjà reliée n'est pas ajoutée deux fois."""
     from datetime import datetime, timedelta
@@ -297,7 +297,7 @@ def test_calendar_sync_published_videos(app, monkeypatch):
     ts_yt = (day + timedelta(hours=19, minutes=12)).timestamp()
     ts_tk = (day + timedelta(hours=17, minutes=40)).timestamp()
     ts_new = (day - timedelta(days=2) + timedelta(hours=12)).timestamp()
-    ts_too_old = (datetime.now() - timedelta(days=25)).timestamp()
+    ts_too_old = (datetime.now() - timedelta(days=400)).timestamp()
 
     def fake_list(url, limit=15):
         if "youtube" in url and url.endswith("/shorts"):
@@ -305,7 +305,8 @@ def test_calendar_sync_published_videos(app, monkeypatch):
                     entry("https://www.youtube.com/shorts/BBBBBBBBBBB", "Tarte aux pommes #cuisine", None, ts=ts_new, title="Une recette"),
                     entry("https://www.youtube.com/shorts/CCCCCCCCCCC", "x", None, ts=ts_too_old, title="Trop vieille")]
         if "tiktok" in url:
-            return [entry("https://www.tiktok.com/@tous/video/1", "Le vrai chiffre du chômage #politique", None, ts=ts_tk, title="")]
+            return [{**entry("https://www.tiktok.com/@tous/video/1", "Le vrai chiffre du chômage #politique", None, ts=ts_tk,
+                             title=""), "view_count": 182, "like_count": 12}]       # TikTok : vues dans la liste
         return []
     monkeypatch.setattr(reconcile, "list_recent", fake_list)
 
@@ -317,6 +318,9 @@ def test_calendar_sync_published_videos(app, monkeypatch):
     monkeypatch.setattr(reconcile, "details", lambda url: {})
     res = wait_job(app, app.jobs.submit("sync_calendar", "Sync", {"delay": None})).result
     assert res["matched"] == 2 and res["added"] == 1 and not res["errors"]
+    assert res["measured"] == 1                                  # vues TikTok gardées sans relire la page
+    tk_pub = app.publications.found_publication(tk.id, "https://www.tiktok.com/@tous/video/1")
+    assert app.analytics.history(tk_pub["id"])[-1][1]["views"] == 182
     p = app.publications.plan_of(old)
     assert p["networks"]["youtube"] and p["networks"]["tiktok"]                     # logos en couleur
     assert p["planned_at"] == day.strftime("%Y-%m-%dT") + "17:40"                 # la mise en ligne la plus tôt
@@ -325,3 +329,16 @@ def test_calendar_sync_published_videos(app, monkeypatch):
     assert added[0]["links"]["youtube"].endswith("BBBBBBBBBBB")
     res = wait_job(app, app.jobs.submit("sync_calendar", "Sync", {"delay": None})).result
     assert res["added"] == 0 and res["matched"] == 0 and res["known"] == 3      # rien en double
+    assert res["measured"] == 0                                  # déjà relevée : attend l'étape suivante
+    # Analytiques : chaque vidéo retrouvée devient une publication publiée, dont les vues sont relevées
+    targets = {t["url"] for t in app.analytics.public_targets()}
+    assert targets == {"https://www.youtube.com/shorts/AAAAAAAAAAA", "https://www.youtube.com/shorts/BBBBBBBBBBB",
+                       "https://www.tiktok.com/@tous/video/1"}
+    assert all(t["published_at"] for t in app.analytics.public_targets())         # étapes des relevés
+    yt_pub = next(r for r in app.analytics.latest() if r["public_url"].endswith("AAAAAAAAAAA"))
+    app.analytics.record(yt_pub["id"], {"views": 1234}, "public")
+    groups = app.analytics.by_video(app.analytics.latest())
+    assert len(groups) == 2 and groups[0]["views"] == 1234 + 182 and set(groups[0]["pubs"]) == {"youtube", "tiktok"}
+    assert len(app.db.query("SELECT id FROM publication")) == 3                   # aucun doublon au 2e passage
+    app.publications.delete_master(added[0]["id"])           # retrouvée seulement : peut quitter le calendrier
+    assert app.publications.plan_of(added[0]["id"]) is None

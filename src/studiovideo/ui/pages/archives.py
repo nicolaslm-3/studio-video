@@ -1,12 +1,12 @@
-"""Archives (menu des trois barres) : les vidéos archivées depuis la barre de gauche ; on les restaure ou on les
-supprime pour de bon."""
+"""Archives (en bas de la page Médias) : les vidéos archivées depuis la barre de gauche ; on les restaure ou on
+les supprime pour de bon."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout, QWidget
 
 from ...core import AppContext
-from ..widgets import PageHeader, button, dot_icon, label, local_time
+from ..widgets import button, dot_icon, label, local_time
 from ..widgets import ask
 
 
@@ -17,14 +17,18 @@ class ArchivesPage(QWidget):
         super().__init__(parent)
         self.app = app
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(36, 30, 36, 20)
-        lay.setSpacing(12)
-        hdr = PageHeader("Archives", "Les vidéos archivées : elles ne sont plus dans la barre de gauche")
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        hdr = QHBoxLayout()                               # sous les médias : un titre de section, pas de page
+        title = label("Archives", "h2")
+        title.setToolTip("Les vidéos archivées : elles ne sont plus dans la barre de gauche")
+        hdr.addWidget(title)
+        hdr.addStretch(1)
         self.concept = QComboBox()
         self.concept.setToolTip("Concept")
         self.concept.currentIndexChanged.connect(self.refresh)
-        hdr.add_action(self.concept)
-        lay.addWidget(hdr)
+        hdr.addWidget(self.concept)
+        lay.addLayout(hdr)
         self.list = QListWidget()
         self.list.itemSelectionChanged.connect(self._buttons)
         self.list.itemDoubleClicked.connect(lambda _it: self.restore())

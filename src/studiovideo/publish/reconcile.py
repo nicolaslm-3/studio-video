@@ -124,7 +124,8 @@ def _entry(e: dict) -> dict:
     if url and not url.startswith("http") and e.get("ie_key") == "Youtube":
         url = "https://www.youtube.com/watch?v=" + url
     return {"url": url, "id": e.get("id"), "title": e.get("title") or "", "description": e.get("description") or "",
-            "duration": e.get("duration"), "timestamp": e.get("timestamp"), "upload_date": e.get("upload_date")}
+            "duration": e.get("duration"), "timestamp": e.get("timestamp"), "upload_date": e.get("upload_date"),
+            **{k: e.get(k) for k in ("view_count", "like_count", "comment_count", "repost_count")}}
 
 
 def list_recent(url: str, limit: int = 15) -> list[dict]:

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QFileDialog, QComboBox, QLabel, QLineEdit, QMenu,
                                QTabWidget, QVBoxLayout, QWidget)
 
 from ...core import AppContext
+from ...edit import compose
 from ...edit.model import Timeline, apply_concept_defaults
 from ...edit.render import output_path
 from ...media.ffmpeg import fmt_timecode
@@ -31,19 +32,21 @@ HISTORY_MAX = 100
 # Espace de travail de chaque parcours : ce qui est affiché, le reste est masqué (« Tous les outils » le montre).
 # Clipping et Traduction ont leur propre écran (ui/simple_views.py) ; « Tous les outils » ouvre le montage complet
 # depuis Traduction et Création originale. Textes : uniquement les textes et les sous-titres (la barre des projets
-# à gauche ; l'export se fait par le bouton Exporter), sans « Tous les outils » ni annuler / rétablir.
+# à gauche ; l'export se fait par le bouton Exporter), sans « Tous les outils » ni annuler / rétablir. Montage libre :
+# la barre des projets à gauche (pas de petits onglets Médias / Texte / Extraits), l'inspecteur sans Textes,
+# Sous-titres ni Export (onglets principaux Textes et Export), la timeline.
 # left : onglets de gauche (0 Médias, 1 Texte, 2 Extraits) · viewer : 0 Montage, 1 Source ·
 # panel : onglets de l'inspecteur (0 Extrait, 1 Cadrage, 2 Textes, 3 Sous-titres, 4 Audio, 5 Export) ·
 # timeline : piste de montage · export : panneau d'export des clips à droite.
 FULL = {"left": (0, 1, 2), "viewer": (0, 1), "panel": (0, 1, 2, 3, 4, 5), "timeline": True, "export": False}
 LAYOUTS = {
-    "free_edit": FULL,
+    "free_edit": {"left": (), "viewer": (0, 1), "panel": (0, 1, 4), "timeline": True, "export": False},
     "original": {"left": (0,), "viewer": (0,), "panel": (2, 3, 4, 5), "timeline": False, "export": False},
     "texts": {"left": (), "viewer": (0,), "panel": (2, 3), "timeline": False, "export": False},
 }
 SIMPLE = ("smart_clipping", "translation")
-NO_FULL = ("smart_clipping", "translation", "texts")   # pas de « Tous les outils » : l'onglet fait sa seule tâche
-SIDEBAR = ("smart_clipping", "translation", "texts")   # onglets avec la barre des projets à gauche
+NO_FULL = ("smart_clipping", "translation", "texts", "free_edit")   # pas de « Tous les outils »
+SIDEBAR = ("free_edit", "smart_clipping", "translation", "texts")   # onglets avec la barre des projets à gauche
 
 class StatusNote(QObject):
     """Messages brefs du Studio (import lancé, image enregistrée…) : affichés en haut de la liste des tâches."""
@@ -244,6 +247,12 @@ class StudioPage(QWidget):
         self.mplayer = MontagePlayer()
         self.mplayer.track_resolver = self._tracks_for
         self.mplayer.time_changed.connect(self._on_time)
+        # Montage libre : suivre la personne qui parle, sous l'aperçu (comme en Clipping)
+        self.follow = tool("focus", "Suivre la personne qui parle : le cadre suit le visage de celui qui parle, "
+                                    "extrait par extrait (vidéo horizontale mise en vertical). Désactivé : cadre fixe.",
+                           checkable=True)
+        self.follow.toggled.connect(self._reframe)
+        self.mplayer.add_tool(self.follow)
         mc.lay.addWidget(self.mplayer)
         self.viewer_tabs.addTab(mc, "Montage")
         sc = Card(padding=10)
@@ -273,7 +282,6 @@ class StudioPage(QWidget):
         self.panel.optimize_requested.connect(self._optimize_audio)
         self.panel.separate_requested.connect(self._separate)
         self.panel.detect_text_requested.connect(self._detect_text)
-        self.panel.reframe_requested.connect(self._reframe)
         self.panel.cue_selected.connect(lambda t: self.mplayer.seek(t))
         self.panel.currentChanged.connect(lambda i: self._keep_visible_tab(self.panel, i))
         hsplit.addWidget(self.panel)
@@ -324,6 +332,7 @@ class StudioPage(QWidget):
         c.text_selected.connect(self._select_text)
         c.music_selected.connect(lambda: self.panel.setCurrentIndex(4))
         c.cue_selected.connect(self._select_cue)
+        c.track_removed.connect(self._remove_track)
         tl_lay.addWidget(self.timeline)
         vsplit.addWidget(tw)
         self.timeline_box = tw
@@ -400,7 +409,7 @@ class StudioPage(QWidget):
     def _sync_project_video(self) -> None:
         """Vidéo importée : placée d'office dans le montage (timeline vide) ; dans Clipping et Traduction, une
         nouvelle vidéo remplace la précédente (un projet = une vidéo). Dans Montage libre, une vidéo ajoutée
-        ensuite reste dans la liste des médias, à placer où l'on veut."""
+        ensuite va sur la première piste vidéo libre (2 à 4) et prend sa vue dans la mise en page."""
         vids = self._project_videos()
         if not self.project_id or not vids:
             return
@@ -408,6 +417,21 @@ class StudioPage(QWidget):
         data = self.app.projects.load_data(self.project_id)
         known = data.get("project_video")
         if latest["id"] == known and self.tl.segments:
+            return
+        if self._mode() == "free_edit" and known is not None and self.tl.segments and \
+                latest["id"] not in data.get("placed", []) and \
+                all(sg.asset_id != latest["id"] for sg in self.tl.segments):
+            data["placed"] = data.get("placed", []) + [latest["id"]]   # posée une fois : retirée, elle le reste
+            self.app.projects.save_data(self.project_id, data)
+            f = self.tl.format
+            lay, j = compose.place_track(self.tl.video.layout, latest["id"], f.width, f.height)
+            if j is None:
+                self.save_lbl.setText("Les 4 pistes vidéo sont occupées : la vidéo est dans les Médias.")
+                return
+            self.tl.video.layout = lay
+            self._changed(panel=True)
+            self.flush()
+            self.save_lbl.setText(f"Vidéo placée sur la piste {j + 1}. Ctrl+Z pour annuler.")
             return
         replace = known is not None and latest["id"] != known and self._mode() in SIMPLE
         if not self.tl.segments or replace:
@@ -535,8 +559,8 @@ class StudioPage(QWidget):
         if self.project_id:
             self.stack.setCurrentWidget(simple or self.editor)
         self.topbar.setVisible(True)              # en-tête commun : médias, import, lien, format, tâches
-        for w in (self.import_btn, self.link_edit, self.media_btn):
-            w.setVisible(not self._export_mode)   # onglet Export : pas d'import
+        for w in (self.import_btn, self.link_edit, self.media_btn, self.transcript_btn):
+            w.setVisible(not self._export_mode)   # onglet Export : ni import ni transcription
         side = (mode in SIDEBAR or self._export_mode) and bool(self.project_id)
         smode = "export" if self._export_mode else mode
         if side and (self.sidebar.isHidden() or self.sidebar.mode != smode):
@@ -584,10 +608,13 @@ class StudioPage(QWidget):
             if keep and tabs.currentIndex() not in keep:
                 tabs.setCurrentIndex(keep[0])
         self.timeline_box.setVisible(lay["timeline"])
+        self.player.clip_btn.setVisible(bool(lay["left"]))       # « Clip » : seulement avec la liste des clips
+        self.follow.setVisible(mode == "free_edit" and not self._full)
+        self._sync_follow()
         self.export_card.setVisible(lay["export"])
         if lay["export"] and self.project_id:
             self.export_panel.load(self.project_id, self.tl)
-        editing = (lay["timeline"] or bool(lay["panel"])) and simple is None and mode != "texts"
+        editing = (lay["timeline"] or bool(lay["panel"])) and simple is None and mode not in NO_FULL
         for w in (self.undo_btn, self.redo_btn):
             w.setVisible(editing)
         self.hsplit.setSizes([(250 if lay is FULL else 320) if lay["left"] else 0, 720,
@@ -986,8 +1013,8 @@ class StudioPage(QWidget):
             self.delete_project(pid, mode, parent)
 
     def archive_project(self, pid: int, mode: str) -> None:
-        """Archive la vidéo (et ses versions traduites) : elle quitte la barre, on la retrouve dans Archives (menu
-        des trois barres). Ouverte, la suivante prend sa place."""
+        """Archive la vidéo (et ses versions traduites) : elle quitte la barre, on la retrouve dans Archives (en
+        bas de Médias). Ouverte, la suivante prend sa place."""
         current = pid == self.project_id or self.app.projects.parent_of(self.project_id or 0) == pid
         if current:
             self.flush()
@@ -1163,6 +1190,7 @@ class StudioPage(QWidget):
             fp.set_value(self.tl.format.aspect)
         self.undo_btn.setEnabled(len(self._history) > 1)
         self.redo_btn.setEnabled(bool(self._future))
+        self._sync_follow()
         if panel:
             durations = {k: v.get("duration_s") or 0 for k, v in self.assets.items()}
             name = self.app.concepts.get_concept(self.concept_id).name if self.concept_id else ""
@@ -1578,16 +1606,25 @@ class StudioPage(QWidget):
         self.save_lbl.setText("Voix isolée · musique et ambiance sur la piste Musique (−8 dB). Ctrl+Z pour annuler.")
         return True
 
+    def _sync_follow(self) -> None:
+        """Bouton « Suivre la personne qui parle » : enfoncé si le cadre suit les visages sur un extrait au moins."""
+        on = any(sg.reframe for sg in self.tl.segments) or "reframe" in self._jobs.values()
+        if self.follow.isChecked() != on:
+            self.follow.blockSignals(True)
+            self.follow.setChecked(on)
+            self.follow.blockSignals(False)
+
     def _reframe(self, on: bool) -> None:
         if not self.tl.segments:
-            QMessageBox.information(self, "Recadrage", "Ajoutez d'abord un extrait vidéo au montage.")
+            self.save_lbl.setText("Recadrage : ajoutez d'abord un extrait vidéo au montage.")
+            self._sync_follow()
             return
         if not on:
             self._snapshot()
             for sg in self.tl.segments:
                 sg.reframe = []
             self._changed(panel=True)
-            self.panel.reload_reframe()
+            self.save_lbl.setText("Cadre fixe : il ne suit plus la personne qui parle.")
             return
         if self.tl.format.fit != "fill":
             self._snapshot()
@@ -1598,7 +1635,7 @@ class StudioPage(QWidget):
             jid = self.app.jobs.submit("reframe", "Recadrage automatique", {
                 "asset_id": sg.asset_id, "src_in": sg.src_in, "src_out": sg.src_out, "segment_id": sg.id})
             self._jobs[jid] = "reframe"
-        self.panel.reframe_note.setText(f"Analyse des visages : {len(segs)} extrait(s)…")
+        self.save_lbl.setText(f"Analyse des visages : {len(segs)} extrait(s)…")
 
     def _detect_text(self) -> None:
         if not self.tl.segments:
@@ -1648,8 +1685,15 @@ class StudioPage(QWidget):
     def _on_timeline_drag(self, kind: str) -> None:
         resynced = kind == "segment" and self._resync_subs()
         self._changed(panel=True)
-        self.save_lbl.setText(("Extrait rogné" if kind == "segment" else "Texte déplacé")
+        self.save_lbl.setText(("Extrait rogné" if kind == "segment" else "Vidéo déplacée" if kind == "track"
+                               else "Texte déplacé")
                               + (" · sous-titres recalés" if resynced else "") + ". Ctrl+Z pour annuler.")
+
+    def _remove_track(self, j: int) -> None:
+        """Piste vidéo j + 1 vidée (la vidéo reste dans les Médias du projet)."""
+        self.tl.video.layout = compose.remove_track(self.tl.video.layout, j)
+        self._changed(panel=True)
+        self.save_lbl.setText(f"Piste {j + 1} vidée. Ctrl+Z pour annuler.")
 
     def _ensure_waves(self) -> None:
         """Formes d'onde des médias de la timeline : depuis le cache, sinon calculées en tâche de fond."""
@@ -1765,7 +1809,7 @@ class StudioPage(QWidget):
                     self.save_lbl.setText("Recadrage : aucun visage trouvé dans un extrait, cadre centré.")
             elif job.status == "failed":
                 QMessageBox.warning(self, "Recadrage automatique", job.error[:600])
-            self.panel.reload_reframe()
+            self._sync_follow()
         elif kind == "detect_text":
             self.panel.detect_btn.setEnabled(True)
             self.panel.detect_btn.setText("Détecter le texte incrusté et les logos")

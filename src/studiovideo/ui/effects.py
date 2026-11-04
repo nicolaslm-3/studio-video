@@ -1,13 +1,13 @@
-"""Effets de l'image (bouton robot sous chaque aperçu) : miroir, zoom et recadrage, mouvement subtil, filtre
-colorimétrique et son intensité, légère rotation, vitesse.
+"""Effets de l'image (bouton robot sous chaque aperçu) : miroir, zoom et recadrage (sous 100 % : la vidéo réduite
+dans le cadre), mouvement subtil, filtre colorimétrique et son intensité, flou, légère rotation, vitesse.
 
 Ils s'appliquent à la vidéo de base du projet (`Timeline.video`), jamais aux textes ni aux sous-titres, posés par-dessus
-à l'export (`edit/render.py`). L'aperçu montre miroir, zoom, rotation, mouvement et vitesse tels quels ; les filtres
-y sont approchés, l'image exacte est celle de la vidéo exportée."""
+à l'export (`edit/render.py`). L'aperçu montre tous les effets ; les filtres y sont
+calculés sur l'image affichée, au plus près de ceux de l'export."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QSlider, QToolButton
+from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QSlider, QToolButton
 
 from ..edit.render import LOOKS
 from .scrub import ScrubNumber
@@ -18,6 +18,7 @@ TOOLS = (("mirror", "Miroir horizontal", "Change l'orientation"),
          ("zoom", "Zoom et recadrage", "Modifie la composition et adapte au format (9:16…)"),
          ("pan", "Mouvement subtil", "Panoramique lent : rend le cadrage plus dynamique"),
          ("look", "Filtre colorimétrique", "Change les couleurs ; l'intensité se règle à droite"),
+         ("blur", "Flou", "Floute toute la vidéo (pas les textes ni les sous-titres)"),
          ("tilt", "Légère rotation", "Modifie la géométrie du cadre (image agrandie : pas de coins vides)"),
          ("speed", "Vitesse", "Accélère ou ralentit la vidéo exportée (voix à la même hauteur)"))
 
@@ -64,10 +65,10 @@ class EffectsPopover(Popover):
         rows["mirror"].addStretch(1)
         # zoom et cadrage (décalage gauche / droite, haut / bas)
         self.zoom = ScrubNumber(suffix=" %", step=5)
-        self.zoom.setRange(100, 250)
+        self.zoom.setRange(20, 250)                         # sous 100 % : la vidéo réduite, du noir autour
         self.zoom.setValue(round(video.zoom * 100))
         self.zoom.setFixedWidth(84)
-        self.zoom.setToolTip("Zoom")
+        self.zoom.setToolTip("Zoom (sous 100 % : la vidéo plus petite que le cadre)")
         self.zoom.valueChanged.connect(lambda v: self._set("zoom", round(v / 100, 3)))
         rows["zoom"].addWidget(self.zoom)
         self.ox = _slider(-100, 100, "Cadrage gauche / droite")
@@ -120,6 +121,16 @@ class EffectsPopover(Popover):
         rows["look"].addStretch(1)
         self.body.removeItem(rows["look"])                  # le nom et l'intensité, puis la liste des filtres
         self.body.insertLayout(self.body.indexOf(lw), rows["look"])
+        # flou
+        self.blur = ToggleSwitch("Flou")
+        self.blur.setChecked(video.blur > 0)
+        self.blur_amount = _slider(5, 100, "Force du flou")
+        self.blur_amount.setValue(int((video.blur or 0.3) * 100))
+        self.blur.toggled.connect(self._blur)
+        self.blur_amount.valueChanged.connect(self._blur)
+        rows["blur"].addWidget(self.blur)
+        rows["blur"].addWidget(self.blur_amount)
+        rows["blur"].addStretch(1)
         # légère rotation
         self.tilt = ScrubNumber(decimals=1, step=0.5, suffix=" °")
         self.tilt.setRange(-10, 10)
@@ -136,12 +147,11 @@ class EffectsPopover(Popover):
         self.speed.valueChanged.connect(lambda v: self._set("speed", float(v)))
         rows["speed"].addWidget(self.speed)
         rows["speed"].addStretch(1)
-        self.note = QLabel("Filtres : couleurs approchées dans l'aperçu, exactes dans la vidéo exportée.")
-        self.note.setProperty("role", "faint")
-        self.note.setWordWrap(True)
-        self.body.addWidget(self.note)
         self.body.addLayout(_reset_row(self._reset))
         self._loading = False
+
+    def _blur(self, *_a) -> None:
+        self._set("blur", self.blur_amount.value() / 100 if self.blur.isChecked() else 0.0)
 
     def _pan(self, *_a) -> None:
         self._set("pan", self.pan_amount.value() / 100 if self.pan.isChecked() else 0.0)
@@ -156,7 +166,7 @@ class EffectsPopover(Popover):
         """Tout remettre comme la vidéo d'origine."""
         v = self.v
         v.mirror, v.zoom, v.offset_x, v.offset_y = False, 1.0, 0.0, 0.0
-        v.pan, v.look, v.look_amount, v.tilt, v.speed = 0.0, "", 0.7, 0.0, 1.0
+        v.pan, v.look, v.look_amount, v.tilt, v.speed, v.blur = 0.0, "", 0.7, 0.0, 1.0, 0.0
         self._loading = True
         self.mirror.setChecked(False)
         self.zoom.setValue(100)
@@ -166,6 +176,7 @@ class EffectsPopover(Popover):
         for b in self.looks.buttons():
             b.setChecked(b.property("look") == "")
         self.amount.setValue(70)
+        self.blur.setChecked(False)
         self.tilt.setValue(0)
         self.speed.setValue(1.0)
         self._loading = False

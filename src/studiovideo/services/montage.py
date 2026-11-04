@@ -97,10 +97,12 @@ class MontageService:
                 out[aid].voice_stem, out[aid].music_stem = str(d / "voice.wav"), str(d / "music.wav")
         from ..edit import compose
         lay = compose.norm(tl.video.layout)
-        if compose.uses_second(lay) and lay["asset2"] not in out:
-            a = self.db.query_one("SELECT * FROM source_asset WHERE id = ?", (lay["asset2"],))
+        for aid in compose.others(lay):                  # autres vidéos des vues (vues empilées, incrustation)
+            if aid in out:
+                continue
+            a = self.db.query_one("SELECT * FROM source_asset WHERE id = ?", (aid,))
             if a is None or a["kind"] != "video":
-                raise ValueError("La seconde vidéo de la mise en page n'est plus dans la bibliothèque.")
+                raise ValueError("Une vidéo de la mise en page n'est plus dans la bibliothèque.")
             if not Path(a["path"]).exists():
                 raise FileNotFoundError(f"Fichier source introuvable : {a['path']}")
             out[a["id"]] = Source(a["path"], a["width"], a["height"], a["duration_s"], a["audio_tracks"] > 0,

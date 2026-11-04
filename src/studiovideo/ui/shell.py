@@ -238,6 +238,8 @@ class Dock(QFrame):
         self.group.setExclusive(True)
         self.buttons: dict[str, DockButton] = {}
         for mode, (name, ic, col, _desc) in theme.PARCOURS.items():
+            if mode in theme.DOCK_HIDDEN:
+                continue
             b = DockButton(ic, name, col, dimmed=mode in theme.DIMMED)
             b.clicked.connect(lambda _=False, m=mode: self.parcours_clicked.emit(m))
             self.group.addButton(b)

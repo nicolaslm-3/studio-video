@@ -66,7 +66,7 @@ class Plan:
 LOOKS = {
     "chaud": ("Chaud", "colortemperature=temperature=4200"),
     "froid": ("Froid", "colortemperature=temperature=9500"),
-    "vif": ("Vif", "eq=saturation=1.45:contrast=1.06"),
+    "vif": ("Vif", "eq=saturation=1.8:contrast=1.12"),
     "doux": ("Doux", "eq=contrast=0.9:saturation=0.85:brightness=0.03"),
     "cinema": ("Cinéma", "colorbalance=rs=-0.08:bs=0.1:rh=0.1:bh=-0.08,eq=contrast=1.08"),
     "vintage": ("Vintage", "curves=preset=vintage"),
@@ -83,6 +83,23 @@ def tilt_cover(tl: Timeline) -> float:
     W, H = tl.format.width, tl.format.height
     r = max(W / H, H / W)
     return math.cos(a) + math.sin(a) * r
+
+
+ZOOM_MIN, ZOOM_MAX = 0.2, 2.5   # zoom du bouton robot : sous 1, la vidéo est réduite dans le cadre
+
+
+BLUR_SIGMA = 30.0               # flou du bouton robot à fond, pour une image de 1080 de large
+
+
+def blur_sigma(tl: Timeline, width: float | None = None) -> float:
+    """Force du flou (écart type, en pixels d'une image de `width` de large, celle de la sortie par défaut)."""
+    b = max(0.0, min(1.0, float(getattr(tl.video, "blur", 0.0) or 0.0)))
+    f = tl.format
+    return round(b * BLUR_SIGMA * (width or min(f.width, f.height)) / 1080, 2)
+
+
+def video_zoom(tl: Timeline) -> float:
+    return max(ZOOM_MIN, min(ZOOM_MAX, float(getattr(tl.video, "zoom", 1.0) or 1.0)))
 
 
 def pan_zoom(tl: Timeline) -> float:
@@ -151,10 +168,11 @@ def mask_chain(masks: list, sw: int, sh: int, tag: str = "") -> str:
 
 
 def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
-                second: tuple[str, Source] | None = None) -> str:
+                others: dict[int, tuple[str, Source]] | None = None) -> str:
     """Filtres appliqués à un segment pour obtenir une image W×H au bon format.
 
-    second : (étiquette d'entrée FFmpeg, source) de la seconde vidéo d'une mise en page à deux vidéos."""
+    others : {vidéo : (étiquette d'entrée FFmpeg, source)} des autres vidéos d'une mise en page (vues empilées,
+    image dans l'image)."""
     f, v = tl.format, tl.video
     W, H = f.width, f.height
     parts: list[str] = []
@@ -174,10 +192,11 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
     flips = (["hflip"] if v.mirror else []) + (["vflip"] if v.flip else [])
     lay = compose.norm(getattr(v, "layout", None))
     if lay["kind"] != "single":
-        return _composite_chain(tl, lay, parts, flips, sw, sh, tag, second) + "," + _look_chain(tl, tag)
+        dur = seg.duration if seg is not None else 0.0
+        return _composite_chain(tl, lay, parts, flips, sw, sh, tag, others or {}, dur) + "," + _look_chain(tl, tag)
     parts += flips
 
-    zoom = max(1.0, float(v.zoom)) * max(1.0, float(getattr(seg, "zoom", 1.0) or 1.0))
+    zoom = video_zoom(tl) * max(1.0, float(getattr(seg, "zoom", 1.0) or 1.0))
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
 
     keys = list(getattr(seg, "reframe", None) or []) if seg is not None and rot in (0, 180) else []
@@ -202,8 +221,8 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
             return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:x='{SW - W}*{'(1-' + p + ')' if back else p}':y={y}"
         return f"scale={SW}:{SH}:flags=lanczos,crop={W}:{H}:{x}:{y}"
 
-    def fit_chain(z: float) -> str:
-        s = min(W / sw, H / sh) * z
+    def fit_chain(z: float, cover: bool = False) -> str:
+        s = (max(W / sw, H / sh) if cover else min(W / sw, H / sh)) * z
         SW, SH = _even(sw * s), _even(sh * s)
         chain = f"scale={SW}:{SH}:flags=lanczos"
         if SW > W or SH > H:
@@ -225,9 +244,11 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
         geo = (f"{pre}split=2[bg{tag}][fg{tag}];[bg{tag}]{fill_chain(1.0, False)},boxblur=luma_radius=40:luma_power=2,"
                f"eq=brightness=-0.08[bgb{tag}];[fg{tag}]scale={SW}:{SH}:flags=lanczos[fgs{tag}];"
                f"[bgb{tag}][fgs{tag}]overlay={int((W - SW) / 2 * (1 + ox))}:{int((H - SH) / 2 * (1 + oy))}")
+    elif zoom < 1.0:                        # zoom sous 100 % : la vidéo réduite, du noir autour
+        geo = pre + fit_chain(zoom, cover=True)
     else:
         geo = pre + fill_chain(zoom)
-    tilt = float(getattr(v, "tilt", 0.0) or 0.0)
+    tilt =float(getattr(v, "tilt", 0.0) or 0.0)
     if abs(tilt) > 1e-3:                    # légère rotation, sans coins vides (image déjà agrandie)
         c = tilt_cover(tl)
         geo += (f",scale={_even(W * c)}:{_even(H * c)}:flags=lanczos,rotate={_fmt(round(math.radians(tilt), 5))}"
@@ -236,37 +257,69 @@ def video_chain(tl: Timeline, src: Source, tag: str = "", seg=None,
 
 
 def _composite_chain(tl: Timeline, lay: dict, parts: list[str], flips: list[str], sw: int, sh: int, tag: str,
-                     second: tuple[str, Source] | None) -> str:
-    """Écran divisé ou incrustation : chaque vue est recadrée dans sa zone, puis les vues sont assemblées.
-    Une même source est dupliquée pour l'image seulement (le son est traité à part, une seule fois)."""
+                     others: dict[int, tuple[str, Source]], dur: float = 0.0) -> str:
+    """Vues empilées ou incrustation : chaque vue (vidéo du montage ou autre vidéo) est rognée, recadrée dans sa
+    zone, puis les vues sont assemblées. Une même source est dupliquée pour l'image seulement (le son est traité à
+    part, une seule fois)."""
     W, H, fps = tl.format.width, tl.format.height, _fmt(tl.format.fps)
+    n = compose.count(lay)
     zs = compose.zones(lay, W, H)
     t = f"c{tag}"
     pre = ",".join(parts)
     flip = "".join(f"{x}," for x in flips)
     border = int(lay.get("border") or 0) * W // 1080 if lay["kind"] == "pip" else 0
+    oth = compose.others(lay)
+    # vidéo absente des sources : la vidéo du montage à sa place
+    srcs = [x if x == 0 or oth[x - 1] in others else 0 for x in (compose.view_source(lay, i) for i in range(n))]
     out = []
-    if second is not None:
-        out.append(f"{pre + ',' if pre else ''}null[{t}a];{second[0]}fps={fps},tpad=stop_mode=clone:stop=-1[{t}b]")
-        dims = [(sw, sh), (second[1].width or W, second[1].height or H)]
-    else:
-        out.append(f"{pre + ',' if pre else ''}split=2[{t}a][{t}b]")
-        dims = [(sw, sh), (sw, sh)]
-    for i, lab in enumerate(("a", "b")):
+
+    def fan(head: str, uses: list[int]) -> None:
+        """Une source vers les vues qui la montrent (dupliquée si plusieurs) ; inutilisée : absorbée."""
+        if not uses:
+            out.append(f"{head}nullsink")
+        elif len(uses) == 1:
+            out.append(f"{head}null[{t}s{uses[0]}]")
+        else:
+            out.append(f"{head}split={len(uses)}" + "".join(f"[{t}s{i}]" for i in uses))
+
+    # même origine des temps que les autres vidéos (sinon une image très courte peut ne rien donner)
+    fan((pre + "," if pre else "") + "setpts=PTS-STARTPTS,", [i for i in range(n) if srcs[i] == 0])
+    dims = {0: (sw, sh)}
+    for k, aid in enumerate(oth, start=1):
+        label_, s2, *rest = others.get(aid, (None, None))
+        if label_ is None:
+            continue
+        dims[k] = (s2.width or W, s2.height or H)
+        hold = f"trim=duration={_fmt(dur)}," if dur > 0 else ""   # vidéo plus courte : dernière image tenue
+        wait = float(rest[0]) if rest else 0.0                    # pas encore commencée : première image tenue
+        lead = f"start_mode=clone:start_duration={_fmt(round(wait, 3))}:" if wait > 0 else ""
+        fan(f"{label_}fps={fps},tpad={lead}stop_mode=clone:stop=-1,{hold}setpts=PTS-STARTPTS,",
+            [i for i in range(n) if srcs[i] == k])
+    for i in range(n):
         zx, zy, zw, zh = zs[i]
         b = border if i == 1 else 0
         iw, ih = zw - 2 * b, zh - 2 * b
-        SW, SH, x, y = compose.view_crop(dims[i][0], dims[i][1], iw, ih, lay["views"][i])
+        view = lay["views"][i]
+        fw, fh = dims.get(srcs[i], (sw, sh))
+        cw, ch, cx, cy = compose.source_crop(fw, fh, view)
+        rog = f"crop={cw}:{ch}:{cx}:{cy}," if compose.cropped(view) else ""
+        SW, SH, x, y = compose.view_crop(cw, ch, iw, ih, view)
         pad = f",pad={zw}:{zh}:{b}:{b}:color={lay.get('border_color') or '#FFFFFF'}" if b else ""
-        own = flip if (i == 0 or second is None) else ""
-        out.append(f"[{t}{lab}]scale={SW}:{SH}:flags=lanczos,crop={iw}:{ih}:{x}:{y},{own}setsar=1,"
+        own = flip if srcs[i] == 0 else ""
+        fit = f"crop={iw}:{ih}:{x}:{y}"
+        if x < 0 or y < 0:                  # vidéo réduite dans sa zone : marge noire autour
+            kw, kh = min(SW, iw), min(SH, ih)
+            fit = f"crop={kw}:{kh}:{max(0, x)}:{max(0, y)},pad={iw}:{ih}:{max(0, -x)}:{max(0, -y)}:black"
+        out.append(f"[{t}s{i}]{rog}scale={SW}:{SH}:flags=lanczos,{fit},{own}setsar=1,"
                    f"format=yuv420p{pad}[{t}z{i}]")
     if lay["kind"] == "pip":
         zx, zy = zs[1][0], zs[1][1]
         out.append(f"[{t}z0][{t}z1]overlay={zx}:{zy}:shortest=1")
+    elif lay["kind"] == "grid":
+        pos = "|".join(f"{zx}_{zy}" for zx, zy, _w, _h in zs)
+        out.append("".join(f"[{t}z{i}]" for i in range(n)) + f"xstack=inputs={n}:layout={pos}:shortest=1")
     else:
-        top, bottom = (1, 0) if lay["swap"] else (0, 1)
-        out.append(f"[{t}z{top}][{t}z{bottom}]vstack=inputs=2:shortest=1")
+        out.append("".join(f"[{t}z{i}]" for i in range(n)) + f"vstack=inputs={n}:shortest=1")
     return ";".join(out)
 
 
@@ -288,6 +341,9 @@ def _look_chain(tl: Timeline, tag: str = "") -> str:
         look.append(f"colortemperature=temperature={int(v.temperature)}")
     if v.sharpen > 0:
         look.append(f"unsharp=5:5:{_fmt(round(v.sharpen * 1.5, 3))}:5:5:0")
+    sigma = blur_sigma(tl)
+    if sigma > 0:
+        look.append(f"gblur=sigma={_fmt(sigma)}")
     look += [f"fps={_fmt(f.fps)}", "setsar=1", "format=yuv420p", "setpts=PTS-STARTPTS"]
     return ",".join(look)
 
@@ -300,6 +356,7 @@ class GraphBuilder:
         self.subs = subs  # (arguments d'entrée FFmpeg, position verticale de la bande)
         self.inputs: list[list[str]] = []
         self.graph: list[str] = []
+        self.t_base = 0.0           # instant du montage où commence le premier segment (aperçu d'une image)
 
     def _afade(self, i: int, afade: str) -> str:
         if not afade:
@@ -317,23 +374,27 @@ class GraphBuilder:
         total = tl.duration
         vlabels, alabels = [], []
         lay = compose.norm(getattr(tl.video, "layout", None))
-        src2 = self.sources.get(lay["asset2"]) if compose.uses_second(lay) else None
+        oth = [aid for aid in compose.others(lay) if aid in self.sources]     # autres vidéos des vues
+        t0 = self.t_base
         for i, seg in enumerate(tl.segments):
             src = self.sources[seg.asset_id]
             dur = seg.duration
             k = self._input(["-ss", _fmt(seg.src_in), "-t", _fmt(dur), "-i", src.path])
-            k2 = None
-            if src2 is not None:        # seconde vidéo, calée sur le même instant (+ décalage choisi)
-                k2 = self._input(["-ss", _fmt(max(0.0, seg.src_in + float(lay["offset"] or 0))), "-t", _fmt(dur),
-                                  "-i", src2.path])
+            ko, wait = {}, {}           # autres vidéos : leur piste (instant du montage), sinon le même instant
+            for aid in oth:
+                at = compose.other_time(lay, aid, seg.src_in, t0)
+                wait[aid] = min(dur, max(0.0, -at))
+                ko[aid] = self._input(["-ss", _fmt(round(max(0.0, at), 3)), "-t",
+                                       _fmt(round(max(0.05, dur - wait[aid]), 3)), "-i", self.sources[aid].path])
+            t0 += dur
             fi, fo = seg.fades() if hasattr(seg, "fades") else (0.0, 0.0)
             vfade = (f",fade=t=in:st=0:d={_fmt(fi)}" if fi else "") + \
                 (f",fade=t=out:st={_fmt(dur - fo)}:d={_fmt(fo)}" if fo else "")
             afade = (f"afade=t=in:st=0:d={_fmt(fi)}" if fi else "") + ("," if fi and fo else "") + \
                 (f"afade=t=out:st={_fmt(dur - fo)}:d={_fmt(fo)}" if fo else "")
             if video:
-                second = (f"[{k2}:v:0]", src2) if k2 is not None else None
-                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i), seg, second)}{vfade}[v{i}]")
+                others = {aid: (f"[{kk}:v:0]", self.sources[aid], wait[aid]) for aid, kk in ko.items()}
+                self.graph.append(f"[{k}:v:0]{video_chain(tl, src, str(i), seg, others)}{vfade}[v{i}]")
                 vlabels.append(f"[v{i}]")
             if audio:
                 vs = getattr(tl, "voice", None)
@@ -367,14 +428,19 @@ class GraphBuilder:
                     ain = f"[{self._input(['-ss', _fmt(seg.src_in), '-t', _fmt(dur), '-i', src.voice_stem])}:a:0]"
                 fmt_a = f"aresample={SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo"
                 vol = "volume=0" if seg.muted else f"volume={_fmt(seg.volume_db)}dB"
-                use2 = k2 is not None and src2.has_audio and lay["audio"] in ("second", "both")
-                if use2 and (lay["audio"] == "second" or not src.has_audio):
-                    self.graph.append(f"[{k2}:a:0]{fmt_a},{vol},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[a{i}]")
-                elif use2:
-                    self.graph.append(f"{ain}{fmt_a},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[am{i}]")
-                    self.graph.append(f"[{k2}:a:0]{fmt_a},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[as{i}]")
-                    self.graph.append(f"[am{i}][as{i}]amix=inputs=2:duration=first:normalize=0:"
-                                      f"dropout_transition=0,{vol}[a{i}]")
+                # son des autres vidéos : la première (« second ») ou toutes (« both »), mêlées au besoin
+                heard = [(kk, wait[aid]) for aid, kk in ko.items() if self.sources[aid].has_audio]
+                heard = heard[:1] if lay["audio"] == "second" else heard if lay["audio"] == "both" else []
+                if heard:
+                    ins = [] if lay["audio"] == "second" or not src.has_audio else [(ain, 0.0)]
+                    ins += [(f"[{kk}:a:0]", w) for kk, w in heard]
+                    for j, (a_, w) in enumerate(ins):
+                        late = f"adelay={int(w * 1000)}:all=1," if w > 0 else ""
+                        self.graph.append(f"{a_}{fmt_a},asetpts=PTS-STARTPTS,{late}apad,atrim=0:{_fmt(dur)}"
+                                          f"[am{i}x{j}]")
+                    mix = "".join(f"[am{i}x{j}]" for j in range(len(ins)))
+                    self.graph.append(f"{mix}amix=inputs={len(ins)}:duration=first:normalize=0:dropout_transition=0,"
+                                      f"{vol}[a{i}]" if len(ins) > 1 else f"{mix}{vol}[a{i}]")
                 elif src.has_audio:
                     self.graph.append(
                         f"{ain}{fmt_a},{vol},asetpts=PTS-STARTPTS,apad,atrim=0:{_fmt(dur)}[a{i}]")
@@ -653,6 +719,7 @@ def preview_frame(tl: Timeline, sources: dict[int, Source], t: float, dest: Path
                                                                             one.format.height)[0])
         one.subtitles = type(st)(enabled=False)
         gb = GraphBuilder(one, sources, None, _text_images(one, tmp), subs)
+        gb.t_base = tl.segment_start(i) + (a - seg.src_in)       # pistes vidéo 2 à 4 : le bon instant
         args, vout, _ = gb.build(video=True, audio=False)
         scale_h = min(max_height, one.format.height)
         pick = f"trim=start={_fmt(offset)},setpts=PTS-STARTPTS," if offset > 0 else ""

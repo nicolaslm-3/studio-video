@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
                                QHBoxLayout, QHeaderView, QMessageBox, QStyledItemDelegate, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
-
+
 from ..scrub import int_spin
 from ...core import AppContext
 from ...publish.rules import RULES
@@ -453,7 +453,10 @@ class AnalyticsPage(QWidget):
         self.status.setText("Relevé des statistiques en cours… (une page à la fois, avec une pause entre deux)")
 
     def on_job(self, job) -> None:
-        if job.id != self.job_id or job.status in ("pending", "running"):
+        if job.status in ("pending", "running") or job.kind != "refresh_stats":
+            return
+        if job.id != self.job_id:           # relevé automatique (toutes les heures) : les chiffres à jour
+            self.refresh()
             return
         self.job_id = None
         self.refresh_btn.setEnabled(True)

@@ -119,7 +119,11 @@ class LibraryPage(QWidget):
         self.speech.itemActivated.connect(self._open_hit)
         spl.addWidget(self.speech, 1)
         self.stack.addWidget(sp)
-        lay.addWidget(self.stack, 1)
+        lay.addWidget(self.stack, 3)
+        from .archives import ArchivesPage
+        self.archives = ArchivesPage(app)                  # en dessous : les vidéos archivées
+        self.archives.setMinimumHeight(170)
+        lay.addWidget(self.archives, 1)
         self.setAcceptDrops(True)
         self._fill_concepts()
         self.refresh()
@@ -167,6 +171,8 @@ class LibraryPage(QWidget):
             win.open_media_at(aid, t)
 
     def refresh(self, *_):
+        if getattr(self, "archives", None) is not None and not _:
+            self.archives.refresh()                       # page affichée : les archives aussi
         if getattr(self, "in_speech", None) is not None and self.in_speech.isChecked():
             self._speech_results(self.search.text().strip())
             return

@@ -117,8 +117,8 @@ class _View(QWidget):
 
 # -- Clipping ---------------------------------------------------------------------------------------------
 class CriteriaBox(QWidget):
-    """Critères de recherche des extraits : catégories (aucune cochée = politique ; au survol, comment chacune
-    est cherchée), durée, nombre. Petits boutons, le moins de place possible."""
+    """Critères de recherche des extraits : une seule catégorie à la fois (politique par défaut ; au survol, comment
+    chacune est cherchée), durée, nombre. Petits boutons, le moins de place possible."""
     changed = Signal(dict)
 
     def __init__(self, full: bool = True, parent=None):
@@ -128,13 +128,16 @@ class CriteriaBox(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
         self.cats: dict[str, QPushButton] = {}
+        self.cat_group = QButtonGroup(self)               # un seul critère à la fois
+        self.cat_group.setExclusive(True)
         crow = []
         for k, name in CATEGORIES.items():
             b = button(name, "mini", tooltip=CATEGORY_HELP[k] + "\n\n" + CATEGORY_HELP_COMMON)
             b.setCheckable(True)
-            b.toggled.connect(self._emit)
+            self.cat_group.addButton(b)
             crow.append(b)
             self.cats[k] = b
+        self.cat_group.buttonToggled.connect(lambda _b, on: on and self._emit())
         v.addLayout(_row(*crow, "stretch", spacing=5))
         self.durs = QButtonGroup(self)
         self.durs.setExclusive(True)
@@ -156,8 +159,9 @@ class CriteriaBox(QWidget):
     def load(self, c: dict) -> None:
         self._loading = True
         try:
+            picked = next((k for k in c["categories"] if k in self.cats), "politique")
             for k, b in self.cats.items():
-                b.setChecked(k in c["categories"])
+                b.setChecked(k == picked)
             for b in self.durs.buttons():
                 b.setChecked(b.property("dur") == c["duration"])
             self.count.setValue(int(c["count"]))
@@ -363,7 +367,9 @@ class ClippingView(_View):
         self.add_btn = tool("plus", "Ajouter un extrait : choisir son début (l'image de l'aperçu par défaut)",
                             self._add_clip, size=30)
         self.add_btn.setProperty("kind", "soft")
-        self.list_lay.addLayout(_row(self.add_btn, "stretch"))
+        # « Proposer d'autres extraits » : à droite du « + »
+        self.more_btn = button("Proposer d'autres extraits", "ghost", icon="sparkles", on_click=self._more)
+        self.list_lay.addLayout(_row(self.add_btn, self.more_btn, "stretch"))
         self.list_lay.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
@@ -390,8 +396,6 @@ class ClippingView(_View):
         al.addStretch(1)
         self.left_stack.addWidget(ask)
         left.addWidget(self.left_stack, 1)
-        self.more_btn = button("Proposer d'autres extraits", "ghost", icon="sparkles", on_click=self._more)
-        left.addLayout(_row(self.more_btn, "stretch"))
         self.popup = CriteriaPopup(self)                  # critères, durée, nombre : dans la bulle volante
         self.crit = self.popup.crit
         self.crit.changed.connect(self._save_criteria)
@@ -1176,11 +1180,10 @@ class TranslationView(_View):
         cl = QVBoxLayout(card)
         cl.setContentsMargins(24, 20, 24, 18)
         cl.setSpacing(10)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(6)
+        grid = QHBoxLayout()                              # les drapeaux sur une ligne
+        grid.setSpacing(3)
         self.chips: dict[str, QToolButton] = {}
-        for i, (code, nm) in enumerate(LANGS):
+        for code, nm in LANGS:
             b = QToolButton()
             b.setProperty("role", "flag")
             b.setCheckable(True)
@@ -1189,7 +1192,7 @@ class TranslationView(_View):
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip(f"{COUNTRIES.get(code, nm)} · {nm.lower()}")
             b.toggled.connect(self._changed)
-            grid.addWidget(b, i // 8, i % 8)
+            grid.addWidget(b)
             self.chips[code] = b
         cl.addLayout(_row(grid, "stretch"))
         cl.addSpacing(8)

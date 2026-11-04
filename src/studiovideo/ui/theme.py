@@ -37,7 +37,9 @@ PARCOURS = {
 }
 
 # Parcours dont l'icône est grisée dans le dock (toujours utilisables)
-DIMMED = {"original"}
+DIMMED: set[str] = set()
+# Parcours retirés du dock (Création originale : ses vidéos déjà faites s'ouvrent encore)
+DOCK_HIDDEN = {"original"}
 
 # Dernier onglet du dock : l'export (titre, description, réseaux, publication) de la vidéo du projet
 EXPORT_TAB = ("Export", "share-2", "#E5484D", "Titre, description, réseaux et publication")

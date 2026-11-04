@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHeaderView, QTableWidg
 from .widgets import label
 
 GROUPS = [
-    ("Partout", [("Ctrl+1 … Ctrl+6", "Studio, Médias, Calendrier, Analytics, Archives, Paramètres"),
+    ("Partout", [("Ctrl+1 … Ctrl+5", "Studio, Médias (et Archives), Calendrier, Analytics, Paramètres"),
                  ("Ctrl+N", "Nouvelle vidéo"), ("Ctrl+I", "Importer des médias"),
                  ("Ctrl+J", "Afficher ou masquer les tâches"), ("F1", "Cette aide")]),
     ("Lecteur (média source)", [("Espace", "Lecture / pause"), ("← / →", "Image précédente / suivante"),

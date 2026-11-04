@@ -10,9 +10,9 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QRectF, QSize, QSizeF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap,
-                           QShortcut, QTransform)
-from PySide6.QtWidgets import (QCheckBox, QFrame, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem,
+from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QImage, QKeySequence, QPainter, QPainterPath, QPen,
+                           QPixmap, QShortcut, QTransform)
+from PySide6.QtWidgets import (QCheckBox, QFrame, QGraphicsEffect, QGraphicsPathItem, QGraphicsPixmapItem, QGraphicsRectItem,
                                QGraphicsScene, QGraphicsView, QHBoxLayout, QMenu, QSlider, QStackedLayout,
                                QToolButton, QVBoxLayout, QWidget)
 
@@ -45,7 +45,8 @@ def reframe_offset(tl: Timeline, seg, src_t: float, sw: int, sh: int) -> float |
         return None
     from ..edit.reframe import cx_at
     W, H = tl.format.width, tl.format.height
-    s = max(W / sw, H / sh) * max(1.0, tl.video.zoom) * max(1.0, getattr(seg, "zoom", 1.0) or 1.0)
+    from ..edit.render import video_zoom
+    s = max(W / sw, H / sh) * max(1.0, video_zoom(tl)) * max(1.0, getattr(seg, "zoom", 1.0) or 1.0)
     w = sw * s
     if w <= W + 1:
         return None
@@ -62,8 +63,9 @@ def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = Non
     en cours (image un peu agrandie pour glisser)."""
     W, H = tl.format.width, tl.format.height
     v = tl.video
-    zoom = max(1.0, v.zoom) * max(1.0, seg_zoom)
-    if pan and tl.format.fit == "fill":
+    from ..edit.render import video_zoom
+    zoom = video_zoom(tl) * max(1.0, seg_zoom)          # sous 1 : la vidéo réduite, du noir autour
+    if pan and tl.format.fit == "fill" and zoom >= 1.0:
         from ..edit.render import pan_zoom
         zoom *= pan_zoom(tl)
     ox, oy = max(-1.0, min(1.0, v.offset_x)), max(-1.0, min(1.0, v.offset_y))
@@ -82,9 +84,69 @@ def display_rect(tl: Timeline, sw: int, sh: int, ox_override: float | None = Non
     return x, y, w, h
 
 
-# filtres approchés dans l'aperçu (l'image exacte est celle de l'export) : teinte, force à pleine intensité
-LOOK_TINTS = {"chaud": ("#FF9A3C", 0.22), "froid": ("#3C8CFF", 0.22), "cinema": ("#2E8C8C", 0.15),
-              "vintage": ("#B38B59", 0.35), "nb": ("#808080", 1.0), "vif": None, "doux": None}
+# filtres dans l'aperçu, proches de ceux de l'export (`render.LOOKS`), à pleine intensité :
+# (teinte, sa force, saturation, contraste, luminosité)
+LOOK_PREVIEW = {"chaud": ("#FF9A3C", 0.22, 1.0, 1.0, 0.0), "froid": ("#3C8CFF", 0.22, 1.0, 1.0, 0.0),
+                "cinema": ("#2E8C8C", 0.15, 1.0, 1.08, 0.0), "vintage": ("#B38B59", 0.35, 0.9, 1.0, 0.0),
+                "nb": (None, 0.0, 0.0, 1.0, 0.0), "vif": (None, 0.0, 1.8, 1.12, 0.0),
+                "doux": (None, 0.0, 0.85, 0.9, 0.03)}
+
+
+class _ImageEffect(QGraphicsEffect):
+    """Filtre colorimétrique et flou de la vidéo dans l'aperçu (l'image affichée, pas la vidéo entière : léger)."""
+
+    def __init__(self, look: tuple, amount: float, sigma: float):
+        super().__init__()
+        tint, strength, sat, con, bright = look
+        a = max(0.0, min(1.0, amount))
+        self.tint = QColor(tint) if tint else None
+        self.strength = strength * a
+        self.sat, self.con, self.bright = 1 + (sat - 1) * a, 1 + (con - 1) * a, bright * a
+        self.sigma = sigma                          # en unités de l'élément (pixels de la vidéo de sortie)
+
+    def draw(self, painter: QPainter) -> None:
+        pm, off = self.sourcePixmap(Qt.DeviceCoordinates, QGraphicsEffect.NoPad)
+        if pm.isNull():
+            return
+        img = pm.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        w, h = img.width(), img.height()
+        t = painter.worldTransform()
+        sigma = self.sigma * math.hypot(t.m11(), t.m12())
+        if sigma >= 0.6 and w > 4 and h > 4:        # flou : image réduite puis agrandie (deux fois, plus doux)
+            k = max(1.0, sigma * 0.9)
+            for _ in range(2):
+                small = img.scaled(max(2, int(w / k)), max(2, int(h / k)), Qt.IgnoreAspectRatio,
+                                   Qt.SmoothTransformation)
+                img = small.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        if self.tint is not None or abs(self.sat - 1) > 1e-3 or abs(self.con - 1) > 1e-3 or self.bright:
+            img = self._colors(img)
+        painter.save()
+        painter.setWorldTransform(QTransform())
+        painter.drawImage(off, img)
+        painter.restore()
+
+    def _colors(self, img: QImage) -> QImage:
+        try:
+            import numpy as np
+        except ImportError:                          # pragma: no cover
+            return img
+        w, h, bpl = img.width(), img.height(), img.bytesPerLine()
+        buf = np.frombuffer(img.constBits(), np.uint8).reshape(h, bpl // 4, 4)[:, :w]
+        rgb = buf[..., :3].astype(np.float32)        # B, G, R (prémultipliés)
+        alpha = buf[..., 3:4].astype(np.float32)
+        gray = rgb @ np.array([0.114, 0.587, 0.299], np.float32)
+        gray = gray[..., None]
+        rgb = gray + (rgb - gray) * self.sat
+        rgb = (rgb - 0.5 * alpha) * self.con + 0.5 * alpha + self.bright * alpha
+        if self.tint is not None and self.strength > 0:
+            col = np.array([self.tint.blue(), self.tint.green(), self.tint.red()], np.float32) / 255
+            g = rgb @ np.array([0.114, 0.587, 0.299], np.float32)
+            rgb = rgb * (1 - self.strength) + g[..., None] * col * self.strength
+        out = np.empty((h, w, 4), np.uint8)
+        out[..., :3] = np.clip(rgb, 0, alpha).astype(np.uint8)
+        out[..., 3:] = buf[..., 3:]
+        res = QImage(out.data, w, h, w * 4, QImage.Format_ARGB32_Premultiplied)
+        return res.copy()                            # détachée du tableau numpy
 
 
 class _Frame(QGraphicsPathItem):
@@ -163,16 +225,17 @@ class LivePreview(QGraphicsView):
         self.tl = Timeline()
         self.src_size = None
         self.ox_override: float | None = None
-        # mise en page à deux vues : les images décodées sont recadrées ici avec la géométrie de l'export
+        # mise en page à plusieurs vues : les images décodées sont recadrées ici avec la géométrie de l'export
+        # (image 0 : la vidéo du montage ; 1 à 3 : les autres vidéos des vues)
         self.lay = compose.norm(None)
         self.composite = False
-        self.second_size: tuple[int, int] | None = None
-        self._imgs: list = [None, None]
+        self.other_sizes: list[tuple[int, int] | None] = [None] * (compose.MAX_VIEWS - 1)
+        self._imgs: list = [None] * compose.MAX_VIEWS
         self._drag = None
-        self.views = [_View(self.frame, 1), _View(self.frame, 2)]
+        self.views = [_View(self.frame, 1 + k) for k in range(compose.MAX_VIEWS)]
         self.sinks = []
         if MULTIMEDIA:
-            for k in range(2):
+            for k in range(compose.MAX_VIEWS):
                 sk = QVideoSink(self)
                 sk.videoFrameChanged.connect(lambda fr, k=k: self.set_frame(k, fr))
                 self.sinks.append(sk)
@@ -213,6 +276,7 @@ class LivePreview(QGraphicsView):
         self.setCursor(Qt.OpenHandCursor if self.composite else Qt.ArrowCursor)
         self._place_views()
         self._geometry()
+        self._look()
         self._sync_texts()
         self._sync_subs()
         self._draw_zones()
@@ -247,27 +311,30 @@ class LivePreview(QGraphicsView):
             self._look()
 
     def _look(self) -> None:
-        """Filtre colorimétrique approché dans l'aperçu (teinte réglée par l'intensité)."""
-        from PySide6.QtWidgets import QGraphicsColorizeEffect
+        """Filtre colorimétrique (réglé par son intensité) et flou dans l'aperçu, sur la vidéo seulement."""
+        from ..edit.render import blur_sigma
         v = self.tl.video
-        tint = LOOK_TINTS.get(getattr(v, "look", "") or "")
-        amount = float(getattr(v, "look_amount", 0.0) or 0.0)
-        key = (tint, round(amount, 3))
+        look = LOOK_PREVIEW.get(getattr(v, "look", "") or "")
+        amount = float(getattr(v, "look_amount", 0.0) or 0.0) if look else 0.0
+        sigma = blur_sigma(self.tl)
+        key = (look, round(amount, 3), sigma, self.composite)
         if key == getattr(self, "_look_key", None):
             return
         self._look_key = key
-        if not tint or amount <= 0:
-            self.video_item.setGraphicsEffect(None)
+        items = [v_.pix for v_ in self.views] if self.composite else [self.video_item]
+        for it in [self.video_item] + [v_.pix for v_ in self.views]:
+            if it is not None:
+                it.setGraphicsEffect(None)
+        if (look is None or amount <= 0) and sigma <= 0:
             return
-        fx = QGraphicsColorizeEffect()
-        fx.setColor(QColor(tint[0]))
-        fx.setStrength(tint[1] * amount)
-        self.video_item.setGraphicsEffect(fx)
+        for it in items:
+            if it is not None:
+                it.setGraphicsEffect(_ImageEffect(look or (None, 0.0, 1.0, 1.0, 0.0), amount, sigma))
 
-    # -- mise en page à deux vues ------------------------------------------------------
+    # -- mise en page à plusieurs vues --------------------------------------------------
     def _view_source(self, i: int) -> int:
-        """Image utilisée par la vue i : 0 = vidéo principale, 1 = seconde vidéo."""
-        return 1 if i == 1 and compose.uses_second(self.lay) else 0
+        """Image utilisée par la vue i : 0 = vidéo du montage, k ≥ 1 = k-ième autre vidéo."""
+        return compose.view_source(self.lay, i)
 
     def set_frame(self, k: int, frame) -> None:
         if not self.composite:
@@ -280,23 +347,25 @@ class LivePreview(QGraphicsView):
             img = img.transformed(QTransform().rotate(rot))
         self._imgs[k] = img
         pm = QPixmap.fromImage(img)
-        for i, v in enumerate(self.views):
+        for i, v in enumerate(self.views[:compose.count(self.lay)]):
             if self._view_source(i) == k:
                 v.pix.setPixmap(pm)
                 self._place_view(i)
 
     def _place_views(self) -> None:
+        n = compose.count(self.lay)
         for i, v in enumerate(self.views):
-            v.outer.setVisible(self.composite)
-            if self.composite:
+            v.outer.setVisible(self.composite and i < n)
+            if self.composite and i < n:
                 img = self._imgs[self._view_source(i)]
                 if img is not None and v.pix.pixmap().isNull():
                     v.pix.setPixmap(QPixmap.fromImage(img))
                 self._place_view(i)
 
     def _logical_size(self, i: int) -> tuple[int, int] | None:
-        if self._view_source(i) == 1:
-            return self.second_size
+        k = self._view_source(i)
+        if k:
+            return self.other_sizes[k - 1]
         if not self.src_size:
             return None
         sw, sh = self.src_size
@@ -305,7 +374,10 @@ class LivePreview(QGraphicsView):
     def _place_view(self, i: int) -> None:
         v = self.views[i]
         W, H = self.tl.format.width, self.tl.format.height
-        zx, zy, zw, zh = compose.zones(self.lay, W, H)[i]
+        zs = compose.zones(self.lay, W, H)
+        if i >= len(zs):                                # vue non affichée (moins de vues que 4)
+            return
+        zx, zy, zw, zh = zs[i]
         b = int(self.lay.get("border") or 0) * W // 1080 if self.lay["kind"] == "pip" and i == 1 else 0
         v.outer.setRect(zx, zy, zw, zh)
         v.outer.setBrush(QColor(self.lay.get("border_color") or "#FFFFFF") if b else QColor("#000000"))
@@ -316,19 +388,22 @@ class LivePreview(QGraphicsView):
         size = self._logical_size(i) or ((pm.width(), pm.height()) if not pm.isNull() else None)
         if not size or pm.isNull():
             return
-        v.src = size
-        SW, SH, x, y = compose.view_crop(size[0], size[1], w, h, self.lay["views"][i])
+        view = self.lay["views"][i]
+        cw, ch, cx, cy = compose.source_crop(size[0], size[1], view)     # rognage, comme à l'export
+        v.src = (cw, ch)
+        SW, SH, x, y = compose.view_crop(cw, ch, w, h, view)
+        kx, ky = SW / cw, SH / ch                      # source (taille logique) → image recadrée
         mirror = self._view_source(i) == 0
         t = QTransform()
         t.translate(x0 + w / 2, y0 + h / 2)
         if mirror:
             t.scale(-1 if self.tl.video.mirror else 1, -1 if self.tl.video.flip else 1)
-        t.translate(-w / 2 - x, -h / 2 - y)
-        t.scale(SW / pm.width(), SH / pm.height())
+        t.translate(-w / 2 - x - cx * kx, -h / 2 - y - cy * ky)
+        t.scale(kx * size[0] / pm.width(), ky * size[1] / pm.height())
         v.pix.setTransform(t)
 
     def _view_at(self, pos) -> int | None:
-        order = (1, 0) if self.lay["kind"] == "pip" else (0, 1)
+        order = (1, 0) if self.lay["kind"] == "pip" else range(compose.count(self.lay))
         for i in order:
             x, y, w, h = self.views[i].rect
             if x <= pos.x() <= x + w and y <= pos.y() <= y + h:
@@ -379,7 +454,8 @@ class LivePreview(QGraphicsView):
         if i is None:
             return
         view = self.lay["views"][i]
-        view["zoom"] = max(1.0, min(6.0, round(view["zoom"] * (1.08 if e.angleDelta().y() > 0 else 1 / 1.08), 3)))
+        view["zoom"] = max(compose.ZOOM_MIN, min(compose.ZOOM_MAX, round(
+            view["zoom"] * (1.08 if e.angleDelta().y() > 0 else 1 / 1.08), 3)))
         self.tl.video.layout = self.lay
         self._place_view(i)
         self.layout_edited.emit()
@@ -591,7 +667,7 @@ class MontagePlayer(QWidget):
         self.view = LivePreview()
         self.view.setMinimumHeight(170)
         self.view.layout_edited.connect(self.layout_edited)
-        self._second_loaded: int | None = None
+        self._others_loaded: list[int | None] = [None] * (compose.MAX_VIEWS - 1)
         self._output = self.view.video_item          # sortie d'image actuelle du lecteur
         self.stack.addWidget(self.view)
         holder = QFrame()
@@ -607,10 +683,13 @@ class MontagePlayer(QWidget):
             self.player.setAudioOutput(self.audio)
             self.player.setVideoOutput(self.view.video_item)
             self._output = self.view.video_item
-            # seconde vidéo d'une mise en page (deux vidéos, incrustation) : lecteur calé sur le principal
-            self.player2, self.audio2 = QMediaPlayer(self), QAudioOutput(self)
-            self.player2.setAudioOutput(self.audio2)
-            self.player2.setVideoOutput(self.view.sinks[1])
+            # autres vidéos d'une mise en page (vues empilées, incrustation) : lecteurs calés sur le principal
+            self.others = []
+            for k in range(compose.MAX_VIEWS - 1):
+                op, oa = QMediaPlayer(self), QAudioOutput(self)
+                op.setAudioOutput(oa)
+                op.setVideoOutput(self.view.sinks[k + 1])
+                self.others.append((op, oa))
             self.player.positionChanged.connect(self._on_pos)
             self.player.mediaStatusChanged.connect(self._on_status)
             self.aux = []
@@ -621,9 +700,10 @@ class MontagePlayer(QWidget):
                 self.aux.append((ap, ao))
             from .audio_out import follow_default_output    # écouteurs Bluetooth : le son les suit
             self._sync_audio = follow_default_output(
-                self, lambda: [self.audio, self.audio2] + [ao for _, ao in self.aux])
+                self, lambda: [self.audio] + [oa for _, oa in self.others] + [ao for _, ao in self.aux])
         else:
-            self.player = self.player2 = None
+            self.player = None
+            self.others = []
             self.aux = []
             self.view.set_placeholder("Lecture vidéo indisponible ici")
 
@@ -702,7 +782,7 @@ class MontagePlayer(QWidget):
             return
         from ..edit.render import speed_of
         r = speed_of(self.tl)
-        for p in [self.player, self.player2] + [ap for ap, _ in self.aux]:
+        for p in [self.player] + [op for op, _ in self.others] + [ap for ap, _ in self.aux]:
             if p is not None and hasattr(p, "playbackRate") and abs(p.playbackRate() - r) > 1e-3:
                 p.setPlaybackRate(r)
 
@@ -780,30 +860,40 @@ class MontagePlayer(QWidget):
         self.seek(min(self.t, tl.duration), keep_playing=self._playing)
 
     def _setup_layout(self) -> None:
-        """Mise en page à deux vues : images décodées dirigées vers l'aperçu recadré, seconde vidéo chargée."""
+        """Mise en page à plusieurs vues : images décodées dirigées vers l'aperçu recadré, autres vidéos chargées."""
         lay = compose.norm(self.tl.video.layout)
-        a2 = self.assets.get(lay["asset2"]) if compose.uses_second(lay) else None
-        self.view.second_size = (a2["width"], a2["height"]) if a2 and a2.get("width") else None
+        oth = [self.assets.get(aid) for aid in compose.others(lay)]
+        for k in range(compose.MAX_VIEWS - 1):
+            a = oth[k] if k < len(oth) else None
+            self.view.other_sizes[k] = (a["width"], a["height"]) if a and a.get("width") else None
         if not self.player:
             return
         out = self.view.sinks[0] if lay["kind"] != "single" else self.view.video_item
         if out is not self._output:
             self._output = out
             self.player.setVideoOutput(out)
-        aid = a2["id"] if a2 and self.player2 else None
-        if aid != self._second_loaded:
-            self._second_loaded = aid
-            self.player2.setSource(QUrl.fromLocalFile(a2.get("preview_path") or a2["path"]) if a2 else QUrl())
+        for k, (op, _oa) in enumerate(self.others):
+            a = oth[k] if k < len(oth) else None
+            aid = a["id"] if a else None
+            if aid != self._others_loaded[k]:
+                self._others_loaded[k] = aid
+                op.setSource(QUrl.fromLocalFile(a.get("preview_path") or a["path"]) if a else QUrl())
         self._apply_volumes()
 
     def _sync_second(self, src_t: float, play: bool) -> None:
-        if not self.player or self._second_loaded is None:
+        if not self.player:
             return
-        self.player2.setPosition(int(max(0.0, src_t + float(compose.norm(self.tl.video.layout)["offset"])) * 1000))
-        if play:
-            self.player2.play()
-        else:
-            self.player2.pause()
+        lay = compose.norm(self.tl.video.layout)
+        for k, (op, _oa) in enumerate(self.others):
+            aid = self._others_loaded[k]
+            if aid is None:
+                continue
+            at = compose.other_time(lay, aid, src_t, self.t)      # piste vidéo : son instant du montage
+            op.setPosition(int(max(0.0, at) * 1000))
+            if play and at >= 0:
+                op.play()
+            else:
+                op.pause()
 
     def _apply_geometry(self) -> None:
         loc = self.tl.locate(self.t)
@@ -858,8 +948,8 @@ class MontagePlayer(QWidget):
             return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
-            if self.player2:
-                self.player2.pause()
+            for op, _ in self.others:
+                op.pause()
             for ap, _ in self.aux:
                 ap.pause()
             self._playing = False
@@ -874,8 +964,8 @@ class MontagePlayer(QWidget):
     def pause(self) -> None:
         if self.player:
             self.player.pause()
-            if self.player2:
-                self.player2.pause()
+            for op, _ in self.others:
+                op.pause()
         for ap, _ in self.aux:
             ap.pause()
         self._playing = False
@@ -889,10 +979,10 @@ class MontagePlayer(QWidget):
         if self.player:
             self.player.stop()
             self.player.setSource(QUrl())
-            if self.player2:
-                self.player2.stop()
-                self.player2.setSource(QUrl())
-            self._second_loaded = None
+            for op, _ in self.others:
+                op.stop()
+                op.setSource(QUrl())
+            self._others_loaded = [None] * (compose.MAX_VIEWS - 1)
         for ap, _ in self.aux:
             ap.stop()
             ap.setSource(QUrl())
@@ -910,11 +1000,13 @@ class MontagePlayer(QWidget):
             return
         base = self.vol.value() / 100 if hasattr(self, "vol") else 0.8
         lay = compose.norm(self.tl.video.layout)
-        two = self._second_loaded is not None
-        main = 0.0 if two and lay["audio"] == "second" else 1.0      # même son que l'export, jamais doublé
+        heard = [k for k, aid in enumerate(self._others_loaded) if aid is not None
+                 and (self.assets.get(aid) or {}).get("audio_tracks", 1)]
+        heard = heard[:1] if lay["audio"] == "second" else heard if lay["audio"] == "both" else []
+        main = 0.0 if heard and lay["audio"] == "second" else 1.0     # même son que l'export, jamais doublé
         self.audio.setVolume(base * min(1.0, self._plan["main"]) * main)
-        if self.player2:
-            self.audio2.setVolume(base if two and lay["audio"] in ("second", "both") else 0.0)
+        for k, (_op, oa) in enumerate(self.others):
+            oa.setVolume(base if k in heard else 0.0)
         for k, (ap, ao) in enumerate(self.aux):
             gain = self._plan["aux"][k][1] if k < len(self._plan["aux"]) else 0.0
             ao.setVolume(base * min(1.0, gain))
@@ -999,10 +1091,24 @@ class MontagePlayer(QWidget):
                     and abs(ap.position() - ms) > 250 and now - self._aux_fixed[k] > 1.0:
                 ap.setPosition(ms)
                 self._aux_fixed[k] = now
-        if self._second_loaded is not None and self._playing:
-            want = ms + int(float(compose.norm(self.tl.video.layout)["offset"]) * 1000)
-            if want >= 0 and abs(self.player2.position() - want) > 150:
-                self.player2.setPosition(want)
+        if self._playing:
+            lay = compose.norm(self.tl.video.layout)
+            for k, (op, _oa) in enumerate(self.others):
+                aid = self._others_loaded[k]
+                if aid is None:
+                    continue
+                want = int(compose.other_time(lay, aid, src, self.t) * 1000)
+                if want < 0:                      # pas encore commencée : sa première image, à l'arrêt
+                    if op.playbackState() == QMediaPlayer.PlayingState:
+                        op.pause()
+                        op.setPosition(0)
+                    continue
+                if 0 < op.duration() <= want + 100:  # déjà finie : sa dernière image reste
+                    continue
+                if op.playbackState() != QMediaPlayer.PlayingState:
+                    op.play()
+                if abs(op.position() - want) > 150:
+                    op.setPosition(want)
         if src >= seg.src_out - 0.02 and self._playing:
             if self.index + 1 < len(self.tl.segments):
                 nxt = self.tl.segments[self.index + 1]

@@ -1414,41 +1414,64 @@ def _register_handlers(app: AppContext) -> None:
     app.jobs.register("reframe", reframe_job)
     app.jobs.register("detect_text", detect_text)
     def sync_calendar(ctx: JobContext, params: dict) -> dict:
-        """Calendrier : les vidéos et shorts mis en ligne ces `days` derniers jours (20 par défaut) sur les chaînes
-        des concepts (page publique, yt-dlp ; YouTube et TikTok) y entrent avec leur titre et leur description ;
-        une publication du même jour qui leur ressemble est reliée et prend l'heure réelle de mise en ligne
-        (`PublicationService.sync_published`). Rien n'est téléchargé ; une pause entre deux pages."""
+        """Calendrier : toutes les vidéos et shorts mis en ligne ces `days` derniers jours (un an par défaut, au plus
+        `limit` par page) sur les chaînes des concepts (page publique, yt-dlp ; YouTube et TikTok) y entrent avec
+        leur titre et leur description ; une publication du même jour qui leur ressemble est reliée et prend
+        l'heure réelle de mise en ligne (`PublicationService.sync_published`). Les vues lues au passage (liste
+        TikTok, page de la vidéo YouTube) sont gardées dans Analytiques, aux étapes de `public_stats.due`. Une
+        vidéo déjà au calendrier n'est pas relue. Rien n'est téléchargé ; une pause entre deux pages."""
         import random
         import time as _time
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone
 
-        from .publish import reconcile
-        days = int(params.get("days", 20))
+        from .publish import public_stats, reconcile
+        days = int(params.get("days", 365))
+        limit = int(params.get("limit", 100))
         delay = params.get("delay", (1.0, 3.0))
         since = _time.time() - days * 86400
-        out = {"added": 0, "matched": 0, "known": 0, "errors": []}
+        out = {"added": 0, "matched": 0, "known": 0, "measured": 0, "errors": []}
         pages = []
         for c in app.concepts.list_concepts():
             for acc, _d in app.concepts.concept_accounts(c.id):
                 if acc.platform.value in reconcile.SUPPORTED:
                     pages += [(c.id, acc, u) for u in reconcile.listing_urls(acc.platform.value, acc.public_url)]
+
+        def measure(acc_id: int, e: dict) -> None:
+            m = public_stats.metrics(e)
+            if not m:
+                return
+            pub = app.publications.found_publication(acc_id, e["url"])
+            now = _dt.now(timezone.utc).replace(tzinfo=None)
+            if pub and (not pub["last_at"] or public_stats.due(pub["published_at"], pub["last_at"], now)):
+                app.analytics.record(pub["id"], m, "public")
+                out["measured"] += 1
+
         for k, (cid, acc, page) in enumerate(pages):
             ctx.check()
             ctx.progress(k / max(1, len(pages)), f"{acc.platform.label} · {acc.name}")
             try:
-                entries = reconcile.list_recent(page, 15)
+                entries = reconcile.list_recent(page, limit)
             except Exception as exc:
-                out["errors"].append(f"{acc.platform.label} {acc.name} : {(str(exc).splitlines() or ['?'])[0][:160]}")
+                why = (str(exc).splitlines() or ["?"])[0]
+                if "does not have a" not in why:          # chaîne sans onglet Vidéos (shorts seulement) : normal
+                    out["errors"].append(f"{acc.platform.label} {acc.name} : {why[:160]}")
                 continue
+            known = app.publications.known_keys(cid)
             for e in entries:
                 ctx.check()
                 if not e.get("url"):
+                    continue
+                if reconcile.video_key(e["url"]) in known:
+                    app.publications._found_again(cid, acc.id, e["url"])
+                    out["known"] += 1
+                    measure(acc.id, e)                    # TikTok : vues dans la liste
                     continue
                 if reconcile._epoch(e) is None or not e.get("description"):     # YouTube : pas dans la liste
                     if delay:
                         ctx.cancel_event.wait(random.uniform(*delay))
                     try:
-                        e.update({x: y for x, y in reconcile.details(e["url"]).items() if y and x not in ("url", "id")})
+                        e.update({x: y for x, y in reconcile.details(e["url"]).items()
+                                  if y is not None and y != "" and x not in ("url", "id")})
                     except Exception:
                         continue
                 ts = reconcile._epoch(e)
@@ -1458,8 +1481,9 @@ def _register_handlers(app: AppContext) -> None:
                     break                                 # liste de la plus récente à la plus ancienne
                 when = _dt.fromtimestamp(ts).strftime("%Y-%m-%dT%H:%M")
                 r = app.publications.sync_published(cid, acc.platform.value, e["url"], e.get("title") or "",
-                                                    e.get("description") or "", when)
+                                                    e.get("description") or "", when, acc.id)   # vues relevées
                 out[r] += 1
+                measure(acc.id, e)
         app.settings.set("calendar_sync", {"at": _utc_now(), "added": out["added"], "matched": out["matched"]})
         return out
 

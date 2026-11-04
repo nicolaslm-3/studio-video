@@ -7,14 +7,14 @@ from pathlib import Path
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QLabel, QCheckBox, QComboBox, QFileDialog, QGridLayout,
-                               QMessageBox, QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem,
+                               QFormLayout, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem,
                                QPlainTextEdit, QPushButton, QScrollArea, QSlider, QTabWidget, QToolButton,
                                QVBoxLayout, QWidget)
-
+
 from .scrub import double_spin, int_spin
 from ..core import AppContext
 from ..edit import compose
-from ..edit.model import ASPECTS, TextItem, Timeline
+from ..edit.model import TextItem, Timeline
 from ..media.ffmpeg import fmt_timecode
 from .color_picker import ColorButton
 from .widgets import tool, button, label
@@ -164,7 +164,7 @@ class Binder:
         from .scrub import ScrubNumber
         w = ScrubNumber()
         w.setRange(lo, hi)
-        w.edited.connect(lambda v: self._commit(path, int(v)))
+        w.valueChanged.connect(lambda v: self._commit(path, int(v)))    # l'aperçu suit pendant le glissement
         self.items.append(("scrub", path, w))
         return w
 
@@ -341,7 +341,6 @@ class MontagePanel(QTabWidget):
     optimize_requested = Signal()
     separate_requested = Signal()
     detect_text_requested = Signal()
-    reframe_requested = Signal(bool)          # True : suivre les visages ; False : retirer
     cue_selected = Signal(float)
 
     def __init__(self, app: AppContext, parent=None):
@@ -393,7 +392,6 @@ class MontagePanel(QTabWidget):
         self._loading = True
         try:
             self.b.load()
-            self.aspect.setCurrentIndex(max(0, self.aspect.findData(self.tl.format.aspect)))
             short = min(self.tl.format.width, self.tl.format.height)
             self.res.setCurrentIndex(max(0, self.res.findData(short)) if self.res.findData(short) >= 0 else 1)
             self._load_segment()
@@ -403,7 +401,6 @@ class MontagePanel(QTabWidget):
             self._load_voice_choices()
             self._load_masks()
             self._load_layout()
-            self.reload_reframe()
             self._load_history()
             self.save_concept_btn.setText(f"Mémoriser ces réglages pour « {self.concept_name} »")
             self.apply_concept_btn.setText(f"Appliquer les réglages de « {self.concept_name} »")
@@ -440,24 +437,31 @@ class MontagePanel(QTabWidget):
     # -- Extrait ------------------------------------------------------------
     def _segment_tab(self) -> QWidget:
         w, f = _form()
-        self.seg_title = label("Aucun extrait sélectionné", "h2", wrap=True)
+        from .widgets import ElidedLabel
+        self.seg_title = ElidedLabel("Aucun extrait sélectionné", "h2")   # une ligne, « … », nom entier au survol
         f.addRow(self.seg_title)
         self.seg_in = double_spin()
         self.seg_out = double_spin()
-        for sp in (self.seg_in, self.seg_out):
+        src = QHBoxLayout()                               # « Source » : début et fin sur une ligne
+        src.setSpacing(6)
+        for sp, tip in ((self.seg_in, "Début dans la source"), (self.seg_out, "Fin dans la source")):
             sp.setDecimals(2)
             sp.setRange(0, 1e6)
             sp.setSingleStep(0.1)
             sp.setSuffix(" s")
             sp.setKeyboardTracking(False)
+            sp.setToolTip(tip)
+            sp.setFixedWidth(92)
             sp.valueChanged.connect(self._seg_trim)
-        f.addRow("Début dans la source", self.seg_in)
-        f.addRow("Fin dans la source", self.seg_out)
+            src.addWidget(sp)
+        src.addStretch(1)
+        f.addRow("Source", src)
         self.seg_dur = label("", "faint")
         f.addRow("", self.seg_dur)
         self.seg_vol = double_spin()
         self.seg_vol.setRange(-40, 20)
         self.seg_vol.setSuffix(" dB")
+        self.seg_vol.setSpecialValueText("muet")
         self.seg_vol.setKeyboardTracking(False)
         self.seg_vol.valueChanged.connect(lambda v: self._seg_set("volume_db", round(v, 1)))
         f.addRow("Volume de l'extrait", self.seg_vol)
@@ -483,61 +487,46 @@ class MontagePanel(QTabWidget):
         self.seg_fout.setToolTip("Disparition vers le noir, image et son")
         f.addRow("Fondu d'ouverture", self.seg_fin)
         f.addRow("Fondu de fermeture", self.seg_fout)
-        self.seg_mute = QCheckBox("Couper le son de cet extrait")
-        self.seg_mute.toggled.connect(lambda v: self._seg_set("muted", bool(v)))
-        f.addRow(self.seg_mute)
+        # (son coupé : volume au minimum) — petits boutons, serrés
         row = QHBoxLayout()
-        self.seg_left = button("◀ Plus tôt", tooltip="Déplacer l'extrait vers le début", on_click=lambda: self._seg_move(-1))
-        self.seg_right = button("Plus tard ▶", tooltip="Déplacer l'extrait vers la fin", on_click=lambda: self._seg_move(1))
+        row.setSpacing(4)
+        self.seg_left = button("◀ Plus tôt", "mini", tooltip="Déplacer l'extrait vers le début",
+                               on_click=lambda: self._seg_move(-1))
+        self.seg_right = button("Plus tard ▶", "mini", tooltip="Déplacer l'extrait vers la fin",
+                                on_click=lambda: self._seg_move(1))
         row.addWidget(self.seg_left)
         row.addWidget(self.seg_right)
+        row.addStretch(1)
         f.addRow(row)
         row2 = QHBoxLayout()
-        row2.addWidget(button("Couper ici (S)", tooltip="Coupe l'extrait à la tête de lecture",
+        row2.setSpacing(4)
+        row2.addWidget(button("Couper ici (S)", "mini", tooltip="Coupe l'extrait à la tête de lecture",
                               on_click=self.split_requested.emit))
-        self.seg_dup = button("Dupliquer", on_click=self._seg_dup)
+        self.seg_dup = button("Dupliquer", "mini", on_click=self._seg_dup)
         row2.addWidget(self.seg_dup)
+        self.seg_del = button("Supprimer", "mini", tooltip="Supprimer l'extrait", on_click=self._seg_del)
+        row2.addWidget(self.seg_del)
+        row2.addStretch(1)
         f.addRow(row2)
-        self.seg_del = button("Supprimer l'extrait", "danger", on_click=self._seg_del)
-        f.addRow(self.seg_del)
         f.addRow(label("Cliquez sur un extrait dans la timeline pour le régler. Les fichiers sources ne sont "
                        "jamais modifiés.", "faint", wrap=True))
         return w
 
     def _font_row(self, picker, size=None) -> QWidget:
-        """Police (menu court, nom entier au survol), « + » pour en ajouter une, et sa taille réglable à la souris."""
-        from . import theme
+        """Police (menu court, nom entier au survol) et sa taille réglable à la souris."""
         w = QWidget()
         h = QHBoxLayout(w)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(2)
         picker.setMaximumWidth(170)
         h.addWidget(picker)                               # collé à gauche, comme le reste
-        add = tool("plus", "Ajouter une police (.ttf, .otf)…", lambda: self._add_font(picker), size=20)
-        add.setIcon(theme.icon("plus", theme.color("faint"), 13))          # petit et discret, contre le menu
-        h.addWidget(add)
         if size is not None:
-            h.addSpacing(4)
+            h.addSpacing(6)
             size.setToolTip("Taille du texte : glisser à gauche ou à droite, molette, ou double-clic pour saisir")
             size.setFixedWidth(SCRUB_W)                   # même taille que Début et Fin
             h.addWidget(size)
         h.addStretch(1)
         return w
-
-    def _add_font(self, picker) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Ajouter une police", "", "Polices (*.ttf *.otf)")
-        if not path:
-            return
-        from ..media.fonts import install_font
-        try:
-            fams = install_font(self.app.paths.root, path)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Police", str(exc))
-            return
-        for fam in fams:
-            picker.set_family(fam)
-        if fams:
-            picker.fontChanged.emit(fams[0])
 
     def _seg(self):
         try:
@@ -547,8 +536,8 @@ class MontagePanel(QTabWidget):
 
     def _load_segment(self) -> None:
         s = self._seg()
-        for wdg in (self.seg_in, self.seg_out, self.seg_vol, self.seg_zoom, self.seg_fin, self.seg_fout, self.seg_mute, self.seg_left, self.seg_right,
-                    self.seg_dup, self.seg_del):
+        for wdg in (self.seg_in, self.seg_out, self.seg_vol, self.seg_zoom, self.seg_fin, self.seg_fout, self.seg_left,
+                    self.seg_right, self.seg_dup, self.seg_del):
             wdg.setEnabled(s is not None)
         if not s:
             self.seg_title.setText("Aucun extrait sélectionné")
@@ -566,16 +555,13 @@ class MontagePanel(QTabWidget):
         self.seg_dur.setText(f"Durée {fmt_timecode(s.duration, True)} · position sur la timeline "
                              f"{fmt_timecode(self.tl.segment_start(i), True)}")
         self.seg_vol.blockSignals(True)
-        self.seg_vol.setValue(s.volume_db)
+        self.seg_vol.setValue(-40 if s.muted else s.volume_db)
         self.seg_vol.blockSignals(False)
         for sp, v in ((self.seg_zoom, round(max(1.0, s.zoom) * 100)), (self.seg_fin, s.fade_in),
                       (self.seg_fout, s.fade_out)):
             sp.blockSignals(True)
             sp.setValue(v)
             sp.blockSignals(False)
-        self.seg_mute.blockSignals(True)
-        self.seg_mute.setChecked(s.muted)
-        self.seg_mute.blockSignals(False)
 
     def _seg_trim(self) -> None:
         s = self._seg()
@@ -594,6 +580,8 @@ class MontagePanel(QTabWidget):
         s = self._seg()
         if s and not self._loading:
             setattr(s, attr, v)
+            if attr == "volume_db":
+                s.muted = v <= -40                    # plus de case « Couper le son » : volume au minimum = muet
             self.changed.emit("structure")
 
     def _seg_move(self, d) -> None:
@@ -623,41 +611,33 @@ class MontagePanel(QTabWidget):
     def _frame_tab(self) -> QWidget:
         w, f = _form()
         b = self.b
-        f.addRow(label("Format", "h2"))
-        self.aspect = QComboBox()
-        for a in ASPECTS:
-            self.aspect.addItem({"9:16": "9:16 vertical (TikTok, Reels, Shorts)", "16:9": "16:9 horizontal (YouTube)",
-                                 "1:1": "1:1 carré", "4:5": "4:5 portrait (Instagram)"}[a], a)
-        self.aspect.currentIndexChanged.connect(self._aspect)
-        f.addRow("Format", self.aspect)
+        # (le format : sous l'aperçu) définition et images / seconde sur une ligne, une icône grise pour chacun
         self.res = QComboBox()
-        for side, name in ((720, "720p"), (1080, "1080p (recommandé)"), (1440, "1440p"), (2160, "4K")):
+        for side, name in ((720, "720p"), (1080, "1080p"), (1440, "1440p"), (2160, "4K")):
             self.res.addItem(name, side)
+        self.res.setToolTip("Définition (1080p recommandé)")
         self.res.currentIndexChanged.connect(self._aspect)
-        f.addRow("Définition", self.res)
-        f.addRow("Images / seconde", b.combo("format.fps", [(24.0, "24"), (25.0, "25"), (30.0, "30"),
-                                                            (50.0, "50"), (60.0, "60")]))
+        self.res.setFixedWidth(84)
+        fps = b.combo("format.fps", [(24.0, "24"), (25.0, "25"), (30.0, "30"), (50.0, "50"), (60.0, "60")])
+        fps.setToolTip("Images par seconde")
+        fps.setFixedWidth(64)
+        rf = _hint_row("monitor", "Définition")
+        rf.addWidget(self.res)
+        rf.addSpacing(10)
+        rf.addLayout(_hint_row("film", "Images par seconde"))
+        rf.addWidget(fps)
+        rf.addStretch(1)
+        f.addRow(rf)
         f.addRow("Remplissage", b.combo("format.fit", FIT_MODES))
         self._layout_section(f)
         f.addRow(label("Cadrage", "h2"))
-        f.addRow("Zoom", b.slider("video.zoom", 1.0, 3.0))
+        f.addRow("Zoom", b.slider("video.zoom", 0.2, 2.5))           # sous 1 : la vidéo réduite, du noir autour
         f.addRow("Position horizontale", b.slider("video.offset_x", -1.0, 1.0))
         f.addRow("Position verticale", b.slider("video.offset_y", -1.0, 1.0))
         f.addRow("Rotation", b.combo("video.rotation", [(0, "Aucune"), (90, "90° horaire"), (180, "180°"),
                                                         (270, "90° anti-horaire")]))
-        f.addRow(b.check("video.mirror", "Effet miroir (horizontal)"))
-        f.addRow(b.check("video.flip", "Retourner verticalement"))
+        # (miroir : bouton robot sous l'aperçu ; suivre la personne qui parle : sous l'aperçu)
         f.addRow(button("Recentrer", on_click=self._recenter))
-        rf = QHBoxLayout()
-        self.reframe_btn = button("Suivre les visages (recadrage auto)", "primary",
-                                  tooltip="Le cadre suit le visage principal, extrait par extrait (format vertical "
-                                          "ou carré à partir d'une vidéo horizontale)",
-                                  on_click=lambda: self.reframe_requested.emit(True))
-        rf.addWidget(self.reframe_btn)
-        rf.addWidget(button("Retirer", "ghost", on_click=lambda: self.reframe_requested.emit(False)))
-        f.addRow(rf)
-        self.reframe_note = label("", "faint", wrap=True)
-        f.addRow(self.reframe_note)
         f.addRow(label("Image", "h2"))
         f.addRow("Luminosité", b.slider("video.brightness", -0.5, 0.5))
         f.addRow("Contraste", b.slider("video.contrast", 0.5, 1.8))
@@ -705,32 +685,61 @@ class MontagePanel(QTabWidget):
                        "sur les sources.", "faint", wrap=True))
         return w
 
-    # -- mise en page (double cadrage, deux vidéos, incrustation) ------------------------
+    # -- mise en page (vues empilées jusqu'à 4, incrustation) -----------------------------------
     def _layout_section(self, f: QFormLayout) -> None:
         f.addRow(label("Mise en page", "h2"))
         self.lay_kind = QComboBox()
         for k, n in compose.KINDS.items():
             self.lay_kind.addItem(n, k)
-        self.lay_kind.setToolTip("Double cadrage : la même vidéo en deux vues indépendantes (ex. intervenant A en "
-                                 "haut, B en bas), synchronisées, avec un seul son.")
+        self.lay_kind.setToolTip("Vues empilées (l'une sous l'autre) ou côte à côte (2 en haut, 2 en bas…) : de 2 "
+                                 "à 4 vues, chacune de la vidéo du montage ou d'une autre vidéo (pistes vidéo 2 à 4), "
+                                 "rognée et cadrée à part, avec un seul son.")
         self.lay_kind.currentIndexChanged.connect(self._lay_kind)
         f.addRow("Disposition", self.lay_kind)
         self.lay_box = QWidget()
         g = QFormLayout(self.lay_box)
         g.setContentsMargins(0, 0, 0, 0)
         g.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.lay_count = QComboBox()
+        for n in range(2, compose.MAX_VIEWS + 1):
+            self.lay_count.addItem(f"{n} vues", n)
+        self.lay_count.currentIndexChanged.connect(
+            lambda _i: self._lay_set("count", self.lay_count.currentData(), reload=True))
+        g.addRow("Nombre", self.lay_count)
         self.lay_view = QComboBox()
         self.lay_view.currentIndexChanged.connect(lambda _i: self._reload_layout())
         g.addRow("Vue réglée", self.lay_view)
+        self.lay_asset = QComboBox()                      # la vidéo de la vue choisie
+        self.lay_asset.setToolTip("La vidéo montrée dans cette vue")
+        self.lay_asset.currentIndexChanged.connect(lambda _i: self._lay_view_asset())
+        g.addRow("Vidéo", self.lay_asset)
         self.lay_sl = {}
-        for key, name, lo, hi in (("zoom", "Zoom de la vue", 100, 400), ("cx", "Position horizontale", 0, 100),
+        for key, name, lo, hi in (("zoom", "Zoom de la vue", int(compose.ZOOM_MIN * 100), 400),
+                                  ("cx", "Position horizontale", 0, 100),
                                   ("cy", "Position verticale", 0, 100)):
             sl = QSlider(Qt.Horizontal)
             sl.setFixedWidth(SLIDER_W)
             sl.setRange(lo, hi)
             sl.valueChanged.connect(lambda v, k=key: self._lay_view_set(k, v))
+            if key == "zoom":
+                sl.setToolTip("Sous 100 % : la vidéo plus petite que sa vue, du noir autour")
             self.lay_sl[key] = sl
             g.addRow(name, sl)
+        # rogner la vue : à gauche, à droite, en haut, en bas (part de l'image retirée)
+        self.lay_crop = {}
+        for keys, name in ((("crop_l", "crop_r"), "Rogner gauche / droite"), (("crop_t", "crop_b"), "Rogner haut / bas")):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            for key, tip in zip(keys, name.split(" ", 1)[1].split(" / ")):
+                sl = QSlider(Qt.Horizontal)
+                sl.setFixedWidth(SLIDER_W)
+                sl.setRange(0, int(compose.CROP_MAX * 100))
+                sl.setToolTip(f"Rogner : {tip}")
+                sl.valueChanged.connect(lambda v, k=key: self._lay_view_set(k, v))
+                self.lay_crop[key] = sl
+                row.addWidget(sl)
+            row.addStretch(1)
+            g.addRow(name, row)
         self.lay_ratio = int_spin()
         self.lay_ratio.setRange(int(compose.RATIO_MIN * 100), int(compose.RATIO_MAX * 100))
         self.lay_ratio.setSuffix(" % en haut")
@@ -743,20 +752,13 @@ class MontagePanel(QTabWidget):
         for a in (50, 60, 40):
             rr.addWidget(button(f"{a}/{100 - a}", "ghost", on_click=lambda a=a: self.lay_ratio.setValue(a)))
         g.addRow("Partage", self.lay_ratio_row)
-        self.lay_swap = button("Inverser haut et bas",
-                               on_click=lambda: self._lay_set("swap", not self._lay()["swap"], reload=True))
-        g.addRow(self.lay_swap)
-        self.lay_second = QComboBox()
-        self.lay_second.currentIndexChanged.connect(
-            lambda _i: self._lay_set("asset2", self.lay_second.currentData(), reload=True))
-        g.addRow("Seconde vidéo", self.lay_second)
         self.lay_offset = double_spin()
         self.lay_offset.setRange(-36000, 36000)
         self.lay_offset.setDecimals(2)
         self.lay_offset.setSingleStep(0.1)
         self.lay_offset.setSuffix(" s")
         self.lay_offset.setKeyboardTracking(False)
-        self.lay_offset.setToolTip("Décalage de la seconde vidéo par rapport à la principale")
+        self.lay_offset.setToolTip("Décalage des autres vidéos par rapport à la vidéo du montage")
         self.lay_offset.valueChanged.connect(lambda v: self._lay_set("offset", round(v, 2)))
         g.addRow("Décalage", self.lay_offset)
         self.lay_audio = QComboBox()
@@ -821,12 +823,8 @@ class MontagePanel(QTabWidget):
             return
         lay = self._lay()
         lay["kind"] = self.lay_kind.currentData()
-        if lay["kind"] == "split2" and lay["asset2"] is None:
-            used = {s.asset_id for s in self.tl.segments}
-            others = [aid for aid, _n in self._project_videos() if aid not in used]
-            lay["asset2"] = others[0] if others else None
         if lay["kind"] == "pip" and lay["views"][0] == compose.DEFAULT["views"][0]:
-            lay["views"][0] = {"cx": 0.5, "cy": 0.5, "zoom": 1.0}        # vidéo principale : plan d'ensemble
+            lay["views"][0] = dict(compose.VIEW)                   # vidéo principale : plan d'ensemble
         self._lay_commit(lay, reload=True)
 
     def _lay_view_set(self, key: str, v: int) -> None:
@@ -835,6 +833,14 @@ class MontagePanel(QTabWidget):
         lay = self._lay()
         lay["views"][max(0, self.lay_view.currentIndex())][key] = v / 100
         self._lay_commit(lay)
+
+    def _lay_view_asset(self) -> None:
+        """La vidéo de la vue réglée : celle du montage (None) ou une autre vidéo du projet."""
+        if self._loading:
+            return
+        lay = self._lay()
+        lay["views"][max(0, self.lay_view.currentIndex())]["asset"] = self.lay_asset.currentData()
+        self._lay_commit(lay, reload=True)
 
     def _lay_pip_set(self, key: str, v: int) -> None:
         if self._loading:
@@ -864,35 +870,40 @@ class MontagePanel(QTabWidget):
         self.lay_box.setVisible(kind != "single")
         if kind == "single":
             return
-        two = kind in ("split2", "pip")
+        n = compose.count(lay)
+        self._show_row(self.lay_count, kind in ("stack", "grid"))
+        self.lay_count.setCurrentIndex(max(0, self.lay_count.findData(lay["count"])))
         if kind == "pip":
             names = ["Vidéo principale", "Incrustation"]
+        elif kind == "grid":
+            where = {2: ("à gauche", "à droite"), 3: ("en haut à gauche", "en haut à droite", "en bas"),
+                     4: ("en haut à gauche", "en haut à droite", "en bas à gauche", "en bas à droite")}[n]
+            names = [f"Vue {k + 1} ({where[k]})" for k in range(n)]
         else:
-            names = ["Vue du bas", "Vue du haut"] if lay["swap"] else ["Vue du haut", "Vue du bas"]
-            if kind == "split2":
-                names[1] += " (seconde vidéo)"
+            names = [f"Vue {k + 1}" + (" (en haut)" if k == 0 else " (en bas)" if k == n - 1 else "")
+                     for k in range(n)]
         cur = max(0, self.lay_view.currentIndex())
         self.lay_view.blockSignals(True)
         self.lay_view.clear()
         self.lay_view.addItems(names)
-        self.lay_view.setCurrentIndex(min(cur, 1))
+        self.lay_view.setCurrentIndex(min(cur, n - 1))
         self.lay_view.blockSignals(False)
         v = lay["views"][self.lay_view.currentIndex()]
-        for key, sl in self.lay_sl.items():
-            sl.setValue(int(round(v[key] * 100)))
-        self._show_row(self.lay_ratio_row, kind != "pip")
-        self.lay_swap.setVisible(kind != "pip")
-        self.lay_ratio.setValue(int(round(lay["ratio"] * 100)))
-        for w in (self.lay_second, self.lay_offset, self.lay_audio):
-            self._show_row(w, two)
-        self.lay_second.blockSignals(True)
-        self.lay_second.clear()
-        if kind == "pip":
-            self.lay_second.addItem("La même vidéo (gros plan)", None)
+        self.lay_asset.blockSignals(True)
+        self.lay_asset.clear()
+        self.lay_asset.addItem("La vidéo du montage", None)
         for aid, name in self._project_videos():
-            self.lay_second.addItem(name, aid)
-        self.lay_second.setCurrentIndex(max(0, self.lay_second.findData(lay["asset2"])))
-        self.lay_second.blockSignals(False)
+            self.lay_asset.addItem(name, aid)
+        self.lay_asset.setCurrentIndex(max(0, self.lay_asset.findData(v["asset"])))
+        self.lay_asset.blockSignals(False)
+        for key, sl in (*self.lay_sl.items(), *self.lay_crop.items()):
+            sl.setValue(int(round(v[key] * 100)))
+        self._show_row(self.lay_ratio_row, kind == "stack" and n == 2)
+        self.lay_ratio.setValue(int(round(lay["ratio"] * 100)))
+        mixed = compose.uses_second(lay)
+        self._show_row(self.lay_audio, mixed)
+        # décalage : seulement pour une autre vidéo hors des pistes (sur une piste, on la glisse dans la timeline)
+        self._show_row(self.lay_offset, any(compose.track_start(lay, a) is None for a in compose.others(lay)))
         self.lay_offset.setValue(float(lay["offset"] or 0))
         self.lay_audio.setCurrentIndex(max(0, self.lay_audio.findData(lay["audio"])))
         for key, sp in self.lay_pip.items():
@@ -901,10 +912,9 @@ class MontagePanel(QTabWidget):
         self._show_row(self.lay_border_row, kind == "pip")
         self.lay_border.setValue(int(lay["border"] or 0))
         self.lay_border_col.set(lay["border_color"] or "#FFFFFF")
-        note = "Glissez une vue dans l'aperçu pour la déplacer, molette pour zoomer."
-        if kind == "split2" and lay["asset2"] is None:
-            note = "Importez une seconde vidéo (Médias) pour l'afficher en bas. " + note
-        elif not compose.uses_second(lay):
+        note = ("Glissez une vue dans l'aperçu pour la déplacer, molette pour zoomer. Une vidéo des pistes 2 à 4 "
+                "se glisse dans la timeline pour choisir quand elle commence.")
+        if not mixed:
             note += " La vidéo est lue une seule fois : le son n'est pas doublé."
         self.lay_note.setText(note)
 
@@ -990,24 +1000,10 @@ class MontagePanel(QTabWidget):
             self._loading = False
         self.changed.emit("video.masks")
 
-    def reload_reframe(self) -> None:
-        segs = self.tl.segments
-        done = sum(bool(sg.reframe) for sg in segs)
-        if not segs:
-            self.reframe_note.setText("")
-        elif self.tl.format.fit != "fill":
-            self.reframe_note.setText("Le recadrage automatique s'applique en mode « Remplir » (onglet Cadrage).")
-        elif done:
-            self.reframe_note.setText(f"✓ Le cadre suit les visages sur {done}/{len(segs)} extrait(s). Zoom et "
-                                      "position verticale restent réglables ; la position horizontale est automatique.")
-        else:
-            self.reframe_note.setText("Le cadre est fixe. « Suivre les visages » l'oriente automatiquement vers la "
-                                      "personne qui parle ou qui est la plus visible.")
-
     def _aspect(self) -> None:
         if self._loading:
             return
-        self.tl.set_aspect(self.aspect.currentData(), self.res.currentData())
+        self.tl.set_aspect(self.tl.format.aspect, self.res.currentData())
         self.changed.emit("format")
 
     def _recenter(self) -> None:
@@ -1030,19 +1026,20 @@ class MontagePanel(QTabWidget):
         self.text_list.setMaximumHeight(120)
         self.text_list.currentItemChanged.connect(self._text_pick)
         lay.addWidget(self.text_list)
-        # boutons d'ajout : chacun montre le texte qu'il ajoute, dans son style
-        grid = QGridLayout()
-        grid.setSpacing(6)
+        # boutons d'ajout, étroits et sur une ligne : chacun montre le texte qu'il ajoute, dans son style
+        grid = QHBoxLayout()
+        grid.setSpacing(4)
         self.add_btns: dict[str, QPushButton] = {}
-        for i, (kind, name) in enumerate(TEXT_KINDS):
+        for kind, name in TEXT_KINDS:
             b = QPushButton()
             b.setToolTip(f"Ajouter : {name}")
-            b.setFixedHeight(32)
-            b.setStyleSheet("padding: 2px 6px;")
+            b.setFixedHeight(28)
+            b.setStyleSheet("padding: 1px 4px;")
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=kind: self._add_text(k))
-            grid.addWidget(b, i // 2, i % 2)
+            grid.addWidget(b)
             self.add_btns[kind] = b
+        grid.addStretch(1)
         lay.addLayout(grid)
         fw, f = _form()
         f.setVerticalSpacing(12)                          # de l'air entre les réglages, sans libellés
@@ -1072,21 +1069,7 @@ class MontagePanel(QTabWidget):
         tg.addWidget(self.t_all, 1, 2)
         tg.setColumnStretch(3, 1)
         f.addRow(tg)
-        # position : haut / centre / bas, puis X et Y libres (partent de la position choisie)
-        self.pos_group = QButtonGroup(self)
-        self.pos_group.setExclusive(False)
-        self.pos_btns: dict[str, QPushButton] = {}
-        pr = QHBoxLayout()
-        pr.setSpacing(5)
-        for key, name in (("top", "Haut"), ("center", "Centre"), ("bottom", "Bas")):
-            b = button(name, "mini", tooltip=f"Position : {dict(POSITIONS)[key].lower()}")
-            b.setCheckable(True)
-            b.clicked.connect(lambda _=False, k=key: self._text_pos(k))
-            self.pos_group.addButton(b)
-            self.pos_btns[key] = b
-            pr.addWidget(b)
-        pr.addStretch(1)
-        f.addRow(pr)
+        # position sur une ligne : X et Y libres, puis à droite haut / centre / bas
         self.text_x, self.text_y = QSlider(Qt.Horizontal), QSlider(Qt.Horizontal)
         xy = QHBoxLayout()
         xy.setSpacing(6)
@@ -1097,7 +1080,17 @@ class MontagePanel(QTabWidget):
             s_.valueChanged.connect(self._text_xy)
             xy.addWidget(label(name, "faint"))
             xy.addWidget(s_)
-            xy.addSpacing(8)
+            xy.addSpacing(6)
+        self.pos_group = QButtonGroup(self)
+        self.pos_group.setExclusive(False)
+        self.pos_btns: dict[str, QPushButton] = {}
+        for key, name in (("top", "Haut"), ("center", "Centre"), ("bottom", "Bas")):
+            b = button(name, "mini", tooltip=f"Position : {dict(POSITIONS)[key].lower()}")
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, k=key: self._text_pos(k))
+            self.pos_group.addButton(b)
+            self.pos_btns[key] = b
+            xy.addWidget(b)
         xy.addStretch(1)
         f.addRow(xy)
         # police, taille, gras, italique, alignement : sans libellés, comme un éditeur de texte
@@ -1112,32 +1105,30 @@ class MontagePanel(QTabWidget):
                                          ("right", "align-right", "Aligné à droite")]))
         st.addStretch(1)
         f.addRow(st)
-        # couleur, contour, fond, largeur, fondu : une icône grise et la commande (le nom au survol)
+        # couleur, contour et fond sur une ligne : une icône grise et la commande (le nom au survol)
         cl = _hint_row("text-color", "Couleur du texte")
         c_ = bt.color("color")
         c_.setToolTip("Couleur du texte")
         cl.addWidget(c_)
-        cl.addStretch(1)
-        f.addRow(cl)
-        ol = _hint_row("text-outline", "Contour")
+        cl.addSpacing(10)
+        cl.addLayout(_hint_row("text-outline", "Contour"))
         o_ = bt.color("outline_color")
         o_.setToolTip("Couleur du contour")
-        ol.addWidget(o_)
+        cl.addWidget(o_)
         ow = bt.ispin("outline", 0, 30, " px")
         ow.setToolTip("Épaisseur du contour")
-        ol.addWidget(ow)
-        ol.addStretch(1)
-        f.addRow(ol)
-        bx = _hint_row("text-box", "Fond")
+        cl.addWidget(ow)
+        cl.addSpacing(10)
+        cl.addLayout(_hint_row("text-box", "Fond"))
         b_ = bt.color("box_color")
         b_.setToolTip("Couleur du fond")
-        bx.addWidget(b_)
+        cl.addWidget(b_)
         self.box_op = bt.slider("box_opacity", 0.0, 1.0)  # opacité 0 : pas de fond
         self.box_op.setToolTip("Fond : opacité (tout à gauche, pas de fond)")
         self.box_op.valueChanged.connect(self._box_opacity)
-        bx.addWidget(self.box_op)
-        bx.addStretch(1)
-        f.addRow(bx)
+        cl.addWidget(self.box_op)
+        cl.addStretch(1)
+        f.addRow(cl)
         wl = _hint_row("move-horizontal", "Largeur maximale du texte")
         mw = bt.slider("max_width", 0.3, 1.0)
         mw.setToolTip("Largeur maximale du texte")
@@ -1192,10 +1183,10 @@ class MontagePanel(QTabWidget):
         style = self.app.montage.text_style_for(self.project_id) if self.project_id else {}
         for kind, name in TEXT_KINDS:
             params = {**TextItem("").__dict__, **self._preset_params(kind, style)}
-            pm = preset_pixmap(params, name, 14)
+            pm = preset_pixmap(params, name, 11)
             b = self.add_btns[kind]
             b.setIcon(QIcon(pm))
-            b.setIconSize(QSize(min(120, int(pm.width() / pm.devicePixelRatio())),
+            b.setIconSize(QSize(min(84, int(pm.width() / pm.devicePixelRatio())),
                                 int(pm.height() / pm.devicePixelRatio())))
 
     def _load_position(self, t) -> None:

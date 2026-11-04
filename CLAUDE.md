@@ -19,9 +19,10 @@ Le propriétaire du projet n'est pas développeur : réponses en français, simp
 Voir `docs/ARCHITECTURE.md`. `services`, `jobs`, `media`, `update` n'importent pas Qt (testés sans interface) ;
 `ui/` ne contient pas de logique métier.
 
-Interface : dock en bas (`ui/shell.py`) avec Montage libre, Clipping, Traduction, Création originale (icône grisée,
-toujours utilisable), **Textes** (mode `texts`, migration 0007) puis l'onglet **Export** (Campagne et Production en
-série ont été retirés : ne pas les réintroduire). Clipping, Traduction et Textes ont à gauche, sur toute la hauteur,
+Interface : dock en bas (`ui/shell.py`) avec Montage libre, Clipping, Traduction, **Textes** (mode `texts`,
+migration 0007) puis l'onglet **Export** (Campagne, Production en série et Création originale ont été retirés du dock :
+ne pas les réintroduire ; `theme.DOCK_HIDDEN`, les anciennes vidéos « original » s'ouvrent encore). Montage libre,
+Clipping, Traduction et Textes ont à gauche, sur toute la hauteur,
 la **barre des projets** (`ui/project_sidebar.py`, même fond que le logiciel : nom de l'onglet et « + », chaque
 projet avec en gris 3 ou 4 mots-clés de sa transcription, « … » si trop long, en retrait ses versions traduites
 puis ses extraits devenus des vidéos (`clip_projects`) ; aussi dans Export, où l'on reste en changeant de projet ;
@@ -42,7 +43,8 @@ haut (`StudioPage.concept_combo`, aussi dans Export) ; le concept « Brouillons 
 (`ConceptService.user_concepts`). Barre de gauche : le concept (point de sa couleur) puis le nom ; versions
 « VEN-Nom de la vidéo ». Au survol d'une vidéo de la barre (et au clic droit) : renommer,
 archiver, supprimer (`StudioPage.project_action` ; une vidéo supprimée ou archivée emporte ses versions) ; les vidéos
-archivées sont dans **Archives** (menu des trois barres, `ui/pages/archives.py`, restaurer ou supprimer). Il n'y a
+archivées sont dans **Archives**, en bas de la page Médias (`ui/pages/archives.py` dans `LibraryPage`, restaurer ou
+supprimer ; plus d'entrée Archives dans le menu). Il n'y a
 plus de page « Concepts et projets ». L'en-tête du Studio est commun à tous les onglets :
 Médias (rectangle volant : la liste des vidéos, moitié de la hauteur de l'écran), Importer, lien (icônes grises, à
 gauche), **Transcription** (`ui/transcript_dialog.py`, rectangle volant sans titre ni « Fermer » — en haut : recherche d'un
@@ -51,7 +53,7 @@ la version corrigée sert partout, `TranscriptService.save_edit`, et les sous-ti
 refaits dans tous les projets, `StudioPage.transcript_saved` ; horloge : historique des transcriptions ; roue crantée
 dans la fenêtre : Whisper sur ce PC ou ElevenLabs Scribe v2, `core.asr_params`, réglage `transcribe_engine`), tâches
 (pas de
-bouton Exporter ni de « Suivant » : on passe d'un onglet à l'autre par le dock ; import masqué dans Export).
+bouton Exporter ni de « Suivant » : on passe d'un onglet à l'autre par le dock ; import et Transcription masqués dans Export).
 « Enregistré » et les messages brefs s'affichent en haut de la liste des tâches ; chaque tâche y est décrite en
 colonnes — média, action en cours, outil / modèle (`jobs_panel.describe_parts`) —, son état en emoji (mot au survol),
 et un bouton carré l'**arrête à tout instant** (`JobManager.cancel` : arrêtée tout de suite, un travail qui ne
@@ -62,8 +64,10 @@ gardée et appliquée d'office ; on revient à une ancienne par l'horloge (`Hist
 début du texte) ; une voix a son propre dossier (`DubService.new_directory`). Les dates sont enregistrées en temps
 universel et affichées à l'heure du PC (`widgets.local_time`). Infobulles dans la bulle du thème
 (`TipFilter`). Timecodes au dixième de seconde, le dixième plus petit et grisé (`widgets.tc_html`, `TENTH_PX` : Qt ignore les %).
-Sous chaque aperçu, le **bouton robot** (`ui/effects.py`) : miroir, zoom et recadrage, mouvement subtil, filtre
-colorimétrique et son intensité (`render.LOOKS`), légère rotation, vitesse — sur la vidéo du projet
+Sous chaque aperçu, le **bouton robot** (`ui/effects.py`) : miroir, zoom et recadrage (de 20 à 250 % : sous 100 %, la
+vidéo réduite, du noir autour, `render.video_zoom`), mouvement subtil, filtre colorimétrique et son intensité
+(`render.LOOKS`, montré dans l'aperçu par `montage_player._ImageEffect`, sans phrase d'avertissement), **flou**
+(`VideoSettings.blur`, `render.blur_sigma`), légère rotation, vitesse — sur la vidéo du projet
 (`Timeline.video`), jamais sur les textes ni les sous-titres ; la vitesse change la durée exportée
 (`render.output_duration`), le montage reste en temps d'origine. Barre de lecture et outils : sous l'image, à sa
 largeur s'ils y tiennent, sinon sur toute la largeur (jamais les uns sur les autres) : petit bouton lecture, timecode,
@@ -75,27 +79,42 @@ d'accueil : le logiciel s'ouvre dans Montage libre. Emojis des textes et sous-ti
 sans bandes noires, barre de lecture sous l'image. **Toute valeur numérique** se règle à la souris (`ui/scrub.py` :
 clic-glisser, molette, + et − superposés à droite, double-clic pour saisir ; `ScrubNumber` remplace les champs
 numériques de Qt). Curseurs de réglage courts (`SLIDER_W`), pastilles de couleur carrées.
-Chaque onglet fait sa tâche : Montage libre, Création originale et Textes dans le Studio (`LAYOUTS` ; Textes :
-onglets Textes / Sous-titres seulement, petits boutons, début / fin et taille réglables à la souris, position
-Haut / Centre / Bas puis X / Y libres, B / I et alignement, aperçu sans cadre autour, réglages sans libellés —
+Chaque onglet fait sa tâche : Montage libre, Création originale et Textes dans le Studio (`LAYOUTS` ; Montage
+libre : barre des projets à gauche — pas de petits onglets Médias / Texte / Extraits ni d'outil « Clip » —, la timeline
+commence à droite de la barre, **4 pistes vidéo** puis Musique et Voix, sans pistes Textes ni Sous-titres
+(`timeline_view.TRACKS` ; piste 1 = le montage ; 2 à 4 = une autre vidéo chacune, `layout["tracks"]`, glissée pour
+choisir quand elle commence, clic droit pour la retirer ; une vidéo importée va sur la première piste libre et prend
+sa vue, `compose.place_track`, `StudioPage._sync_project_video`), inspecteur Extrait (une ligne « Source » début / fin, titre sur une ligne avec « … »,
+pas de case « Couper le son » : volume au minimum = muet, petits boutons), Cadrage (pas de format — il est sous
+l'aperçu —, définition et images / seconde en icônes sur une ligne, pas de miroir ni de retournement — bouton robot —,
+mise en page : plein écran, **vues empilées de 2 à 4**, **côte à côte** (`grid` : 2 colonnes, 2 en haut et 1 en
+bas, 2 × 2) ou image dans l'image, chaque vue avec sa vidéo, rognée à gauche / droite / haut / bas et zoomée de 20 à
+400 % (sous 100 % : réduite dans sa vue), `edit/compose.py`, même géométrie à l'export et dans l'aperçu, jusqu'à 3 lecteurs de
+plus) et Audio, sans Textes / Sous-titres / Export (onglets principaux), « Suivre la personne qui parle » sous
+l'aperçu (`StudioPage.follow`), en-tête comme les autres onglets (ni menu des projets, ni annuler / rétablir, ni
+« Tous les outils » ; Ctrl+Z reste) ; Textes :
+onglets Textes / Sous-titres seulement, boutons d'ajout étroits sur une ligne, début / fin réglables à la souris,
+police sans « + », taille suivie en direct pendant le glissement (`Binder.scrub` : `valueChanged`), position X / Y
+libres puis Haut / Centre / Bas sur la même ligne, B / I et alignement, couleur, contour et fond sur une ligne, aperçu
+sans cadre autour, réglages sans libellés —
 icône grise et infobulle :
 « A » gras pour la couleur, « A » en contour, « A » en négatif pour le fond, réglé par sa seule opacité (0 = pas de
 fond) —, sans « Tous les outils » ni annuler / rétablir) ;
 Clipping et Traduction dans `ui/simple_views.py` (inspirés de ClipFlow et Dubber) ; Export dans `ui/export_view.py`.
 Clipping (découpage seulement, sans outils de texte) : quatre critères (`ai/lexicon.CATEGORIES` : Rire, Polarisant,
-Émotion, Politique ; politique par défaut, explication au survol) mesurés sur la transcription et le son
+Émotion, Politique ; un seul à la fois, politique par défaut, explication au survol) mesurés sur la transcription et le son
 (`highlights.AudioProfile` : volume, saturation, éclats hors parole, voix plus aiguë, débit), demandés pendant la
 transcription puis dans la bulle de « Proposer d'autres extraits » (avec durée et nombre, ouverte au-dessus du
 bouton) ; pas d'étapes ni de phrases d'état (seulement une action ou une progression) : en haut « Vidéo complète »,
 puis « Extraits » et les extraits à cocher (colonne étroite, hauteur fixe : titre de 3 à 8 mots,
-`highlights.summary`, et en gris le début de la transcription), « + » pour en ajouter un à la main (petite bulle
+`highlights.summary`, et en gris le début de la transcription), « + » pour en ajouter un à la main, « Proposer d'autres extraits » juste à sa droite (petite bulle
 début / durée) ; les deux colonnes au centre (de l'espace sur les bords), l'aperçu en haut de la sienne
 (`MontagePlayer.fit_top`) ; sans vidéo, seulement une petite zone de dépôt au centre ; début et fin à la souris
 (± 1 s), suivi de la
 tête sur bouton-icône (`edit/reframe.py`) ; chaque extrait coché devient une vidéo (le premier celle du projet, les
 autres un projet chacun). Traduction prépare les langues (`translate_video` avec `export=False`, une version par
 langue) sur le montage du projet ; le projet d'origine montre la vidéo originale, chaque version (en retrait
-dans la barre) sa langue ; sans « Tous les outils » : langues en drapeaux emoji (`ui/flags/`, pays au survol), un
+dans la barre) sa langue ; sans « Tous les outils » : langues en drapeaux emoji sur une ligne (`ui/flags/`, pays au survol), un
 outil par ligne (Sous-titres avec « Traduire » — le texte seul, puis « Corriger » par langue, la traduction
 corrigée servant aux sous-titres et à la voix —, Voix, Musique, Effacer les textes d'origine : nom suivi de sa
 coche verte ou rouge, interrupteur
@@ -124,8 +143,9 @@ ou Instagram d'après l'adresse) ; « + » discret en bas pour un nouveau concep
 **Confirmations** (« Supprimer… ? ») dans un rectangle volant au centre de la fenêtre (`widgets.ask`), jamais une
 fenêtre. **Calendrier** (`ui/pages/calendar.py`,
 migration 0010) : menu des concepts (ou tous) au-dessus de « À venir » (liste à droite), « + » discret en bas ;
-bouton discret (flèches) et passage toutes les heures : les vidéos publiées ces 20 derniers jours sur les chaînes des
-concepts (YouTube, TikTok) entrent au calendrier, une publication du même jour qui ressemble est reliée et prend
+bouton discret (flèches) et passage toutes les heures : les vidéos publiées cette année (100 au plus par page) sur les
+chaînes des concepts (YouTube, TikTok ; Facebook et Instagram ne laissent pas lire leur liste) entrent au calendrier
+(une vidéo déjà au calendrier n'est pas relue ; les vues lues au passage sont gardées dans Analytiques), une publication du même jour qui ressemble est reliée et prend
 l'heure réelle (`sync_calendar`, `PublicationService.sync_published`) ; vidéos programmées en petits rectangles à
 leur date (concept, nom de la
 vidéo, trois logos qu'on met en couleur ou grise d'un clic, pour s'organiser : rien n'est publié) ; « Nouvelle
@@ -147,7 +167,11 @@ yt-dlp, YouTube et TikTok, tâche `match_published` toutes les heures) : sûr �
 vidéo ? ». **Statistiques sans API** (`publish/public_stats.py`) : page publique de chaque vidéo publiée lue par
 yt-dlp (Facebook / Instagram avec les cookies du navigateur par défaut, lus par yt-dlp, navigateur fermé), 6 h après puis
 J+1, J+3, J+7, J+14, J+30, puis chaque mois, au plus 20 par heure, 5 à 20 s entre deux (`MainWindow.check_stats`) ;
-Analytiques → « Par vidéo » : une vidéo sur les quatre réseaux dans un tableau (`AnalyticsService.by_video`).
+Analytiques → « Par vidéo » : une vidéo sur les quatre réseaux dans un tableau (`AnalyticsService.by_video`). Les
+vidéos retrouvées par le calendrier sur les chaînes des concepts deviennent des publications publiées
+(`PublicationService._found`, marquées « retrouvée sur la chaîne », qu'on peut retirer du calendrier) : leurs vues
+sont relevées comme les autres, dès la fin du passage du calendrier (`MainWindow._on_job` → `check_stats`) ; la page
+Analytiques se met à jour après chaque relevé automatique.
 Pas d'API de plateforme ni de service payant pour publier ou relever les statistiques.
 Pas de titre ni de légende ailleurs que dans Export. Dans l'interface on dit « extrait », jamais « moment » ; la
 bibliothèque s'appelle « Médias ».
