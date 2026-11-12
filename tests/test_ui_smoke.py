@@ -355,6 +355,48 @@ def test_analytics_page(window):
     assert d.item(1, 4).text() == "40" and d.item(1, 6).text() == "saisi"               # partages TikTok, source
     assert d.item(0, 6).text() == "API" and d.item(2, 1).text() == ""                  # Facebook : pas publiée
     assert d.item(1, 8).text() == "Ouvrir"                                             # lien de la vidéo TikTok
+    assert v.horizontalHeaderItem(6).text() == "Sortie" and v.item(0, 6).text() != "—"
+
+
+def test_analytics_filters_and_sort(window):
+    from studiovideo.domain.models import PublicationStatus
+    w, ctx = window
+    c = ctx.concepts.create_concept("Stats")
+    yt, tk = ctx.concepts.create_account(Platform.YOUTUBE, "A"), ctx.concepts.create_account(Platform.TIKTOK, "B")
+    for a in (yt, tk):
+        ctx.concepts.link(c.id, a.id)
+    for i, (views, acc, at) in enumerate(((300, yt, "2026-03-05T10:00:00Z"), (900, tk, "2026-01-10T10:00:00Z"),
+                                          (50, yt, "2025-06-01T10:00:00Z"))):
+        m = ctx.publications.create_master(c.id, f"Vidéo {i}")
+        (p,) = ctx.publications.set_destinations(m, [acc.id])
+        ctx.publications.set_status(p, PublicationStatus.PUBLISHED, remote_id=f"VID{i}abcdef")
+        with ctx.db.transaction() as con:
+            con.execute("UPDATE publication_attempt SET at = ? WHERE publication_id = ?", (at, p))
+        ctx.analytics.record(p, {"views": views}, "public")
+    w.go(4)
+    pg = w.analytics
+    names = lambda: [pg.videos.item(r, 0).text() for r in range(pg.videos.rowCount())]
+    assert names() == ["Vidéo 1", "Vidéo 0", "Vidéo 2"]                                # plus de vues d'abord
+    pg.sort.setCurrentIndex(pg.sort.findData("views_asc"))
+    assert names() == ["Vidéo 2", "Vidéo 0", "Vidéo 1"]
+    pg.sort.setCurrentIndex(pg.sort.findData("date_desc"))
+    assert names() == ["Vidéo 0", "Vidéo 1", "Vidéo 2"]
+    pg._header_sort(6)                                                                 # clic sur « Sortie » : inverse
+    assert pg.sort.currentData() == "date_asc" and names() == ["Vidéo 2", "Vidéo 1", "Vidéo 0"]
+    pg.platform.setCurrentIndex(pg.platform.findData("tiktok"))
+    assert names() == ["Vidéo 1"]
+    pg.platform.setCurrentIndex(0)
+    pg.period.setCurrentIndex(pg.period.findData("custom"))
+    assert not pg.custom.isHidden()
+    from PySide6.QtCore import QDate
+    pg.date_from.setDate(QDate(2026, 1, 1))
+    pg.date_to.setDate(QDate(2026, 3, 4))
+    assert names() == ["Vidéo 1"]                                                      # sortie le 10 janvier
+    pg.date_to.setDate(QDate(2026, 12, 31))
+    assert names() == ["Vidéo 1", "Vidéo 0"]
+    pg.date_from.setDate(QDate(2020, 1, 1))
+    pg.date_to.setDate(QDate(2020, 12, 31))
+    assert names() == [] and "Aucune vidéo ne correspond" in pg.status.text()
 
 
 def test_detected_zones_are_added_once(window):

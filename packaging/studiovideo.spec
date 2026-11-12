@@ -48,7 +48,8 @@ a = Analysis(
                    "PySide6.QtSvg"] + asr_hidden,
     # Paquets inutiles à l'exécution (tirés par l'environnement de compilation) : allège l'installateur.
     excludes=["tkinter", "torch", "matplotlib", "IPython", "pytest", "scipy", "pandas", "PIL", "lxml", "sympy",
-              "cryptography", "yaml", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtQuickWidgets",
+              # « yaml » ne doit pas être exclu : huggingface_hub (téléchargement des modèles) l'importe.
+              "cryptography", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtQuickWidgets",
               "PySide6.QtQuick3D", "PySide6.QtDesigner", "PySide6.QtHelp", "PySide6.QtSql", "PySide6.QtTest",
               "PySide6.QtBluetooth", "PySide6.QtPositioning", "PySide6.QtLocation", "PySide6.QtSensors",
               "PySide6.QtSerialPort", "PySide6.QtWebSockets", "PySide6.QtWebChannel", "PySide6.QtScxml", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",

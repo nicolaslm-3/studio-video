@@ -56,6 +56,44 @@ def test_latest_and_aggregates(data):
     assert an.youtube_ids() == [(p_yt, "VIDyt1")]
 
 
+def test_release_date_period_and_sort(data):
+    an, ps, _, (p_yt, p_tk, p_x) = data
+    with an.db.transaction() as c:                       # dates de sortie : TikTok le 1er, YouTube le 5, X le 20
+        for pid, at in ((p_tk, "2026-03-01T10:00:00Z"), (p_yt, "2026-03-05T10:00:00Z"), (p_x, "2026-03-20T10:00:00Z")):
+            c.execute("UPDATE publication_attempt SET at = ? WHERE publication_id = ?", (at, pid))
+    an.record(p_yt, {"views": 150}, "api")
+    an.record(p_x, {"views": 40}, "public")
+    rows = an.latest()
+    assert {r["id"]: r["published_at"] for r in rows}[p_yt] == "2026-03-05T10:00:00Z"
+    videos = an.by_video(rows)
+    sketch = next(g for g in videos if g["title"] == "Sketch")
+    assert sketch["published_at"] == "2026-03-01T10:00:00Z"          # la plus tôt de ses réseaux
+    titles = lambda gs: [g["title"] for g in gs]
+    assert titles(an.sort_videos(videos, "views_desc")) == ["Sketch", "Carte"]
+    assert titles(an.sort_videos(videos, "views_asc")) == ["Carte", "Sketch"]
+    assert titles(an.sort_videos(videos, "date_desc")) == ["Carte", "Sketch"]
+    assert titles(an.sort_videos(videos, "date_asc")) == ["Sketch", "Carte"]
+    assert titles(an.sort_videos(videos, "title")) == ["Carte", "Sketch"]
+    # sans vues : toujours en dernier, dans un ordre comme dans l'autre
+    no_views = [{"title": "Z", "views": None}, {"title": "A", "views": 3}]
+    assert titles(an.sort_videos(no_views, "views_asc")) == ["A", "Z"]
+    # période : du 2 au 19 mars, seule la publication YouTube
+    assert [r["id"] for r in an.in_period(rows, "2026-03-02T00:00:00Z", "2026-03-20T00:00:00Z")] == [p_yt]
+    assert {r["id"] for r in an.in_period(rows, "2026-03-05T00:00:00Z", None)} == {p_yt, p_x}
+    assert len(an.in_period(rows, None, None)) == 3
+
+
+def test_period_bounds():
+    from datetime import date
+    from studiovideo.ui.pages.analytics import _utc, period_bounds
+    today = date(2026, 11, 12)
+    assert period_bounds(None, today=today) == (None, None)
+    assert period_bounds(7, today=today) == (_utc(date(2026, 11, 6)), None)            # aujourd'hui compris
+    assert period_bounds("year", today=today) == (_utc(date(2026, 1, 1)), None)
+    assert period_bounds("custom", date(2026, 3, 9), date(2026, 3, 1), today=today) == (   # dans le désordre
+        _utc(date(2026, 3, 1)), _utc(date(2026, 3, 10)))                                   # le 9 inclus
+
+
 class Stats(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass

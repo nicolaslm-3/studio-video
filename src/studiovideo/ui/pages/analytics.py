@@ -6,22 +6,48 @@ Onglet « Par vidéo » : une même vidéo sur les quatre réseaux, dans un seul
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, QUrl
+from datetime import date, datetime, timedelta, timezone
+
+from PySide6.QtCore import QDate, QRect, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QPainter
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-                               QHBoxLayout, QHeaderView, QMessageBox, QStyledItemDelegate, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
+                               QFormLayout, QHBoxLayout, QHeaderView, QMessageBox, QStyledItemDelegate,
+                               QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..scrub import int_spin
 from ...core import AppContext
 from ...publish.rules import RULES
-from ...services.analytics import LABELS, METRICS
+from ...services.analytics import LABELS, METRICS, SORTS
 from .. import theme
 from ..widgets import Card, PageHeader, button, label, local_time
 
 NA = "—"
 FOUR = ("youtube", "tiktok", "facebook", "instagram")
 SOURCES = {"api": "API", "manuel": "saisi", "public": "page publique"}
+# date de sortie : nombre de jours en arrière, « year » = depuis le 1er janvier, « custom » = du … au …
+PERIODS = (("Toutes les dates", None), ("7 derniers jours", 7), ("30 derniers jours", 30),
+           ("3 derniers mois", 91), ("12 derniers mois", 365), ("Cette année", "year"), ("Dates précises…", "custom"))
+# clic sur l'en-tête de la liste des vidéos : (tri décroissant, tri croissant) de la colonne
+HEADER_SORTS = {0: ("title", "title"), 1: ("views_desc", "views_asc"), 6: ("date_desc", "date_asc")}
+
+
+def _utc(d: date) -> str:
+    """Minuit (heure du PC) de ce jour, en temps universel comme les dates enregistrées."""
+    return datetime(d.year, d.month, d.day).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def period_bounds(period, start: date | None = None, end: date | None = None,
+                  today: date | None = None) -> tuple[str | None, str | None]:
+    """Bornes (UTC, fin exclue) d'une période de `PERIODS` ; « custom » : du `start` au `end` inclus."""
+    today = today or date.today()
+    if period is None:
+        return None, None
+    if period == "year":
+        return _utc(date(today.year, 1, 1)), None
+    if period == "custom":
+        lo, hi = min(start, end), max(start, end)
+        return _utc(lo), _utc(hi + timedelta(days=1))
+    return _utc(today - timedelta(days=int(period) - 1)), None
 
 
 def _fmt(v) -> str:
@@ -136,14 +162,6 @@ class AnalyticsPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 16)
         hdr = PageHeader("Analytiques", "Comparer les vidéos, comptes, concepts et plateformes")
-        self.concept = QComboBox()
-        self.platform = QComboBox()
-        self.platform.addItem("Toutes les plateformes", None)
-        for k, r in RULES.items():
-            self.platform.addItem(r.label, k)
-        for w in (self.concept, self.platform):
-            w.currentIndexChanged.connect(self.refresh)
-            hdr.add_action(w)
         self.refresh_btn = button("Relever les statistiques", "primary", on_click=self._refresh_stats,
                                   tooltip="Lit la page publique de chaque vidéo publiée (sans API), avec une pause "
                                   "entre deux. Relevé automatique : 6 h après la publication, puis J+1, J+3, J+7, "
@@ -155,19 +173,24 @@ class AnalyticsPage(QWidget):
         self.cards = QHBoxLayout()
         self.cards.setSpacing(12)
         lay.addLayout(self.cards)
+        lay.addLayout(self._filter_bar())
         self.tabs = QTabWidget()
         # une vidéo, tous les réseaux : la liste des vidéos, puis le détail réseau par réseau
         vids = QWidget()
         vv = QVBoxLayout(vids)
         vv.setContentsMargins(0, 6, 0, 0)
         vv.setSpacing(8)
-        self.videos = self._table(["Vidéo", "Vues (total)"] + [RULES[k].label for k in FOUR] + ["Dernier relevé"])
+        self.videos = self._table(["Vidéo", "Vues (total)"] + [RULES[k].label for k in FOUR]
+                                  + ["Sortie", "Dernier relevé"])
+        self.videos.setSortingEnabled(False)          # l'ordre est celui du menu « Trier » (ou d'un clic d'en-tête)
         self.videos.setItemDelegateForColumn(1, BarDelegate(self.videos))
         hv = self.videos.horizontalHeader()
         hv.setSectionResizeMode(1, QHeaderView.Fixed)
         self.videos.setColumnWidth(1, 170)
-        for c in range(2, 7):
+        for c in range(2, 8):
             hv.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        hv.setSectionsClickable(True)
+        hv.sectionClicked.connect(self._header_sort)
         self.videos.currentCellChanged.connect(lambda r, *_: self._show_video(r))
         vv.addWidget(self.videos, 3)
         self.video_title = label("Choisis une vidéo : ses chiffres sur chaque réseau s'affichent ici.", "h2")
@@ -193,7 +216,7 @@ class AnalyticsPage(QWidget):
             self.groups[key] = t
             self.tabs.addTab(t, name)
         self.pubs = self._table(["Titre", "Concept", "Plateforme · compte", "Vues", "J'aime", "Commentaires",
-                                 "Partages", "Durée moy. vue", "% moyen vu", "Source", "Relevé"])
+                                 "Partages", "Durée moy. vue", "% moyen vu", "Source", "Relevé", "Sortie"])
         self.pubs.setItemDelegateForColumn(3, BarDelegate(self.pubs))
         self.pubs.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         self.pubs.setColumnWidth(3, 200)
@@ -220,6 +243,64 @@ class AnalyticsPage(QWidget):
                             "« — » = non fourni par la plateforme (ou pas encore relevé). Double-clic sur un réseau : "
                             "ouvrir la vidéo.", "faint", wrap=True), 3)
         lay.addLayout(row)
+
+    def _filter_bar(self) -> QHBoxLayout:
+        """Filtres de toutes les listes : concept, plateforme, date de sortie ; puis l'ordre des vidéos."""
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self.concept = QComboBox()
+        self.platform = QComboBox()
+        self.platform.addItem("Toutes les plateformes", None)
+        for k, r in RULES.items():
+            self.platform.addItem(r.label, k)
+        self.period = QComboBox()
+        for name, value in PERIODS:
+            self.period.addItem(name, value)
+        self.period.setToolTip("Date de sortie : première mise en ligne de la vidéo, tous réseaux confondus")
+        self.custom = QWidget()                       # « Dates précises… » : du … au …
+        cl = QHBoxLayout(self.custom)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(6)
+        self.date_from, self.date_to = QDateEdit(), QDateEdit()
+        today = QDate.currentDate()
+        for d, value in ((self.date_from, today.addDays(-29)), (self.date_to, today)):
+            d.setCalendarPopup(True)
+            d.setDisplayFormat("dd/MM/yyyy")
+            d.setDate(value)
+            d.dateChanged.connect(lambda *_: self.refresh())
+        cl.addWidget(label("du", "muted"))
+        cl.addWidget(self.date_from)
+        cl.addWidget(label("au", "muted"))
+        cl.addWidget(self.date_to)
+        self.custom.hide()
+        self.sort = QComboBox()
+        for k, name in SORTS.items():
+            self.sort.addItem(name, k)
+        self.sort.setToolTip("Ordre des vidéos (aussi : clic sur l'en-tête « Vidéo », « Vues » ou « Sortie »)")
+        for w in (self.concept, self.platform, self.period, self.sort):
+            w.currentIndexChanged.connect(lambda *_: self.refresh())
+        self.period.currentIndexChanged.connect(
+            lambda *_: self.custom.setVisible(self.period.currentData() == "custom"))
+        for w in (self.concept, self.platform, self.period, self.custom):
+            bar.addWidget(w)
+        bar.addStretch(1)
+        bar.addWidget(label("Trier", "muted"))
+        bar.addWidget(self.sort)
+        return bar
+
+    def _header_sort(self, col: int) -> None:
+        """Clic sur l'en-tête de la liste des vidéos : trie par cette colonne, un second clic inverse l'ordre."""
+        if col not in HEADER_SORTS:
+            return
+        desc, asc = HEADER_SORTS[col]
+        order = asc if self.sort.currentData() == desc and asc != desc else desc
+        self.sort.setCurrentIndex(self.sort.findData(order))
+
+    @staticmethod
+    def _unsorted(t: QTableWidget) -> None:
+        """Garde l'ordre de remplissage : sans cela, réactiver le tri reclasse par la 1re colonne (Z → A)."""
+        t.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+        t.setSortingEnabled(True)
 
     def _table(self, headers: list[str]) -> QTableWidget:
         t = QTableWidget(0, len(headers))
@@ -256,13 +337,27 @@ class AnalyticsPage(QWidget):
             it.setToolTip(tip or "Non fourni")
         return it
 
+    @staticmethod
+    def _date(iso: str | None) -> QTableWidgetItem:
+        """Date de sortie (jour, à l'heure du PC ; l'heure au survol), triable."""
+        it = QTableWidgetItem(local_time(iso, "%d/%m/%Y") if iso else NA)
+        it.setData(Qt.EditRole, iso or "")
+        it.setText(local_time(iso, "%d/%m/%Y") if iso else NA)
+        it.setToolTip(f"Mise en ligne le {local_time(iso)}" if iso else "Date de sortie inconnue")
+        return it
+
     def refresh(self) -> None:
         self._fill_concepts()
         rows = self.app.analytics.latest(self.concept.currentData(), self.platform.currentData())
-        self.rows = rows
+        start, end = period_bounds(self.period.currentData(), self.date_from.date().toPython(),
+                                   self.date_to.date().toPython())
+        rows = self.app.analytics.in_period(rows, start, end)
         for r in rows:
             r["platform_label"] = RULES[r["platform"]].label
             r["account_label"] = f"{r['platform_label']} · {r['account']}"
+            r["views"] = r["metrics"].get("views")
+        rows = self.app.analytics.sort_videos(rows, self.sort.currentData())
+        self.rows = rows
         while self.cards.count():
             w = self.cards.takeAt(0).widget()
             if w:
@@ -303,7 +398,7 @@ class AnalyticsPage(QWidget):
                 e = QTableWidgetItem(f"{eng * 100:.1f} %".replace(".", ",") if eng is not None else NA)
                 e.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 t.setItem(i, 6, e)
-            t.setSortingEnabled(True)
+            self._unsorted(t)
         t = self.pubs
         t.setSortingEnabled(False)
         t.setRowCount(len(rows))
@@ -334,10 +429,13 @@ class AnalyticsPage(QWidget):
             src = SOURCES.get(m.get("_source"), NA)
             t.setItem(i, 9, QTableWidgetItem(src))
             t.setItem(i, 10, QTableWidgetItem(local_time(r["captured_at"]) or "jamais"))
-        t.setSortingEnabled(True)
+            t.setItem(i, 11, self._date(r.get("published_at")))
+        self._unsorted(t)
         self._fill_videos(rows)
         if not rows:
-            self.status.setText("Aucune vidéo publiée pour l'instant. Les publications confirmées (lien public) ou "
+            filtered = start or end or self.concept.currentData() or self.platform.currentData()
+            self.status.setText("Aucune vidéo ne correspond à ces filtres." if filtered else
+                                "Aucune vidéo publiée pour l'instant. Les publications confirmées (lien public) ou "
                                 "mises en ligne par le logiciel apparaissent ici.")
         elif not self.job_id:
             self.status.setText("")
@@ -346,9 +444,13 @@ class AnalyticsPage(QWidget):
         """Une ligne par vidéo : vues totales, puis les vues de chaque réseau."""
         sel = self.videos.item(self.videos.currentRow(), 0).data(Qt.UserRole) \
             if self.videos.currentRow() >= 0 and self.videos.item(self.videos.currentRow(), 0) else None
-        self.video_groups = {repr(g["key"]): g for g in self.app.analytics.by_video(rows)}
+        groups = self.app.analytics.sort_videos(self.app.analytics.by_video(rows), self.sort.currentData())
+        self.video_groups = {repr(g["key"]): g for g in groups}
         t = self.videos
-        t.setSortingEnabled(False)
+        col = next((c for c, pair in HEADER_SORTS.items() if self.sort.currentData() in pair), -1)
+        t.horizontalHeader().setSortIndicatorShown(col >= 0)
+        t.horizontalHeader().setSortIndicator(col, Qt.AscendingOrder if self.sort.currentData() in
+                                              ("views_asc", "date_asc", "title") else Qt.DescendingOrder)
         t.setRowCount(len(self.video_groups))
         top = max((g["views"] or 0 for g in self.video_groups.values()), default=0) or 1
         for i, (key, g) in enumerate(self.video_groups.items()):
@@ -367,8 +469,8 @@ class AnalyticsPage(QWidget):
                 else:
                     cell = self._num(pub["metrics"].get("views"), tip="Pas encore relevé")
                 t.setItem(i, j, cell)
-            t.setItem(i, 6, QTableWidgetItem(local_time(g["captured_at"]) if g["captured_at"] else "jamais"))
-        t.setSortingEnabled(True)
+            t.setItem(i, 6, self._date(g["published_at"]))
+            t.setItem(i, 7, QTableWidgetItem(local_time(g["captured_at"]) if g["captured_at"] else "jamais"))
         row = next((r for r in range(t.rowCount()) if t.item(r, 0).data(Qt.UserRole) == sel), 0 if sel is None else -1)
         if t.rowCount() and row >= 0:
             t.setCurrentCell(row, 0)

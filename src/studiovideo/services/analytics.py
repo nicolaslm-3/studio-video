@@ -15,6 +15,8 @@ METRICS = ("views", "likes", "comments", "shares")
 DETAILS = ("watch_minutes", "avg_view_s", "avg_view_pct")      # YouTube Analytics (chaîne connectée)
 LABELS = {"views": "Vues", "likes": "J'aime", "comments": "Commentaires", "shares": "Partages",
           "watch_minutes": "Minutes vues", "avg_view_s": "Durée moyenne vue", "avg_view_pct": "% moyen vu"}
+SORTS = {"views_desc": "Plus de vues d'abord", "views_asc": "Moins de vues d'abord",
+         "date_desc": "Plus récentes d'abord", "date_asc": "Plus anciennes d'abord", "title": "Titre (A → Z)"}
 
 
 class AnalyticsService:
@@ -44,7 +46,8 @@ class AnalyticsService:
                "WHERE v.id = COALESCE(p.variant_id, m.variant_id)), m.project_id) project_id, "
                "(SELECT metrics_json FROM analytics_snapshot s WHERE s.publication_id = p.id ORDER BY s.id DESC "
                "LIMIT 1) metrics, (SELECT captured_at FROM analytics_snapshot s WHERE s.publication_id = p.id "
-               "ORDER BY s.id DESC LIMIT 1) captured_at "
+               "ORDER BY s.id DESC LIMIT 1) captured_at, COALESCE((SELECT MIN(t.at) FROM publication_attempt t "
+               "WHERE t.publication_id = p.id AND t.outcome = 'published'), p.last_attempt_at) published_at "
                "FROM publication p JOIN master_publication m ON m.id = p.master_id "
                "JOIN concept c ON c.id = m.concept_id JOIN social_account a ON a.id = p.social_account_id "
                "WHERE p.status IN ('published', 'scheduled_platform', 'manual_action') AND p.remote_id != ''")
@@ -84,13 +87,16 @@ class AnalyticsService:
 
     def by_video(self, rows: list[dict]) -> list[dict]:
         """Une ligne par vidéo (le projet d'où elle vient, sinon sa publication maître) : {"key", "title",
-        "pubs": {plateforme: ligne}, "views": total des vues fournies, "captured_at": dernier relevé}. Une vidéo
-        publiée deux fois sur un même réseau garde la publication la plus vue."""
+        "pubs": {plateforme: ligne}, "views": total des vues fournies, "captured_at": dernier relevé,
+        "published_at": première mise en ligne, tous réseaux confondus (UTC)}. Une vidéo publiée deux fois sur un
+        même réseau garde la publication la plus vue."""
         groups: dict = {}
         names: dict = {}
         for r in rows:
             key = ("p", r["project_id"]) if r.get("project_id") else ("m", r["master_id"])
-            g = groups.setdefault(key, {"key": key, "title": "", "pubs": {}, "captured_at": ""})
+            g = groups.setdefault(key, {"key": key, "title": "", "pubs": {}, "captured_at": "", "published_at": ""})
+            if r.get("published_at") and (not g["published_at"] or r["published_at"] < g["published_at"]):
+                g["published_at"] = r["published_at"]
             if key[0] == "p" and key[1] not in names:
                 pr = self.db.query_one("SELECT name FROM project WHERE id = ?", (key[1],))
                 names[key[1]] = pr["name"] if pr else ""
@@ -104,6 +110,29 @@ class AnalyticsService:
             vals = [p["metrics"]["views"] for p in g["pubs"].values() if "views" in p["metrics"]]
             g["views"] = sum(vals) if vals else None
         return sorted(out, key=lambda g: -(g["views"] or -1))
+
+    @staticmethod
+    def in_period(items: list[dict], start: str | None, end: str | None) -> list[dict]:
+        """Vidéos (ou publications) sorties entre `start` (inclus) et `end` (exclu), en temps universel
+        (« 2026-10-28T00:00:00Z ») ; sans borne : pas de limite de ce côté. Une date de sortie inconnue n'entre
+        dans aucune période."""
+        if not start and not end:
+            return list(items)
+        return [g for g in items if g.get("published_at") and (not start or g["published_at"] >= start)
+                and (not end or g["published_at"] < end)]
+
+    @staticmethod
+    def sort_videos(items: list[dict], order: str) -> list[dict]:
+        """Ordre de la liste (`SORTS`). Sans vues ou sans date de sortie : toujours en dernier."""
+        if order in ("date_desc", "date_asc"):
+            known = sorted((g for g in items if g.get("published_at")), key=lambda g: g["published_at"],
+                           reverse=order == "date_desc")
+            return known + [g for g in items if not g.get("published_at")]
+        if order == "title":
+            return sorted(items, key=lambda g: (g.get("title") or "").casefold())
+        known = sorted((g for g in items if g.get("views") is not None), key=lambda g: g["views"],
+                       reverse=order != "views_asc")
+        return known + [g for g in items if g.get("views") is None]
 
     def public_targets(self) -> list[dict]:
         """Vidéos publiées dont le lien est connu, avec leur date de publication et leur dernier relevé (UTC)."""
