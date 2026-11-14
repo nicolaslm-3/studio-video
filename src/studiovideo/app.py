@@ -5,7 +5,18 @@ import logging
 import sys
 
 
+def _ensure_std_streams() -> None:
+    """Dans l'exe sans console, sys.stdout / sys.stderr valent None : les bibliothèques qui y écrivent
+    (barres de progression de huggingface_hub / tqdm, yt-dlp…) échoueraient avec « 'NoneType' object has
+    no attribute 'write' ». On les envoie vers nulle part."""
+    import os
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_std_streams()
     args = list(argv if argv is not None else sys.argv)
     if "--self-test" in args:
         from .selftest import run

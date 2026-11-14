@@ -108,6 +108,11 @@ def download_model(models_root: Path, key: str, progress: Progress, is_cancelled
         from huggingface_hub import HfApi, hf_hub_download
     except ImportError as exc:
         raise EngineUnavailable("Le module de téléchargement des modèles est absent.") from exc
+    try:  # pas de barre de progression en console : l'exe n'en a pas (sys.stderr = None)
+        from huggingface_hub.utils import disable_progress_bars
+        disable_progress_bars()
+    except Exception:
+        pass
     repo = REPOS[key]
     dest = model_dir(models_root, key)
     tmp = dest.with_name(dest.name + ".partial")
@@ -125,7 +130,7 @@ def download_model(models_root: Path, key: str, progress: Progress, is_cancelled
         if is_cancelled():
             raise Cancelled()
         progress(done / total, f"Téléchargement de {name}")
-        hf_hub_download(repo, name, local_dir=str(tmp))
+        hf_hub_download(repo, name, local_dir=str(tmp))  # barres désactivées plus haut
         done += size
     if not (tmp / "model.bin").exists():
         raise RuntimeError("Téléchargement incomplet : model.bin absent.")
